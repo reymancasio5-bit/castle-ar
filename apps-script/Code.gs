@@ -215,7 +215,7 @@ function castleRead() {
       var foundAr = false;
       for (var paymentIndexRow = totalIndex + 1; paymentIndexRow < values.length; paymentIndexRow++) {
         var paymentRow = values[paymentIndexRow], rowNumber = paymentIndexRow + 1;
-        var rowType = castleText(paymentRow[2]);
+        var rowType = castleText(paymentRow[2]).replace(/\s+/g, ' ');
         if (rowType === 'ar') {
           var ar = castleSourceCents(paymentRow[3], true, label + '!D' + rowNumber);
           if (ar !== null) property.sourceArCents = ar;

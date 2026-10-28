@@ -171,6 +171,35 @@ test('read parses repeated property blocks, integer cents, blank amounts, and ze
   assert.equal(app.state.writes, 0);
 });
 
+test('owner payment labels tolerate extra whitespace while preserving zero and blank amounts', () => {
+  for (const [amount, expected] of [[0, 0], ['0', 0], ['', null]] as const) {
+    const app = harness();
+    app.state.data[8][2] = 'Owner  Payment'; // Exact label from Nov, 2026!C9.
+    app.state.data[16][2] = ' Owner\u00a0 Payment ';
+    app.state.data[24][2] = 'OWNER\t\nPAYMENT';
+    for (const index of [8, 16, 24]) app.state.data[index][3] = amount;
+    const originalData = structuredClone(app.state.data);
+    const result = app.read();
+    assert.equal(result.ok, true, result.error?.message);
+    assert.deepEqual(result.snapshot.months[0].properties.map((property: any) => {
+      const owner = property.payments.find((payment: any) => payment.type === 'Owner');
+      return [owner?.id, owner?.amountCents];
+    }), [['0:9', expected], ['0:17', expected], ['0:25', expected]]);
+    assert.deepEqual(app.state.data, originalData, 'reading normalizes labels without rewriting the sheet');
+    assert.equal(app.state.writes, 0);
+  }
+});
+
+test('unrecognized payment labels still report a source error when the amount is zero', () => {
+  const app = harness();
+  app.state.data[8][2] = 'Transfer Payment';
+  app.state.data[8][3] = 0;
+  const result = app.read();
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'SOURCE_DATA');
+  assert.match(result.error.message, /unrecognized payment row 9/);
+});
+
 test('date serialization uses spreadsheet timezone and revisions include direct edits and formulas', () => {
   const app = harness(); app.state.data[4][4] = new Date('2026-11-04T02:00:00Z');
   const original = app.read().snapshot;
