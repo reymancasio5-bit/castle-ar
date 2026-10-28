@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowDownLeft, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, CalendarDays, Castle, Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, ExternalLink, FileSpreadsheet, LayoutDashboard, Loader2, Menu, Plus, RefreshCw, Search, ShieldCheck, Upload, Wallet, X } from 'lucide-react';
 import type { Change, Month, Payment, Property, Snapshot } from './types';
 import { balance, collected, money, parseMoney, systemStatus } from './domain';
@@ -8,6 +8,7 @@ import ImportWizard from './ImportWizard';
 import TeamMenu from './TeamMenu';
 import WorkflowGuide from './WorkflowGuide';
 import UserSettings from './UserSettings';
+import { Presence, useExiting } from './Presence';
 import { loadPreferences, savePreferences, formatPaymentDate, type Preferences, type View, type StatusFilter } from './preferences';
 import './styles.css';
 
@@ -95,7 +96,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
   }
 
   return <div className="app-shell" data-density={preferences.density}>
-    {mobileNav && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
+    <Presence present={mobileNav}>{exiting => <button className="nav-scrim" data-exiting={exiting} aria-label="Close navigation" onClick={() => setMobileNav(false)} disabled={exiting} />}</Presence>
     <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`}>
       <a className="brand" href="#overview" onClick={event => { event.preventDefault(); navigate('overview'); }} aria-label="Castle overview"><span className="brand-mark"><Castle size={27} strokeWidth={1.7} /></span><span>castle<span className="brand-caption">PROPERTY FINANCE</span></span></a>
       <div className="workspace"><span className="workspace-icon"><Building2 size={18} /></span><span><strong>Castle portfolio</strong><small>Monthly accounts receivable</small></span><span className="workspace-dot" /></div>
@@ -141,12 +142,12 @@ export default function App({ api, configured }: { api: Api; configured: boolean
         </>}
       </main>
     </div>
-    {notice && <div className="toast" role="status"><CheckCircle2 size={18} />{notice}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}
-    {selected && <PropertyDrawer key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}
-    {adding && month && <AddProperty month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}
-    {importOpen && month && <ImportWizard month={month} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}
-    {helpOpen && <Dialog title="Your monthly AR workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}
-    {settingsOpen && <Dialog title="User settings" className="settings-dialog" onClose={() => setSettingsOpen(false)}><UserSettings preferences={preferences} managers={allManagers} onSave={updatePreferences} onCancel={() => setSettingsOpen(false)} /></Dialog>}
+    <Presence present={!!notice}>{exiting => <div className="toast" role="status" data-exiting={exiting} inert={exiting}><CheckCircle2 size={18} />{notice}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}</Presence>
+    <Presence present={!!selected}>{selected && <PropertyDrawer key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}</Presence>
+    <Presence present={adding && !!month}>{adding && month && <AddProperty month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}</Presence>
+    <Presence present={importOpen && !!month}>{importOpen && month && <ImportWizard month={month} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}</Presence>
+    <Presence present={helpOpen}>{helpOpen && <Dialog title="Your monthly AR workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}</Presence>
+    <Presence present={settingsOpen}>{settingsOpen && <Dialog title="User settings" className="settings-dialog" onClose={() => setSettingsOpen(false)}><UserSettings preferences={preferences} managers={allManagers} onSave={updatePreferences} onCancel={() => setSettingsOpen(false)} /></Dialog>}</Presence>
   </div>;
 }
 
@@ -156,10 +157,19 @@ function Metric({ title, value, detail, icon, tone = 'neutral', adornment }: { t
 function SystemBadge({ payment }: { payment: Payment }) { const status = systemStatus(payment); return <span className={`system-badge ${status.toLowerCase()}`}>{status === 'Matched' ? <Check size={12} /> : status === 'Mismatch' ? <X size={12} /> : <Clock3 size={12} />}{status}</span>; }
 
 export function Dialog({ title, onClose, children, className = '', busy = false, subtitle }: { title: string; onClose: () => void; children: ReactNode; className?: string; busy?: boolean; subtitle?: string }) {
+  const exiting = useExiting();
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const close = useRef(onClose);
   close.current = onClose;
+  useLayoutEffect(() => {
+    if (!exiting) return;
+    // Inert contents can release focus to the page. Keep keyboard actions
+    // blocked, like backdrop clicks, until the closing dialog is removed.
+    function blockKeys(event: KeyboardEvent) { event.preventDefault(); event.stopImmediatePropagation(); }
+    document.addEventListener('keydown', blockKeys, true);
+    return () => document.removeEventListener('keydown', blockKeys, true);
+  }, [exiting]);
   useEffect(() => {
     const prior = document.activeElement as HTMLElement | null;
     const overflow = document.body.style.overflow;
@@ -168,6 +178,7 @@ export function Dialog({ title, onClose, children, className = '', busy = false,
     return () => { document.body.style.overflow = overflow; prior?.focus(); };
   }, []);
   function onKeyDown(event: React.KeyboardEvent) {
+    if (exiting) { event.preventDefault(); event.stopPropagation(); return; }
     // Let an open native picker handle Escape before dismissing its dialog.
     const target = event.target instanceof Element ? event.target.closest('select') : null;
     if (event.key === 'Escape' && CSS.supports('selector(select:open)') && target?.matches(':open')) {
@@ -182,7 +193,7 @@ export function Dialog({ title, onClose, children, className = '', busy = false,
     if (event.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first.focus(); }
   }
-  return <div className={`modal-backdrop ${className === 'drawer' ? 'drawer-backdrop' : ''}`} onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><div className={`dialog ${className}`} ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}><div className="dialog-header"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="icon-button" aria-label="Close dialog" onClick={onClose} disabled={busy}><X size={21} /></button></div>{children}</div></div>;
+  return <div className={`modal-backdrop ${className === 'drawer' ? 'drawer-backdrop' : ''}`} data-exiting={exiting} onMouseDown={event => { if (event.target === event.currentTarget && !busy && !exiting) onClose(); }}><div className={`dialog ${className}`} ref={ref} inert={exiting} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}><div className="dialog-header"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="icon-button" aria-label="Close dialog" onClick={onClose} disabled={busy || exiting}><X size={21} /></button></div>{children}</div></div>;
 }
 
 function PropertyDrawer({ property, monthLabel, configured, onClose, onSave }: { property: Property; monthLabel: string; configured: boolean; onClose: () => void; onSave: (changes: Change[]) => Promise<void> }) {

@@ -1,0 +1,137 @@
+/* Presence retains closing surfaces for 180ms; keep exit durations in sync. */
+.modal-backdrop,
+.nav-scrim,
+.import-modal[open]::backdrop {
+  animation: surface-fade-in 180ms ease-out both;
+}
+
+.modal-backdrop > .dialog,
+.import-modal[open] {
+  /* Release the animation after entry so it does not retain a transform
+     stacking context. Exit animations below hold their final frame. */
+  animation: surface-dialog-in 220ms cubic-bezier(.2, .8, .2, 1) backwards;
+}
+
+.modal-backdrop > .dialog.drawer {
+  animation-name: surface-drawer-in;
+}
+
+.team-menu {
+  animation: surface-menu-in 180ms cubic-bezier(.2, .8, .2, 1) backwards;
+}
+
+.toast {
+  /* Keep the existing translateX(-50%) centering transform intact. */
+  animation: surface-toast-in 220ms cubic-bezier(.2, .8, .2, 1) backwards;
+}
+
+.import-step-content {
+  animation: surface-step-in 180ms ease-out backwards;
+}
+
+.modal-backdrop[data-exiting="true"],
+.nav-scrim[data-exiting="true"],
+.import-modal[open][data-exiting="true"]::backdrop {
+  animation: surface-fade-out 180ms ease-in both;
+}
+
+.modal-backdrop[data-exiting="true"] > .dialog,
+.modal-backdrop > .dialog[data-exiting="true"],
+.import-modal[open][data-exiting="true"] {
+  animation: surface-dialog-out 180ms cubic-bezier(.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+
+.modal-backdrop[data-exiting="true"] > .dialog.drawer,
+.modal-backdrop > .dialog.drawer[data-exiting="true"] {
+  animation-name: surface-drawer-out;
+}
+
+.team-menu[data-exiting="true"] {
+  animation: surface-menu-out 180ms ease-in both;
+  pointer-events: none;
+}
+
+.toast[data-exiting="true"] {
+  animation: surface-toast-out 180ms ease-in both;
+  pointer-events: none;
+}
+
+/* Closing panels cannot accept another action, while their backdrops still
+   intercept clicks until Presence unmounts them or the native dialog closes. */
+.modal-backdrop[data-exiting="true"],
+.nav-scrim[data-exiting="true"],
+.import-modal[open][data-exiting="true"]::backdrop {
+  pointer-events: auto;
+}
+
+@keyframes surface-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes surface-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes surface-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  /* No persistent transform context after entry, including native pickers. */
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes surface-dialog-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(6px) scale(.985); }
+}
+
+@keyframes surface-drawer-in {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes surface-drawer-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateX(24px); }
+}
+
+@keyframes surface-menu-in {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes surface-menu-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: scale(.98); }
+}
+
+@keyframes surface-toast-in {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: none; }
+}
+
+@keyframes surface-toast-out {
+  from { opacity: 1; translate: none; }
+  to { opacity: 0; translate: 0 6px; }
+}
+
+@keyframes surface-step-in {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal-backdrop > .dialog,
+  .import-modal,
+  .import-modal::backdrop,
+  .import-step-content,
+  .team-menu,
+  .toast,
+  .nav-scrim,
+  .sidebar {
+    animation: none !important;
+    transition: none !important;
+  }
+}

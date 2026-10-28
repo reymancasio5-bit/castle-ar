@@ -6,6 +6,7 @@ import { createPreviewApi } from './preview-api.ts';
 import './styles.css';
 import './neutral-theme.css';
 import './interactions.css';
+import './motion.css';
 declare global { interface Window { CASTLE_CONFIG?: { appsScriptUrl?:string } } }
 function storedEndpoint(){try{return localStorage.getItem('castle-apps-script-url')||window.CASTLE_CONFIG?.appsScriptUrl||''}catch{return window.CASTLE_CONFIG?.appsScriptUrl||''}}
 function Root(){

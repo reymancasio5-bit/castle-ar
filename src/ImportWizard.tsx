@@ -5,6 +5,7 @@ import type { ImportProps } from './types.ts';
 import { money } from './domain.ts';
 import { buildImportPreview, destinations, inferColumns, type ImportDestination, type ImportOptions, type ImportSheet } from './import.ts';
 import { readSpreadsheet } from './excel.ts';
+import { useExiting } from './Presence';
 import './import.css';
 
 const PAGE_SIZE = 30;
@@ -17,6 +18,7 @@ function columnLetter(index: number) {
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
 export function ImportWizard({ month, onClose, onApply }: ImportProps) {
+  const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(1);
@@ -92,7 +94,7 @@ export function ImportWizard({ month, onClose, onApply }: ImportProps) {
   }
 
   async function applyImport() {
-    if (!preview?.changes.length || saving) return;
+    if (!preview?.changes.length || saving || exiting) return;
     setSaving(true);
     setError('');
     try {
@@ -105,10 +107,10 @@ export function ImportWizard({ month, onClose, onApply }: ImportProps) {
   }
 
   return createPortal(
-    <dialog ref={dialogRef} className="import-modal" aria-labelledby="import-title" aria-describedby="import-description"
-      onCancel={event => { event.preventDefault(); if (!saving) onClose(); }}
+    <dialog ref={dialogRef} className="import-modal" data-exiting={exiting} inert={exiting} aria-labelledby="import-title" aria-describedby="import-description"
+      onCancel={event => { event.preventDefault(); if (!saving && !exiting) onClose(); }}
       onClick={event => {
-        if (event.target !== event.currentTarget || saving) return;
+        if (event.target !== event.currentTarget || saving || exiting) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
       }}>
@@ -127,6 +129,7 @@ export function ImportWizard({ month, onClose, onApply }: ImportProps) {
       <div className="import-content" aria-busy={loading || saving}>
         {error && <div className="import-alert" role="alert">{error}</div>}
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="import-hidden-input" tabIndex={-1} aria-label="Choose spreadsheet file" onChange={event => void chooseFile(event.target.files?.[0])} />
+        <div className="import-step-content" key={step}>
         {step === 1 && <>
           <div className={`import-dropzone ${dragging ? 'import-dropzone-active' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); if (!loading) void chooseFile(event.dataTransfer.files[0]); }}>
             <div className="import-upload-icon"><Upload size={30} aria-hidden="true" /></div>
@@ -176,6 +179,7 @@ export function ImportWizard({ month, onClose, onApply }: ImportProps) {
           <div className="import-pagination"><span>{visibleRows.length ? `${activePage * PAGE_SIZE + 1}–${Math.min((activePage + 1) * PAGE_SIZE, visibleRows.length)} of ${visibleRows.length} rows` : '0 rows'}</span><div><button className="import-icon-button" aria-label="Previous preview page" disabled={activePage === 0 || saving} onClick={() => setPage(activePage - 1)}><ArrowLeft size={17} /></button><span>{activePage + 1} / {pageCount}</span><button className="import-icon-button" aria-label="Next preview page" disabled={activePage >= pageCount - 1 || saving} onClick={() => setPage(activePage + 1)}><ArrowRight size={17} /></button></div></div>
           {options.sumDuplicates && <p className="import-footnote">Repeated ready rows for one property will be summed into one replacement amount.</p>}
         </>}
+        </div>
       </div>
 
       <footer className="import-footer"><button className="import-button import-button-secondary" onClick={() => { if (step === 1) onClose(); else { setStep(step - 1); setError(''); } }} disabled={saving || loading}>{step === 1 ? 'Cancel' : <><ArrowLeft size={16} aria-hidden="true" /> Back</>}</button><div className="import-footer-right">{step === 2 && <button className="import-button import-button-primary" disabled={loading || !preview || !preview.rows.length} onClick={() => { setStep(3); setPage(0); setRowFilter('all'); }}>Review import <ArrowRight size={16} aria-hidden="true" /></button>}{step === 3 && <button className="import-button import-button-primary" onClick={() => void applyImport()} disabled={saving || !preview?.changes.length}>{saving ? 'Saving import…' : `Import ${preview?.changes.length ?? 0} ${preview?.changes.length === 1 ? 'amount' : 'amounts'}`}<Check size={17} aria-hidden="true" /></button>}</div></footer>
