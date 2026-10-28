@@ -7,27 +7,28 @@ import { exportWorkbook } from './excel';
 import ImportWizard from './ImportWizard';
 import TeamMenu from './TeamMenu';
 import WorkflowGuide from './WorkflowGuide';
+import UserSettings from './UserSettings';
+import { loadPreferences, savePreferences, formatPaymentDate, type Preferences, type View, type StatusFilter } from './preferences';
 import './styles.css';
 
 type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot> };
-type View = 'overview' | 'properties' | 'reconciliation';
-type StatusFilter = 'all' | 'outstanding' | 'paid' | 'unverified';
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 const formatAmount = (amount: number | null) => amount === null ? '' : (amount / 100).toFixed(2);
 const hasPayment = (payment: Payment) => payment.amountCents !== null || payment.bundleCents !== null || payment.bankCents !== null;
 const propertyStatus = (property: Property) => balance(property) < 0 ? 'Overpaid' : balance(property) === 0 ? 'Collected' : collected(property) > 0 ? 'Partially paid' : 'Unpaid';
-const shortDate = (date: string) => { if (!date) return '—'; const d = new Date(`${date}T12:00:00`); return Number.isNaN(d.getTime()) ? date : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
 
-export default function App({ api, configured, onConfigure }: { api: Api; configured: boolean; onConfigure: () => void }) {
+export default function App({ api, configured }: { api: Api; configured: boolean }) {
+  const [preferences, setPreferences] = useState(loadPreferences);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [monthId, setMonthId] = useState('');
-  const [view, setView] = useState<View>('overview');
+  const [view, setView] = useState<View>(preferences.defaultView);
   const [search, setSearch] = useState('');
-  const [manager, setManager] = useState('all');
-  const [status, setStatus] = useState<StatusFilter>('all');
+  const [manager, setManager] = useState(preferences.defaultManager);
+  const [status, setStatus] = useState<StatusFilter>(preferences.defaultStatus);
   const [selected, setSelected] = useState<Property | null>(null);
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -48,6 +49,8 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
   const month = snapshot?.months.find(item => item.id === monthId) ?? snapshot?.months[0];
   const properties = month?.properties ?? [];
   const managers = [...new Set(properties.map(property => property.manager).filter(Boolean))].sort();
+  const allManagers = [...new Set(snapshot?.months.flatMap(item => item.properties.map(property => property.manager).filter(Boolean)) ?? [])].sort();
+  const shortDate = (date: string) => formatPaymentDate(date, preferences.dateFormat);
   const filtered = properties.filter(property => {
     const matchesSearch = `${property.name} ${property.manager}`.toLowerCase().includes(search.toLowerCase().trim());
     const matchesManager = manager === 'all' || property.manager === manager;
@@ -72,7 +75,17 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
   function openProperty(property: Property) { setEditRevision(snapshot?.revision ?? ''); setSelected(property); }
   function openAdd() { setEditRevision(snapshot?.revision ?? ''); setAdding(true); }
   function openImport() { setEditRevision(snapshot?.revision ?? ''); setImportOpen(true); }
-  function navigate(next: View) { setView(next); setMobileNav(false); setStatus('all'); setSearch(''); }
+  function navigate(next: View) { setView(next); setMobileNav(false); setStatus(preferences.defaultStatus); setSearch(''); }
+  function updatePreferences(next: Preferences) {
+    const persisted = savePreferences(next);
+    setPreferences(next);
+    setView(next.defaultView);
+    setManager(next.defaultManager);
+    setStatus(next.defaultStatus);
+    setSearch('');
+    setSettingsOpen(false);
+    setNotice(persisted ? 'Your preferences are saved in this browser.' : 'Preferences applied for this session. Your browser could not save them.');
+  }
   async function download() {
     if (!snapshot || !month) return;
     setExporting(true); setError('');
@@ -81,7 +94,7 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
     finally { setExporting(false); }
   }
 
-  return <div className="app-shell">
+  return <div className="app-shell" data-density={preferences.density}>
     {mobileNav && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
     <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`}>
       <a className="brand" href="#overview" onClick={event => { event.preventDefault(); navigate('overview'); }} aria-label="Castle overview"><span className="brand-mark"><Castle size={27} strokeWidth={1.7} /></span><span>castle<span className="brand-caption">PROPERTY FINANCE</span></span></a>
@@ -92,15 +105,15 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
         <button className={view === 'properties' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('properties')}><Building2 size={19} /><span>Properties</span><span className="nav-count">{properties.length}</span></button>
         <button className={view === 'reconciliation' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('reconciliation')}><ClipboardCheck size={19} /><span>Reconciliation</span>{unverified > 0 && <span className="nav-count">{unverified}</span>}</button>
       </nav>
-      <TeamMenu configured={configured} onConfigure={onConfigure} onHelp={() => setHelpOpen(true)} />
+      <TeamMenu configured={configured} onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} />
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(!mobileNav)}><Menu size={22} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{view === 'overview' ? 'Overview' : view === 'properties' ? 'Properties' : 'Reconciliation'}</strong></div><div className="topbar-right"><span className={`connection-indicator ${configured ? 'connected' : ''}`}><span />{configured ? 'Google Sheets connected' : 'Preview workspace'}</span><span className="topbar-divider" /><span className="top-avatar" title="Shared Castle workspace">C</span></div></header>
       <main>
-        {!configured && <div className="preview-banner"><span><FileSpreadsheet size={16} /><strong>Preview data</strong><span className="preview-copy"> · connect Google Sheets to share changes</span></span><button onClick={onConfigure}>Connect sheet <ArrowRight size={14} /></button></div>}
-        <section className="page-heading"><div><div className="eyebrow">YOUR PORTFOLIO, AT A GLANCE</div><h1>{view === 'overview' ? 'Monthly overview' : view === 'properties' ? 'Property records' : 'Payment reconciliation'}</h1><p>{view === 'overview' ? 'A clear picture of what’s collected and what’s coming in.' : view === 'properties' ? 'Every property, payment, and outstanding balance in one place.' : 'Match bank deposits and review your monthly payments.'}</p></div><div className="heading-actions"><div className="month-select"><CalendarDays size={17} /><select aria-label="Reporting month" value={month?.id ?? ''} disabled={!snapshot?.months.length} onChange={event => { setMonthId(event.target.value); setManager('all'); setStatus('all'); setSearch(''); }}>{snapshot?.months.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}{!snapshot?.months.length && <option value="">Reporting month</option>}</select><ChevronDown size={14} /></div><button className="icon-button sync-button" onClick={() => void load()} disabled={loading} aria-label="Refresh records" title="Refresh records"><RefreshCw size={18} className={loading ? 'spin' : ''} /></button></div></section>
+        {!configured && <div className="preview-banner"><span><FileSpreadsheet size={16} /><strong>Preview data</strong><span className="preview-copy"> · contact your workspace administrator for shared records</span></span></div>}
+        <section className="page-heading"><div><div className="eyebrow">YOUR PORTFOLIO, AT A GLANCE</div><h1>{view === 'overview' ? 'Monthly overview' : view === 'properties' ? 'Property records' : 'Payment reconciliation'}</h1><p>{view === 'overview' ? 'A clear picture of what’s collected and what’s coming in.' : view === 'properties' ? 'Every property, payment, and outstanding balance in one place.' : 'Match bank deposits and review your monthly payments.'}</p></div><div className="heading-actions"><div className="month-select"><CalendarDays size={17} /><select aria-label="Reporting month" value={month?.id ?? ''} disabled={!snapshot?.months.length} onChange={event => { setMonthId(event.target.value); setManager(preferences.defaultManager); setStatus(preferences.defaultStatus); setSearch(''); }}>{snapshot?.months.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}{!snapshot?.months.length && <option value="">Reporting month</option>}</select><ChevronDown size={14} /></div><button className="icon-button sync-button" onClick={() => void load()} disabled={loading} aria-label="Refresh records" title="Refresh records"><RefreshCw size={18} className={loading ? 'spin' : ''} /></button></div></section>
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => void load()}>Retry <RefreshCw size={14} /></button></div>}
-        {loading && !snapshot ? <div className="loading-state" role="status"><Loader2 size={28} className="spin" /><h2>Loading your portfolio</h2><p>Getting the latest monthly records…</p></div> : !snapshot ? <div className="empty-state"><FileSpreadsheet size={34} /><h2>Your records couldn’t be loaded</h2><p>Check your connection and try again.</p><button className="button primary" onClick={() => void load()}>Try again</button><button className="button quiet" onClick={onConfigure}>Connection settings</button></div> : !month ? <div className="empty-state"><CalendarDays size={34} /><h2>No monthly records yet</h2><p>Add a monthly tab in your connected Google Sheet, then refresh.</p><button className="button secondary" onClick={() => void load()}><RefreshCw size={16} />Refresh records</button></div> : <>
+        {loading && !snapshot ? <div className="loading-state" role="status"><Loader2 size={28} className="spin" /><h2>Loading your portfolio</h2><p>Getting the latest monthly records…</p></div> : !snapshot ? <div className="empty-state"><FileSpreadsheet size={34} /><h2>Your records couldn’t be loaded</h2><p>Check your connection and try again.</p><button className="button primary" onClick={() => void load()}>Try again</button><p>If this continues, contact your workspace administrator.</p></div> : !month ? <div className="empty-state"><CalendarDays size={34} /><h2>No monthly records yet</h2><p>Add a monthly tab in your connected Google Sheet, then refresh.</p><button className="button secondary" onClick={() => void load()}><RefreshCw size={16} />Refresh records</button></div> : <>
           <section className="metrics" aria-label="Monthly totals">
             <Metric title="Total expected" value={money(total)} detail={`${properties.length} ${properties.length === 1 ? 'property' : 'properties'} this month`} icon={<Wallet size={19} />} />
             <Metric title="Amount collected" value={money(received)} detail={`${progress}% of expected amount`} icon={<ArrowDownLeft size={20} />} tone="green" adornment={<span className="metric-mini-bar"><span style={{ width: `${progress}%` }} /></span>} />
@@ -111,7 +124,7 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
             <section className="records-panel panel">
               <div className="panel-heading"><div><h2>{view === 'reconciliation' ? 'Payment register' : 'Property overview'}<span className="count-pill">{properties.length}</span></h2><p>{view === 'reconciliation' ? 'Compare payout bundles with bank deposits.' : `Track collections across your ${month.label} portfolio.`}</p></div><div className="panel-actions"><button className="button secondary compact" onClick={openImport}><Upload size={15} /><span>Import Excel</span></button><button className="button primary compact" onClick={openAdd}><Plus size={16} /><span>Add property</span></button></div></div>
               <div className="record-tabs" aria-label="Filter property records"><button className={status === 'all' ? 'selected' : ''} onClick={() => setStatus('all')}>All properties <span>{properties.length}</span></button><button className={status === 'outstanding' ? 'selected' : ''} onClick={() => setStatus('outstanding')}>Outstanding <span>{properties.filter(property => balance(property) > 0).length}</span></button><button className={status === 'paid' ? 'selected' : ''} onClick={() => setStatus('paid')}>Collected</button></div>
-              <div className="filter-row"><label className="search-field"><Search size={17} /><input type="search" placeholder="Search properties…" aria-label="Search properties" value={search} onChange={event => setSearch(event.target.value)} /></label><div className="select-field"><select aria-label="Filter by manager" value={manager} onChange={event => setManager(event.target.value)}><option value="all">All managers</option>{managers.map(item => <option key={item} value={item}>{item}</option>)}</select><ChevronDown size={14} /></div><div className="select-field status-select"><select aria-label="Filter by status" value={status} onChange={event => setStatus(event.target.value as StatusFilter)}><option value="all">All statuses</option><option value="outstanding">Outstanding</option><option value="paid">Collected</option><option value="unverified">Needs verification</option></select><ChevronDown size={14} /></div></div>
+              <div className="filter-row"><label className="search-field"><Search size={17} /><input type="search" placeholder="Search properties…" aria-label="Search properties" value={search} onChange={event => setSearch(event.target.value)} /></label><div className="select-field"><select aria-label="Filter by manager" value={manager} onChange={event => setManager(event.target.value)}><option value="all">All managers</option>{manager !== 'all' && !managers.includes(manager) && <option value={manager}>{manager} (no records this month)</option>}{managers.map(item => <option key={item} value={item}>{item}</option>)}</select><ChevronDown size={14} /></div><div className="select-field status-select"><select aria-label="Filter by status" value={status} onChange={event => setStatus(event.target.value as StatusFilter)}><option value="all">All statuses</option><option value="outstanding">Outstanding</option><option value="paid">Collected</option><option value="unverified">Needs verification</option></select><ChevronDown size={14} /></div></div>
               {filtered.length === 0 ? <div className="empty-state compact-empty"><Search size={28} /><h3>{properties.length ? 'No matching properties' : 'Your first property starts here'}</h3><p>{properties.length ? 'Try a different search or clear your filters.' : 'Add a property to start tracking monthly collections.'}</p><button className="button secondary" onClick={() => { if (!properties.length) openAdd(); else { setSearch(''); setManager('all'); setStatus('all'); } }}>{properties.length ? 'Clear filters' : 'Add property'}</button></div> : view === 'reconciliation' ? <div className="table-scroll"><table className="reconciliation-table"><thead><tr><th>Property / payment</th><th className="number">Received</th><th>Payout date</th><th className="number">Bundle</th><th className="number">Bank deposit</th><th>System check</th><th>Daisy check</th><th><span className="sr-only">Open</span></th></tr></thead><tbody>{filtered.flatMap(property => property.payments.map((payment, index) => <tr key={payment.id}><td><button className="table-property-button" onClick={() => openProperty(property)}><strong>{property.name}</strong><span>{payment.type} {payment.type === 'Airbnb' ? index + 1 : ''}</span></button></td><td className="number">{money(payment.amountCents)}</td><td>{shortDate(payment.payoutDate)}</td><td className="number">{money(payment.bundleCents)}</td><td className="number">{money(payment.bankCents)}</td><td><SystemBadge payment={payment} /></td><td><span className={`verification-label ${payment.verifiedByDaisy ? 'verified' : ''}`}>{payment.verifiedByDaisy ? <CheckCheck size={14} /> : <Clock3 size={14} />}{payment.verifiedByDaisy ? 'Verified' : 'Pending'}</span></td><td><button className="icon-button" onClick={() => openProperty(property)} aria-label={`Edit ${property.name} payments`}><ChevronRight size={17} /></button></td></tr>))}</tbody></table></div> : <>
                 <div className="table-scroll property-table-wrap"><table className="property-table"><thead><tr><th>Property</th><th className="number">Expected</th><th className="number">Collected</th><th className="number">Outstanding</th><th>Status</th><th><span className="sr-only">Open property</span></th></tr></thead><tbody>{filtered.map((property, index) => <tr key={property.id}><td><button className="property-name-cell" onClick={() => openProperty(property)}><span className={`property-icon tint-${index % 3}`}><Building2 size={21} strokeWidth={1.6} /></span><span><strong>{property.name}</strong><small>{property.manager || 'No manager assigned'}</small></span></button></td><td className="number">{money(property.totalCents)}</td><td className="number collected-cell">{money(collected(property))}</td><td className="number balance-cell">{money(balance(property))}</td><td><span className={`status-badge ${balance(property) <= 0 ? 'paid' : collected(property) > 0 ? 'partial' : 'unpaid'}`}><span />{propertyStatus(property)}</span></td><td><button className="icon-button row-open" onClick={() => openProperty(property)} aria-label={`Open ${property.name}`}><ChevronRight size={17} /></button></td></tr>)}</tbody><tfoot><tr><td>Portfolio total</td><td className="number">{money(filtered.reduce((sum, property) => sum + property.totalCents, 0))}</td><td className="number collected-cell">{money(filtered.reduce((sum, property) => sum + collected(property), 0))}</td><td className="number balance-cell">{money(filtered.reduce((sum, property) => sum + balance(property), 0))}</td><td colSpan={2} /></tr></tfoot></table></div>
                 <div className="property-mobile-list">{filtered.map((property, index) => <button className="property-mobile-card" key={property.id} onClick={() => openProperty(property)}><div className="mobile-property-heading"><span className={`property-icon tint-${index % 3}`}><Building2 size={20} /></span><span><strong>{property.name}</strong><small>{property.manager || 'No manager assigned'}</small></span><ChevronRight size={18} /></div><div className="mobile-property-amounts"><span><small>Expected</small><strong>{money(property.totalCents)}</strong></span><span><small>Collected</small><strong className="collected-cell">{money(collected(property))}</strong></span><span><small>Outstanding</small><strong>{money(balance(property))}</strong></span></div><span className={`status-badge ${balance(property) <= 0 ? 'paid' : 'partial'}`}><span />{propertyStatus(property)}</span></button>)}</div>
@@ -133,6 +146,7 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
     {adding && month && <AddProperty month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}
     {importOpen && month && <ImportWizard month={month} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}
     {helpOpen && <Dialog title="Your monthly AR workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}
+    {settingsOpen && <Dialog title="User settings" className="settings-dialog" onClose={() => setSettingsOpen(false)}><UserSettings preferences={preferences} managers={allManagers} onSave={updatePreferences} onCancel={() => setSettingsOpen(false)} /></Dialog>}
   </div>;
 }
 

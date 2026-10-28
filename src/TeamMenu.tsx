@@ -1,11 +1,11 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronUp, CircleHelp, FileSpreadsheet, Settings2 } from 'lucide-react';
+import { ChevronUp, CircleHelp, Settings2 } from 'lucide-react';
 import './TeamMenu.css';
 
-export default function TeamMenu({ configured, onConfigure, onHelp }: {
+export default function TeamMenu({ configured, onSettings, onHelp }: {
   configured: boolean;
-  onConfigure: () => void;
+  onSettings: () => void;
   onHelp: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -114,14 +114,11 @@ export default function TeamMenu({ configured, onConfigure, onHelp }: {
         <span aria-hidden="true" />{configured ? 'Google Sheets connected' : 'Preview workspace'}
       </div>
       <div className="team-menu-separator" role="separator" />
-      <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onConfigure)}>
-        <FileSpreadsheet size={17} aria-hidden="true" /><span>{configured ? 'Connection settings' : 'Connect Google Sheets'}</span>
-      </button>
       <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onHelp)}>
         <CircleHelp size={17} aria-hidden="true" /><span>How it works</span>
       </button>
-      <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onConfigure)}>
-        <Settings2 size={17} aria-hidden="true" /><span>Settings</span>
+      <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onSettings)}>
+        <Settings2 size={17} aria-hidden="true" /><span>User settings</span>
       </button>
     </div>, document.body)}
   </div>;

@@ -1,0 +1,88 @@
+.dialog.settings-dialog { width: 720px; }
+.settings-dialog .dialog-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+}
+.user-settings { min-width: 0; color: #374151; }
+.settings-content { padding: 24px 25px 8px; }
+.settings-intro {
+  margin: 0 0 28px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.settings-section { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings-section + .settings-section { margin-top: 26px; }
+.settings-section legend { padding: 0; font-size: 15px; font-weight: 700; color: #25282d; }
+.settings-section-help { margin: 8px 0 5px; font-size: 12px; line-height: 1.7; color: #6b7280; }
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 245px);
+  align-items: center;
+  gap: 24px;
+  padding: 19px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.settings-field:last-child { border-bottom: 0; }
+.settings-field-copy { min-width: 0; }
+.settings-field label { display: block; font-size: 13px; font-weight: 600; color: #374151; }
+.settings-field p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: #6b7280; }
+.settings-field select {
+  min-width: 0;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-field select:focus-visible { outline: 2px solid #4b5563; outline-offset: 3px; }
+.settings-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 25px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+.settings-save-actions { display: flex; gap: 10px; }
+.settings-actions .button { min-height: 42px; font-size: 12px; }
+.settings-actions .settings-reset { color: #4b5563; }
+.settings-actions .settings-reset:hover { background: #f3f4f6; }
+
+@media (min-width: 781px) {
+  .app-shell[data-density="compact"] .property-table td { padding-top: 12px; padding-bottom: 12px; }
+  .app-shell[data-density="compact"] .reconciliation-table td { padding-top: 8px; padding-bottom: 8px; }
+}
+
+/* Keep a saved record filter visible on smaller desktop layouts. */
+@media (min-width: 1051px) and (max-width: 1270px) {
+  .app-shell .filter-row { flex-wrap: wrap; }
+  .app-shell .filter-row .search-field { flex-basis: 100%; }
+  .app-shell .status-select { display: flex; }
+}
+
+@media (max-width: 560px) {
+  .settings-dialog .dialog-header { padding: 20px; }
+  .settings-content { padding: 20px 20px 8px; }
+  .settings-intro { margin-bottom: 24px; padding: 12px 14px; }
+  .settings-field { grid-template-columns: minmax(0, 1fr); gap: 11px; padding: 17px 0; }
+  .settings-field select { min-height: 44px; font-size: 16px; }
+  .settings-actions { flex-wrap: wrap; gap: 12px; padding: 14px 20px; }
+  .settings-actions .settings-reset { padding-left: 0; min-height: 36px; }
+  .settings-save-actions { width: 100%; }
+  .settings-save-actions .button { flex: 1; min-height: 44px; font-size: 13px; }
+}

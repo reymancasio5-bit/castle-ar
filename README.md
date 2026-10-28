@@ -22,7 +22,7 @@ Without an Apps Script URL, the app opens a clearly labeled preview based on the
 3. Under **Services**, add **Google Sheets API** (v4). The supplied `apps-script/appsscript.json` also declares this advanced service; you can copy it into the manifest if preferred. For a standard Google Cloud project, enable its Google Sheets API too.
 4. Select **Deploy → New deployment → Web app**. Set **Execute as: Me** and **Who has access: Anyone**. Authorize the requested spreadsheet access as the spreadsheet owner. Some Workspace administrators restrict public deployments.
 5. Copy the deployment URL ending in `/exec`, not the editor URL or `/dev` URL.
-6. Put it in `public/config.js` as `appsScriptUrl`, commit, and publish. This config connects every visitor to the same sheet. The app's **Connect Google Sheets** dialog can test a URL and save it for the current browser during setup; it is not a substitute for publishing the shared config.
+6. Put it in `public/config.js` as `appsScriptUrl`, commit, and publish. This config connects every visitor to the same sheet. Connection configuration is managed by the workspace administrator; the team menu contains personal preferences. Previously saved browser connection URLs remain supported.
 7. Verify the live app loads three November 2026 properties and the original totals. For a write test, use a new test property or an agreed disposable cell, then confirm it from a second browser. This project has not modified source data during development.
 
 This is deliberately a no-login app: anyone with access to the Apps Script endpoint can read and edit the records. The frontend contains no Google credentials. The public endpoint URL is not a password. No authentication layer is implemented because the user explicitly requested none.
@@ -42,11 +42,12 @@ git push -u origin main
 
 The Vite base is relative (`./`), so project URLs such as `https://YOUR_ACCOUNT.github.io/castle-monthly-ar/` work. No Node server or Cloudflare service is needed in production. Never put a GitHub token or Google OAuth token in `config.js`.
 
-A prebuilt `dist/` folder can also be served by any static web host. `npm run build` copies Code.gs and its manifest into the build so the connection dialog's downloads work.
+A prebuilt `dist/` folder can also be served by any static web host. `npm run build` copies Code.gs and its manifest into the build for the workspace administrator.
 
 ## What the app does
 
 - Month, team, status, and property search filters.
+- **Castle team → User settings:** choose the opening page, default manager/team and record filter, table spacing, and payout date display. Preferences apply when saved and persist in the current browser; they do not change shared records. Defaults also apply when switching months, and the default status applies when navigating pages. Restore defaults changes the draft until Save preferences is selected. If browser storage is blocked, a notice explains that preferences last only for the current session.
 - Expected payments, recorded payments, outstanding AR, and reconciliation views.
 - Edit expected totals and Airbnb, Vrbo, or owner payments.
 - Record platform payout dates, payout bundle amounts, bank receipt dates and amounts, and Daisy's review.
