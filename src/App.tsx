@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowDownLeft, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, CalendarDays, Castle, Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, ClipboardCheck, Clock3, ExternalLink, FileSpreadsheet, LayoutDashboard, Loader2, Menu, Plus, RefreshCw, Search, Settings2, ShieldCheck, Upload, Wallet, X } from 'lucide-react';
+import { ArrowDownLeft, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, CalendarDays, Castle, Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, ExternalLink, FileSpreadsheet, LayoutDashboard, Loader2, Menu, Plus, RefreshCw, Search, ShieldCheck, Upload, Wallet, X } from 'lucide-react';
 import type { Change, Month, Payment, Property, Snapshot } from './types';
 import { balance, collected, money, parseMoney, systemStatus } from './domain';
 import { paymentDraftToFields, type PaymentDraft } from './editor';
 import { exportWorkbook } from './excel';
 import ImportWizard from './ImportWizard';
+import TeamMenu from './TeamMenu';
 import './styles.css';
 
 type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot> };
@@ -90,12 +91,7 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
         <button className={view === 'properties' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('properties')}><Building2 size={19} /><span>Properties</span><span className="nav-count">{properties.length}</span></button>
         <button className={view === 'reconciliation' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('reconciliation')}><ClipboardCheck size={19} /><span>Reconciliation</span>{unverified > 0 && <span className="nav-count">{unverified}</span>}</button>
       </nav>
-      <div className="sidebar-bottom">
-        <div className="sheet-card"><span className="sheet-card-icon"><FileSpreadsheet size={21} /></span><strong>{configured ? 'Connected to your sheet' : 'One source of truth'}</strong><p>{configured ? 'Keep your team’s monthly records in sync with Google Sheets.' : 'Connect Google Sheets to keep your team on the same page.'}</p><button onClick={onConfigure}>{configured ? 'Connection settings' : 'Connect Google Sheets'}<ArrowUpRight size={15} /></button></div>
-        <button className="nav-item" onClick={() => setHelpOpen(true)}><CircleHelp size={19} /><span>How it works</span></button>
-        <button className="nav-item" onClick={onConfigure}><Settings2 size={19} /><span>Settings</span></button>
-        <div className="sidebar-footer"><span className="team-avatar">C</span><div><strong>Castle team</strong><span>Shared workspace</span></div><span className="team-status" /></div>
-      </div>
+      <TeamMenu configured={configured} onConfigure={onConfigure} onHelp={() => setHelpOpen(true)} />
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(!mobileNav)}><Menu size={22} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{view === 'overview' ? 'Overview' : view === 'properties' ? 'Properties' : 'Reconciliation'}</strong></div><div className="topbar-right"><span className={`connection-indicator ${configured ? 'connected' : ''}`}><span />{configured ? 'Google Sheets connected' : 'Preview workspace'}</span><span className="topbar-divider" /><span className="top-avatar" title="Shared Castle workspace">C</span></div></header>

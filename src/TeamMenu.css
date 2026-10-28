@@ -1,0 +1,109 @@
+.team-profile {
+  margin-top: auto;
+  padding-top: 24px;
+  padding-bottom: 14px;
+}
+
+.team-profile-trigger {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 16px 10px;
+  border: 1px solid transparent;
+  border-top-color: #ffffff16;
+  border-radius: 9px;
+  background: transparent;
+  color: #e5eee8;
+  text-align: left;
+}
+
+.team-profile-trigger:hover,
+.team-profile-trigger.is-open {
+  background: #ffffff0b;
+  border-color: #ffffff1c;
+}
+
+.team-profile-avatar,
+.team-menu-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  background: #c4d7bc;
+  color: #284c34;
+  font-family: 'Manrope', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.team-profile-avatar { position: relative; }
+.team-profile-avatar > span {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #153e32;
+  border-radius: 50%;
+  background: #8dbd97;
+}
+
+.team-profile-name { flex: 1; min-width: 0; }
+.team-profile-name strong { display: block; font-size: 11px; font-weight: 600; }
+.team-profile-name small { display: block; margin-top: 4px; color: #a0b9aa; font-size: 9px; }
+.team-profile-chevron { color: #a0b9aa; transition: transform .15s; }
+.team-profile-trigger.is-open .team-profile-chevron { transform: rotate(180deg); }
+
+.team-menu {
+  position: fixed;
+  z-index: 70;
+  padding: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #d7e1d9;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 48px #0b2b2830, 0 2px 8px #0b2b2812;
+  color: #244c3a;
+}
+
+.team-menu-heading { display: flex; align-items: center; gap: 12px; padding: 12px 12px 10px; }
+.team-menu-avatar { width: 40px; height: 40px; font-size: 16px; }
+.team-menu-heading strong { display: block; font-size: 14px; font-weight: 650; }
+.team-menu-heading div > span { display: block; margin-top: 4px; color: #829187; font-size: 11px; }
+.team-menu-status { display: flex; align-items: center; gap: 7px; margin: 2px 12px 12px; font-size: 11px; color: #7c887f; }
+.team-menu-status > span { width: 6px; height: 6px; border-radius: 50%; background: #b6a171; }
+.team-menu-status.is-connected > span { background: #52a17d; }
+.team-menu-separator { height: 1px; margin: 5px 4px 7px; background: #e8eeea; }
+.team-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #395c49;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+}
+.team-menu > button svg { color: #799783; }
+.team-menu > button:hover,
+.team-menu > button:focus { background: #edf3e8; color: #245538; }
+.team-menu > button:focus-visible { outline: 2px solid #62a88b; outline-offset: -2px; }
+
+@media (max-width: 780px) {
+  .team-profile-name strong { font-size: 13px; }
+  .team-profile-name small { font-size: 11px; }
+  .team-menu > button { min-height: 44px; font-size: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-profile-chevron { transition: none; }
+}
