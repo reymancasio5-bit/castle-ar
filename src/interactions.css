@@ -1,0 +1,103 @@
+/* Neutral keyboard focus; pointer clicks do not add a green frame. */
+body :is(.app-shell, .import-modal) :is(button, a, select, input, textarea):focus-visible {
+  outline: 2px solid #6b7280;
+  outline-offset: 3px;
+}
+body :is(.app-shell, .import-modal) :is(button, a, select, input, textarea):focus:not(:focus-visible) {
+  outline: none;
+}
+body .sidebar :is(button, a):focus-visible { outline-color: #b5bfba; }
+.app-shell .search-field:focus-within { outline: none; border-color: #9ca3af; }
+.app-shell .search-field:has(input:focus-visible) { outline: 2px solid #6b7280; outline-offset: 2px; }
+body .app-shell .search-field input:focus-visible { outline: none; }
+.app-shell .month-select select:focus-visible { outline: none; }
+.app-shell .month-select:has(select:focus-visible) { outline: 2px solid #6b7280; outline-offset: 2px; }
+.month-select > svg:last-child, .select-field > svg {
+  transition: transform 160ms ease;
+}
+.month-select:has(select:open) > svg:last-child,
+.select-field:has(select:open) > svg { transform: rotate(180deg); }
+
+/* Enhance the native pickers where supported, preserving their form and
+   keyboard behavior. Older browsers retain their standard select menus. */
+@supports (appearance: base-select) {
+  body :is(.app-shell, .import-modal) select,
+  body :is(.app-shell, .import-modal) select::picker(select) {
+    appearance: base-select;
+  }
+  body :is(.app-shell, .import-modal) select {
+    align-items: center;
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  .app-shell .month-select select { min-width: 140px; }
+  .month-select select::picker-icon, .select-field select::picker-icon { display: none; }
+  select::picker-icon { color: #6b7280; transition: rotate 160ms ease; }
+  select:open::picker-icon { rotate: 180deg; }
+
+  body :is(.app-shell, .import-modal) select::picker(select) {
+    padding: 5px;
+    margin-block: 6px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    color: #374151;
+    box-shadow: 0 12px 32px rgb(17 24 39 / 12%), 0 2px 6px rgb(17 24 39 / 5%);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 400;
+    max-inline-size: calc(100vw - 24px);
+    max-block-size: min(320px, 50dvh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    opacity: 0;
+    transition: opacity 160ms ease, display 160ms allow-discrete, overlay 160ms allow-discrete;
+  }
+  body :is(.app-shell, .import-modal) select:open::picker(select) { opacity: 1; }
+  @starting-style {
+    body :is(.app-shell, .import-modal) select:open::picker(select) { opacity: 0; }
+  }
+  body :is(.app-shell, .import-modal) select option {
+    min-height: 36px;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+    color: #374151;
+    font-size: 13px;
+    line-height: 1.4;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  body :is(.app-shell, .import-modal) select option:checked { background: #f3f4f6; font-weight: 600; }
+  body :is(.app-shell, .import-modal) select option:is(:hover, :focus, :focus-visible) {
+    background: #e5e7eb;
+    color: #202124;
+    outline: none;
+  }
+  select option::checkmark { color: #6b7280; }
+  @media (min-width: 781px) {
+    .app-shell .select-field select { width: 145px; }
+  }
+  @media (max-width: 780px) {
+    body :is(.app-shell, .import-modal) select option { min-height: 44px; font-size: 16px; }
+  }
+  @media (forced-colors: active) {
+    body :is(.app-shell, .import-modal) select option:focus {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .month-select > svg:last-child, .select-field > svg,
+  body :is(.app-shell, .import-modal) select,
+  body :is(.app-shell, .import-modal) select option {
+    transition: none;
+  }
+  @supports (appearance: base-select) {
+    select::picker-icon, body :is(.app-shell, .import-modal) select::picker(select) { transition: none; }
+  }
+}

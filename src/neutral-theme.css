@@ -34,7 +34,7 @@ h1, .panel h2, .breadcrumbs strong, .property-name-cell,
 .payment-sequence, .system-field, .verification-checkbox, .drawer-info,
 .drawer-info p, .drawer-footer-actions > span, .help-content, .help-content .muted,
 .mobile-property-heading small, .mobile-property-amounts small,
-.team-menu-heading div > span, .team-menu-status, .connection-intro,
+.team-menu-heading div > span, .connection-intro,
 .connection-steps, .connection-steps li, .connection-note, .connection-eyebrow {
   color: #6b7280;
 }

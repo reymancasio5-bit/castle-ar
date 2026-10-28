@@ -16,6 +16,7 @@
   background: transparent;
   color: #e5eee8;
   text-align: left;
+  transition: background-color .18s ease, border-color .18s ease;
 }
 
 .team-profile-trigger:hover,
@@ -23,6 +24,14 @@
   background: #ffffff0b;
   border-color: #ffffff1c;
 }
+
+.team-profile-trigger:focus-visible {
+  outline: 2px solid #b5bfba;
+  outline-offset: 2px;
+}
+
+.team-profile-trigger:focus:not(:focus-visible),
+.team-menu > button:focus:not(:focus-visible) { outline: none; }
 
 .team-profile-avatar,
 .team-menu-avatar {
@@ -54,7 +63,8 @@
 .team-profile-name { flex: 1; min-width: 0; }
 .team-profile-name strong { display: block; font-size: 11px; font-weight: 600; }
 .team-profile-name small { display: block; margin-top: 4px; color: #a0b9aa; font-size: 9px; }
-.team-profile-chevron { color: #a0b9aa; transition: transform .15s; }
+.team-profile-chevron { color: #a0b9aa; transition: transform .2s ease, color .18s ease; }
+.team-profile-trigger:hover .team-profile-chevron { color: #d0ddd5; }
 .team-profile-trigger.is-open .team-profile-chevron { transform: rotate(180deg); }
 
 .team-menu {
@@ -68,15 +78,18 @@
   background: #fff;
   box-shadow: 0 16px 48px #0b2b2830, 0 2px 8px #0b2b2812;
   color: #244c3a;
+  animation: team-menu-enter .16s ease-out;
+}
+
+@keyframes team-menu-enter {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .team-menu-heading { display: flex; align-items: center; gap: 12px; padding: 12px 12px 10px; }
 .team-menu-avatar { width: 40px; height: 40px; font-size: 16px; }
 .team-menu-heading strong { display: block; font-size: 14px; font-weight: 650; }
 .team-menu-heading div > span { display: block; margin-top: 4px; color: #829187; font-size: 11px; }
-.team-menu-status { display: flex; align-items: center; gap: 7px; margin: 2px 12px 12px; font-size: 11px; color: #7c887f; }
-.team-menu-status > span { width: 6px; height: 6px; border-radius: 50%; background: #b6a171; }
-.team-menu-status.is-connected > span { background: #52a17d; }
 .team-menu-separator { height: 1px; margin: 5px 4px 7px; background: #e8eeea; }
 .team-menu > button {
   display: flex;
@@ -92,11 +105,14 @@
   text-align: left;
   font-size: 12px;
   font-weight: 500;
+  transition: background-color .15s ease, color .15s ease;
 }
-.team-menu > button svg { color: #799783; }
+.team-menu > button svg { color: #799783; transition: color .15s ease; }
 .team-menu > button:hover,
-.team-menu > button:focus { background: #edf3e8; color: #245538; }
-.team-menu > button:focus-visible { outline: 2px solid #62a88b; outline-offset: -2px; }
+.team-menu > button:focus-visible { background: #edf3e8; color: #245538; }
+.team-menu > button:hover svg,
+.team-menu > button:focus-visible svg { color: #4c6b58; }
+.team-menu > button:focus-visible { outline: 2px solid #8c9690; outline-offset: -2px; }
 
 @media (max-width: 780px) {
   .team-profile-name strong { font-size: 13px; }
@@ -105,5 +121,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .team-profile-chevron { transition: none; }
+  .team-profile-trigger,
+  .team-profile-chevron,
+  .team-menu > button,
+  .team-menu > button svg { transition: none; }
+  .team-menu { animation: none; }
 }

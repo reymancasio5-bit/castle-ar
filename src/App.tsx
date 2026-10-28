@@ -105,7 +105,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
         <button className={view === 'properties' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('properties')}><Building2 size={19} /><span>Properties</span><span className="nav-count">{properties.length}</span></button>
         <button className={view === 'reconciliation' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('reconciliation')}><ClipboardCheck size={19} /><span>Reconciliation</span>{unverified > 0 && <span className="nav-count">{unverified}</span>}</button>
       </nav>
-      <TeamMenu configured={configured} onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} />
+      <TeamMenu onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} />
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(!mobileNav)}><Menu size={22} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{view === 'overview' ? 'Overview' : view === 'properties' ? 'Properties' : 'Reconciliation'}</strong></div><div className="topbar-right"><span className={`connection-indicator ${configured ? 'connected' : ''}`}><span />{configured ? 'Google Sheets connected' : 'Preview workspace'}</span><span className="topbar-divider" /><span className="top-avatar" title="Shared Castle workspace">C</span></div></header>
@@ -168,6 +168,12 @@ export function Dialog({ title, onClose, children, className = '', busy = false,
     return () => { document.body.style.overflow = overflow; prior?.focus(); };
   }, []);
   function onKeyDown(event: React.KeyboardEvent) {
+    // Let an open native picker handle Escape before dismissing its dialog.
+    const target = event.target instanceof Element ? event.target.closest('select') : null;
+    if (event.key === 'Escape' && CSS.supports('selector(select:open)') && target?.matches(':open')) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key === 'Escape' && !busy) { event.stopPropagation(); close.current(); }
     if (event.key !== 'Tab') return;
     const focusable = ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]');

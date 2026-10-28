@@ -3,8 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronUp, CircleHelp, Settings2 } from 'lucide-react';
 import './TeamMenu.css';
 
-export default function TeamMenu({ configured, onSettings, onHelp }: {
-  configured: boolean;
+export default function TeamMenu({ onSettings, onHelp }: {
   onSettings: () => void;
   onHelp: () => void;
 }) {
@@ -33,6 +32,7 @@ export default function TeamMenu({ configured, onSettings, onHelp }: {
         left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)),
         width,
         maxHeight: opensAbove ? above : below,
+        transformOrigin: opensAbove ? 'left bottom' : 'left top',
         ...(opensAbove ? { bottom: window.innerHeight - anchor.top + 8 } : { top: anchor.bottom + 8 }),
       });
     }
@@ -109,9 +109,6 @@ export default function TeamMenu({ configured, onSettings, onHelp }: {
       <div className="team-menu-heading" role="presentation">
         <span className="team-menu-avatar" aria-hidden="true">C</span>
         <div><strong>Castle team</strong><span>Shared workspace</span></div>
-      </div>
-      <div className={`team-menu-status ${configured ? 'is-connected' : ''}`} role="presentation">
-        <span aria-hidden="true" />{configured ? 'Google Sheets connected' : 'Preview workspace'}
       </div>
       <div className="team-menu-separator" role="separator" />
       <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onHelp)}>
