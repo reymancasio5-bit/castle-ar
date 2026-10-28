@@ -27,7 +27,9 @@ Without an Apps Script URL, the app opens a clearly labeled preview based on the
 
 This is deliberately a no-login app: anyone with access to the Apps Script endpoint can read and edit the records. The frontend contains no Google credentials. The public endpoint URL is not a password. No authentication layer is implemented because the user explicitly requested none.
 
-When changing Code.gs, publish a new version under **Deploy → Manage deployments**; saving the editor alone does not update the live web app.
+The supplied Code.gs also includes the spreadsheet's account-manager filter. Save it in the spreadsheet's bound Apps Script project, keeping only one `onEdit` and one `filterAccountManagers` function across the project. Editing `Nov, 2026!A2` shows the selected team's complete property sections; `All` or an empty cell restores every data row. Matching ignores case and surrounding spaces. The filter removes any standard sheet filter and starts at row 3. After adding properties through the website, run `filterAccountManagers` or change A2 to apply the selection to the new sections.
+
+Saving the bound script enables this edit handler. To update the live web app too, publish a new version under **Deploy → Manage deployments**; saving the editor alone does not update the web-app deployment.
 
 ## Publish on GitHub Pages
 

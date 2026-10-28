@@ -15,20 +15,36 @@ function harness() {
   formulas[9][3] = '=D4-D5-D6-D7-D8-D9';
   formulas[17][3] = '=D12-SUM(D13:D17)';
   formulas[25][3] = '=D20-SUM(D21:D25)';
-  const state = { data, formulas, maxRows: 30, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false };
+  const state = { data, formulas, maxRows: 30, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false, hiddenRows: new Set<number>(), standardFilter: true };
   const properties = new Map<string, string>();
   const cache = new Map<string, string>();
   const sheet = {
     getName: () => 'Nov, 2026', getSheetId: () => 0, getLastRow: () => data.length, getMaxRows: () => state.maxRows,
-    getRange: (r: number, c: number, rows: number, columns: number) => ({
-      getValues: () => { if (state.failReadAfterWrite && state.writes) throw new Error('Read unavailable'); return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => data[r - 1 + y]?.[c - 1 + x] ?? '')); },
-      getFormulas: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => formulas[r - 1 + y]?.[c - 1 + x] ?? '')),
-    }),
+    getFilter: () => state.standardFilter ? { remove: () => { state.standardFilter = false; } } : null,
+    showRows: (first: number, count: number) => {
+      assert.ok(first >= 3 && count > 0 && first + count - 1 <= data.length);
+      for (let row = first; row < first + count; row++) state.hiddenRows.delete(row);
+    },
+    hideRows: (first: number, count: number) => {
+      assert.ok(first >= 3 && count > 0 && first + count - 1 <= data.length);
+      for (let row = first; row < first + count; row++) state.hiddenRows.add(row);
+    },
+    getRange: (r: number | string, c = 1, rows = 1, columns = 1): any => {
+      if (typeof r === 'string') {
+        assert.equal(r, 'A2');
+        return { getDisplayValue: () => String(data[1]?.[0] ?? '') };
+      }
+      return {
+        getValues: () => { if (state.failReadAfterWrite && state.writes) throw new Error('Read unavailable'); return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => data[r - 1 + y]?.[c - 1 + x] ?? '')); },
+        getFormulas: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => formulas[r - 1 + y]?.[c - 1 + x] ?? '')),
+        getDisplayValues: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => String(data[r - 1 + y]?.[c - 1 + x] ?? ''))),
+      };
+    },
   };
-  const spreadsheet = { getSheets: () => [sheet, { getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
+  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : null, getSheets: () => [sheet, { getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
   const context = vm.createContext({
     Date, JSON, Math, Number, String, Object, Array, Error, RegExp, Boolean, isFinite,
-    SpreadsheetApp: { openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
+    SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
     ContentService: { MimeType: { JSON: 'application/json', JAVASCRIPT: 'application/javascript' }, createTextOutput: (value: string) => ({ value, mime: '', setMimeType(mime: string) { this.mime = mime; return this; } }) },
     Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (_: string, value: string) => [...createHash('sha256').update(value).digest()], formatDate: (date: Date, zone: string, format: string) => { const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date); const get = (type: string) => parts.find(part => part.type === type)!.value; return format === 'yyyy-MM' ? `${get('year')}-${get('month')}` : `${get('year')}-${get('month')}-${get('day')}`; } },
     LockService: { getScriptLock: () => ({ tryLock: () => { if (state.locked) return false; state.locked = true; return true; }, releaseLock: () => { state.locked = false; } }) },
@@ -73,8 +89,73 @@ function harness() {
     assert.equal(typeof context.doPost, 'function', 'Apps Script must expose doPost');
     return JSON.parse(context.doPost(form ? { parameter: { payload: JSON.stringify(body) } } : { postData: { contents: JSON.stringify(body), type: 'text/plain' } }).value);
   };
-  return { state, context, get, read, post, cache, properties };
+  return { state, context, get, read, post, cache, properties, sheet, spreadsheet };
 }
+
+test('A2 edits filter entire manager blocks and switching teams restores prior hidden rows', () => {
+  const app = harness();
+  assert.equal(typeof app.context.onEdit, 'function', 'Apps Script must expose the sheet edit trigger');
+  const event = { range: { getSheet: () => app.sheet, getA1Notation: () => 'A2' } };
+  app.state.data[1][0] = '  tEaMa  ';
+  const originalData = structuredClone(app.state.data);
+  const originalFormulas = structuredClone(app.state.formulas);
+  app.context.onEdit(event);
+  assert.deepEqual([...app.state.hiddenRows], [3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 21, 22, 23, 24, 25, 26]);
+  assert.equal(app.state.standardFilter, false);
+  assert.deepEqual(app.state.data, originalData);
+  assert.deepEqual(app.state.formulas, originalFormulas);
+  assert.equal(app.read().snapshot.months[0].properties.length, 3, 'the web app still reads hidden properties');
+  app.state.data[1][0] = 'TeamB';
+  app.context.onEdit(event);
+  assert.deepEqual([...app.state.hiddenRows], [11, 12, 13, 14, 15, 16, 17, 18]);
+});
+
+test('All or an empty selection restores every data row and removes the standard filter', () => {
+  for (const selection of ['  ALL  ', '', '  ']) {
+    const app = harness();
+    assert.equal(typeof app.context.filterAccountManagers, 'function');
+    app.state.hiddenRows.add(3);
+    app.state.hiddenRows.add(26);
+    app.state.data[1][0] = selection;
+    app.context.filterAccountManagers();
+    assert.deepEqual([...app.state.hiddenRows], []);
+    assert.equal(app.state.standardFilter, false);
+  }
+});
+
+test('the edit trigger ignores other tabs, other cells, and calls without an edit range', () => {
+  const app = harness();
+  assert.equal(typeof app.context.onEdit, 'function');
+  app.state.hiddenRows.add(3);
+  for (const event of [undefined, {}, { range: { getSheet: () => app.sheet, getA1Notation: () => 'B2' } }, { range: { getSheet: () => ({ getName: () => 'Dec, 2026' }), getA1Notation: () => 'A2' } }]) {
+    app.context.onEdit(event);
+  }
+  assert.deepEqual([...app.state.hiddenRows], [3]);
+  assert.equal(app.state.standardFilter, true);
+});
+
+test('sections missing AR end at the next header or the final row', () => {
+  const app = harness();
+  assert.equal(typeof app.context.filterAccountManagers, 'function');
+  app.state.data[1][0] = 'TeamA';
+  app.state.data[2][0] = ' ACCOUNT MANAGER ';
+  app.state.data[9][2] = '';
+  app.state.data[17][2] = ' ar ';
+  app.state.data[25][2] = '';
+  app.context.filterAccountManagers();
+  assert.deepEqual([...app.state.hiddenRows], [3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 21, 22, 23, 24, 25, 26]);
+});
+
+test('manual filtering safely skips a missing tab or a sheet without data rows', () => {
+  const app = harness();
+  assert.equal(typeof app.context.filterAccountManagers, 'function');
+  app.spreadsheet.getSheetByName = () => null;
+  assert.doesNotThrow(() => app.context.filterAccountManagers());
+  app.spreadsheet.getSheetByName = () => app.sheet;
+  app.state.data.splice(2);
+  assert.doesNotThrow(() => app.context.filterAccountManagers());
+  assert.equal(app.state.standardFilter, true);
+});
 
 test('read parses repeated property blocks, integer cents, blank amounts, and zero independently', () => {
   const app = harness(); const result = app.read();

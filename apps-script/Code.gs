@@ -9,6 +9,105 @@ var CASTLE_MAX_CENTS = 999999999999;
 var CASTLE_REQUEST_PREFIX = 'castle_request_';
 var CASTLE_HEADERS = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 
+// Keep the spreadsheet's A2 manager selector alongside the web-app bridge.
+const SHEET_NAME = 'Nov, 2026';
+const SELECTOR_CELL = 'A2';
+const FIRST_DATA_ROW = 3;
+
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const sheet = e.range.getSheet();
+
+  if (
+    sheet.getName() !== SHEET_NAME ||
+    e.range.getA1Notation() !== SELECTOR_CELL
+  ) return;
+
+  filterAccountManagers();
+}
+
+function filterAccountManagers() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) return;
+
+  const selection = String(
+    sheet.getRange(SELECTOR_CELL).getDisplayValue()
+  ).trim().toLowerCase();
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < FIRST_DATA_ROW) return;
+
+  // Remove the old standard filter to avoid conflicts.
+  const existingFilter = sheet.getFilter();
+  if (existingFilter) existingFilter.remove();
+
+  // Restore visibility before applying a new selection.
+  sheet.showRows(
+    FIRST_DATA_ROW,
+    lastRow - FIRST_DATA_ROW + 1
+  );
+
+  // All dropdown or empty A2 means show everything.
+  if (selection === '' || selection === 'all') return;
+
+  const values = sheet.getRange(
+    FIRST_DATA_ROW, 1,
+    lastRow - FIRST_DATA_ROW + 1, 3
+  ).getDisplayValues();
+
+  const sections = [];
+  let start = -1;
+  let team = '';
+
+  function saveSection(endIndex) {
+    if (start < 0) return;
+
+    sections.push({
+      firstRow: FIRST_DATA_ROW + start,
+      lastRow: FIRST_DATA_ROW + endIndex,
+      team: team
+    });
+  }
+
+  for (let i = 0; i < values.length; i++) {
+    const colA = String(values[i][0]).trim().toLowerCase();
+    const colC = String(values[i][2]).trim().toLowerCase();
+
+    if (colA === 'account manager') {
+      // Close any previous incomplete section.
+      if (start >= 0) saveSection(i - 1);
+
+      start = i;
+      team = i + 1 < values.length
+        ? String(values[i + 1][0]).trim().toLowerCase()
+        : '';
+    }
+
+    if (colC === 'ar' && start >= 0) {
+      saveSection(i);
+      start = -1;
+      team = '';
+    }
+  }
+
+  // Include the final section if AR is missing.
+  if (start >= 0) {
+    saveSection(values.length - 1);
+  }
+
+  // Hide entire sections belonging to other teams.
+  sections.forEach(section => {
+    if (section.team !== selection) {
+      sheet.hideRows(
+        section.firstRow,
+        section.lastRow - section.firstRow + 1
+      );
+    }
+  });
+}
+
 function doGet(e) {
   var parameters = e && e.parameter || {};
   var callback = parameters.callback || '';
