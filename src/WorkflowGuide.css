@@ -1,0 +1,29 @@
+.dialog.workflow-dialog { width: 700px; }
+.workflow-dialog .dialog-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+}
+.help-content.workflow-guide { font-size: 14px; line-height: 1.7; }
+.workflow-intro { margin: 0; }
+.workflow-guide .workflow-steps { margin: 24px 0; padding-left: 23px; }
+.workflow-guide .workflow-steps > li { padding: 0 0 22px 7px; margin: 0 0 22px; border-bottom: 1px solid #e5e7eb; }
+.workflow-guide .workflow-steps > li:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.workflow-steps > li::marker { color: #25282d; font-weight: 700; }
+.workflow-guide h3 { margin: 0 0 10px; font-size: 15px; line-height: 1.5; color: #25282d; }
+.workflow-details { display: grid; gap: 7px; margin: 0; }
+.workflow-details > div { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
+.workflow-details dt { font-size: 12px; font-weight: 700; line-height: 1.98; color: #4b5563; }
+.workflow-details dd { margin: 0; }
+.workflow-guide strong { font-weight: 600; color: #374151; }
+.workflow-note { padding: 18px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+.workflow-note p { margin: 0; }
+.workflow-note p + p { margin-top: 12px; }
+@media (max-width: 560px) {
+  .workflow-dialog .dialog-header { padding: 20px; }
+  .help-content.workflow-guide { padding: 20px; }
+  .workflow-guide .workflow-steps { padding-left: 20px; }
+  .workflow-details > div { grid-template-columns: 36px minmax(0, 1fr); gap: 6px; }
+  .workflow-note { padding: 14px; }
+}

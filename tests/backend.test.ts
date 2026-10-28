@@ -15,7 +15,27 @@ function harness() {
   formulas[9][3] = '=D4-D5-D6-D7-D8-D9';
   formulas[17][3] = '=D12-SUM(D13:D17)';
   formulas[25][3] = '=D20-SUM(D21:D25)';
-  const state = { data, formulas, maxRows: 30, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false, hiddenRows: new Set<number>(), standardFilter: true };
+  const formats: Record<string, any>[][] = data.map(() => Array.from({ length: 10 }, () => ({})));
+  const validations: Record<string, any>[][] = data.map(() => Array.from({ length: 10 }, () => ({})));
+  // Original property is styled; later blocks intentionally have no formatting.
+  for (let r = 2; r <= 9; r++) {
+    formats[r][0] = { borders: { left: { style: 'SOLID' }, right: { style: 'SOLID' } } };
+    formats[r][1] = { borders: { left: { style: 'SOLID' } } };
+    formats[r][9] = { borders: { right: { style: 'SOLID' } } };
+  }
+  for (let c = 0; c < 10; c++) {
+    formats[2][c] = { ...formats[2][c], borders: { ...formats[2][c].borders, top: { style: 'SOLID' } }, textFormat: { fontFamily: 'Calibri', fontSize: 12, bold: true }, horizontalAlignment: 'CENTER' };
+    formats[9][c] = { ...formats[9][c], borders: { ...formats[9][c].borders, bottom: { style: 'SOLID' } } };
+  }
+  formats[3][1].horizontalAlignment = 'CENTER';
+  formats[3][3].numberFormat = { type: 'NUMBER', pattern: '#,##0.##' };
+  for (let r = 4; r <= 7; r++) {
+    formats[r][4].numberFormat = { type: 'DATE', pattern: 'mmm d' };
+    formats[r][6].numberFormat = { type: 'DATE', pattern: 'mmm d' };
+  }
+  formats[7][2].textFormat = { fontFamily: 'Arial', fontSize: 8, bold: true };
+  formats[8][2].textFormat = { fontFamily: 'Arial', fontSize: 9, bold: true };
+  const state = { data, formulas, formats, validations, maxRows: 30, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false, hiddenRows: new Set<number>(), standardFilter: true };
   const properties = new Map<string, string>();
   const cache = new Map<string, string>();
   const sheet = {
@@ -56,8 +76,36 @@ function harness() {
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
         if (request.appendDimension) { state.maxRows += request.appendDimension.length; continue; }
+        if (request.copyPaste) {
+          const { source, destination, pasteType } = request.copyPaste;
+          assert.equal(pasteType, 'PASTE_FORMAT', 'formatting must never copy source values or formulas');
+          assert.equal(source.sheetId, 0);
+          assert.equal(destination.sheetId, 0);
+          assert.ok(destination.endRowIndex <= state.maxRows, 'expand the sheet before copying formats');
+          for (let r = destination.startRowIndex; r < destination.endRowIndex; r++) {
+            formats[r] ??= Array.from({ length: 10 }, () => ({}));
+            for (let c = destination.startColumnIndex; c < destination.endColumnIndex; c++) {
+              const sourceRow = source.startRowIndex + (r - destination.startRowIndex) % (source.endRowIndex - source.startRowIndex);
+              const sourceColumn = source.startColumnIndex + (c - destination.startColumnIndex) % (source.endColumnIndex - source.startColumnIndex);
+              formats[r][c] = structuredClone(formats[sourceRow][sourceColumn]);
+            }
+          }
+          continue;
+        }
         const gridRange = request.repeatCell?.range ?? request.setDataValidation?.range;
         if (gridRange) assert.ok(gridRange.endRowIndex <= state.maxRows, 'batch ranges must remain inside the expanded sheet grid');
+        if (request.setDataValidation) {
+          for (let r = gridRange.startRowIndex; r < gridRange.endRowIndex; r++) {
+            validations[r] ??= Array.from({ length: 10 }, () => ({}));
+            for (let c = gridRange.startColumnIndex; c < gridRange.endColumnIndex; c++) validations[r][c] = structuredClone(request.setDataValidation.rule);
+          }
+        }
+        if (request.repeatCell?.fields === 'userEnteredFormat.numberFormat') {
+          for (let r = gridRange.startRowIndex; r < gridRange.endRowIndex; r++) {
+            formats[r] ??= Array.from({ length: 10 }, () => ({}));
+            for (let c = gridRange.startColumnIndex; c < gridRange.endColumnIndex; c++) formats[r][c].numberFormat = structuredClone(request.repeatCell.cell.userEnteredFormat.numberFormat);
+          }
+        }
         if (!request.updateCells) continue;
         const update = request.updateCells;
         assert.equal(update.range?.sheetId ?? update.start?.sheetId, 0);
@@ -66,6 +114,7 @@ function harness() {
         update.rows.forEach((entry: any, y: number) => entry.values.forEach((cell: any, x: number) => {
           const r = startRow + y, c = startColumn + x;
           while (data.length <= r) { data.push(row()); formulas.push(row()); }
+          formats[r] ??= Array.from({ length: 10 }, () => ({}));
           if (!update.fields.includes('userEnteredValue')) return;
           const value = cell.userEnteredValue;
           formulas[r][c] = value?.formulaValue ?? '';
@@ -332,6 +381,52 @@ test('multiple appended properties get distinct source rows and duplicate names 
   assert.equal(added.ok, true);
   assert.deepEqual(added.snapshot.months[0].properties.slice(3).map((property: any) => property.id), ['0:28', '0:36']);
   assert.equal(app.state.data.length, 42);
+});
+
+test('new properties inherit the first property borders, fonts, alignment, and date formats', () => {
+  const app = harness();
+  const originalValues = structuredClone(app.state.data);
+  const originalFormulas = structuredClone(app.state.formulas);
+  const originalFormats = structuredClone(app.state.formats);
+  const result = app.post({ requestId: 'formatted_properties_001', revision: app.read().snapshot.revision, changes: [
+    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 25000 },
+    { kind: 'addProperty', monthId: '0', name: 'Zero House', manager: 'TeamA', totalCents: 0 },
+  ] });
+  assert.equal(result.ok, true, result.error?.message);
+  for (const firstIndex of [26, 34]) {
+    assert.deepEqual(app.state.formats.slice(firstIndex, firstIndex + 8), originalFormats.slice(2, 10));
+    assert.equal(app.state.formats[firstIndex][0].borders.top.style, 'SOLID');
+    assert.equal(app.state.formats[firstIndex][0].textFormat.bold, true);
+    assert.equal(app.state.formats[firstIndex + 1][1].horizontalAlignment, 'CENTER');
+    assert.deepEqual(app.state.formats[firstIndex + 2][4].numberFormat, { type: 'DATE', pattern: 'mmm d' });
+    assert.equal(app.state.formats[firstIndex + 7][9].borders.bottom.style, 'SOLID');
+    for (let payment = firstIndex + 2; payment <= firstIndex + 6; payment++) {
+      assert.equal(app.state.validations[payment][9].condition.type, 'BOOLEAN');
+    }
+  }
+  assert.equal(app.state.data[27][1], 'New House');
+  assert.equal(app.state.data[35][3], 0);
+  assert.equal(app.state.formulas[33][3], '=D28-SUM(D29:D33)');
+  assert.deepEqual(app.state.data.slice(0, 26), originalValues);
+  assert.deepEqual(app.state.formulas.slice(0, 26), originalFormulas);
+  assert.deepEqual(app.state.formats.slice(0, 26), originalFormats);
+  assert.equal(app.state.writes, 1, 'formats and values belong to the same atomic save');
+});
+
+test('format copying matches payment roles when the template has extra payment rows', () => {
+  const app = harness();
+  app.state.data.splice(7, 0, row('', '', 'Airbnb Payment', 19.99));
+  app.state.formulas.splice(7, 0, row());
+  app.state.formats.splice(7, 0, Array.from({ length: 10 }, () => ({ textFormat: { italic: true } })));
+  const result = app.post({ requestId: 'variable_format_001', revision: app.read().snapshot.revision, changes: [
+    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 0 },
+  ] });
+  assert.equal(result.ok, true, result.error?.message);
+  assert.equal(result.snapshot.months[0].properties[3].id, '0:29');
+  assert.deepEqual(app.state.formats[32][2].textFormat, { fontFamily: 'Arial', fontSize: 8, bold: true });
+  assert.deepEqual(app.state.formats[33][2].textFormat, { fontFamily: 'Arial', fontSize: 9, bold: true });
+  assert.equal(app.state.formats[34][9].borders.bottom.style, 'SOLID');
+  assert.equal(app.state.formulas[34][3], '=D29-SUM(D30:D34)');
 });
 
 test('clearing a payment preserves blank-versus-zero semantics and rejects duplicate payment fields', () => {

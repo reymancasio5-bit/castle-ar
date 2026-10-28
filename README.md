@@ -69,6 +69,8 @@ Amounts use US-style `1,234.56` separators and support accounting negatives. Val
 
 Monthly tabs are recognized by names such as `Nov, 2026` or `November 2026`. Each property has a header, Total Payment row, payment rows, and AR formula row. The parser reads recognized monthly tabs and leaves unrelated tabs alone. Additional matching monthly tabs created in Google Sheets appear after Refresh. Extra payment rows of recognized types can be inserted in Sheets, provided their AR formula is maintained.
 
+New properties copy A:J cell formatting from the first existing property in their month, including borders, fonts, alignment, and number/date formats. Header, total, payment types, and AR rows are matched separately to support templates with extra payment rows. The new property's values, formulas, and Daisy checkboxes are saved in the same batch. This applies to future additions; existing blocks are not reformatted.
+
 Original snapshot reviewed 2026-10-28:
 
 | Property | Team | Expected | Recorded | AR |

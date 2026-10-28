@@ -239,6 +239,13 @@ function castleRead() {
         paymentIndex[paymentId] = { sheetId: Number(id), row: rowNumber, payment: payment };
       }
       if (!foundAr || !property.payments.length) castleThrow('SOURCE_DATA', label + ': property ' + property.name + ' is missing payment rows or its AR row.');
+      // Use the first established block, not a possibly unformatted recent addition.
+      if (!meta.formatTemplate) {
+        meta.formatTemplate = {
+          headerRow: totalIndex, totalRow: totalIndex + 1, arRow: index + 1,
+          payments: property.payments.map(function (payment) { return { row: paymentIndex[payment.id].row, type: payment.type }; })
+        };
+      }
       month.properties.push(property);
     }
     months.push(month);
@@ -318,8 +325,8 @@ function castleBuildRequests(changes, current) {
         }
         requests.push({ updateCells: { start: { sheetId: target.sheetId, rowIndex: firstRow + offset - 1, columnIndex: 0 }, rows: [{ values: cells }], fields: 'userEnteredValue' } });
       });
+      requests = requests.concat(castlePropertyFormatRequests(target, firstRow));
       requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: totalRow + 5, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
-      requests.push({ repeatCell: { range: { sheetId: target.sheetId, startRowIndex: totalRow - 1, endRowIndex: totalRow + 6, startColumnIndex: 3, endColumnIndex: 8 }, cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0.00' } } }, fields: 'userEnteredFormat.numberFormat' } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });
   Object.keys(appendRows).forEach(function (monthId) {
@@ -327,6 +334,29 @@ function castleBuildRequests(changes, current) {
     if (needed > target.maxRows) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'ROWS', length: needed - target.maxRows } });
   });
   return requests;
+}
+
+function castlePropertyFormatRequests(month, firstRow) {
+  var template = month.formatTemplate, used = {};
+  var sourceRows = [template.headerRow, template.totalRow];
+  ['Airbnb', 'Airbnb', 'Airbnb', 'Vrbo', 'Owner'].forEach(function (type) {
+    var matching = template.payments.filter(function (payment) { return payment.type === type; });
+    var occurrence = used[type] || 0;
+    // Reuse a body row if the template has fewer slots or omits a payment type.
+    var source = matching[Math.min(occurrence, matching.length - 1)] || template.payments[0];
+    sourceRows.push(source.row);
+    used[type] = occurrence + 1;
+  });
+  sourceRows.push(template.arRow);
+  return sourceRows.map(function (sourceRow, offset) {
+    // Copy one matching row at a time so variable-length templates cannot spill
+    // into the next property. PASTE_FORMAT preserves values, formulas, and validation.
+    return { copyPaste: {
+      source: { sheetId: month.sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10 },
+      destination: { sheetId: month.sheetId, startRowIndex: firstRow + offset - 1, endRowIndex: firstRow + offset, startColumnIndex: 0, endColumnIndex: 10 },
+      pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
+    } };
+  });
 }
 
 function castleCell(sheetId, row, column, value, type) {

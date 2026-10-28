@@ -6,6 +6,7 @@ import { paymentDraftToFields, type PaymentDraft } from './editor';
 import { exportWorkbook } from './excel';
 import ImportWizard from './ImportWizard';
 import TeamMenu from './TeamMenu';
+import WorkflowGuide from './WorkflowGuide';
 import './styles.css';
 
 type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot> };
@@ -131,7 +132,7 @@ export default function App({ api, configured, onConfigure }: { api: Api; config
     {selected && <PropertyDrawer key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}
     {adding && month && <AddProperty month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}
     {importOpen && month && <ImportWizard month={month} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}
-    {helpOpen && <Dialog title="Your monthly AR workflow" onClose={() => setHelpOpen(false)}><div className="help-content"><p>Castle keeps expected amounts, incoming payments, and outstanding balances together for each property.</p><ol><li><strong>Connect your sheet.</strong> Add your deployed Apps Script URL in Settings to share records with your team.</li><li><strong>Record collections.</strong> Open a property to update Airbnb, Vrbo, and owner payments. Outstanding balances calculate automatically.</li><li><strong>Reconcile deposits.</strong> Enter the payout bundle and bank amount. Equal amounts are marked Matched; Daisy’s verification is a separate manual review.</li><li><strong>Bring your workbook.</strong> Import Excel to preview and apply updates, or export a copy of the current month.</li></ol><p className="muted">Amounts follow your spreadsheet’s currency. No currency conversion is applied.</p></div></Dialog>}
+    {helpOpen && <Dialog title="Your monthly AR workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}
   </div>;
 }
 
