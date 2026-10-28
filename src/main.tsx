@@ -6,6 +6,7 @@ import { createApi, validateEndpoint } from './api.ts';
 import { createPreviewApi } from './preview-api.ts';
 import './styles.css';
 import './connection.css';
+import './neutral-theme.css';
 declare global { interface Window { CASTLE_CONFIG?: { appsScriptUrl?:string } } }
 function storedEndpoint(){try{return localStorage.getItem('castle-apps-script-url')||window.CASTLE_CONFIG?.appsScriptUrl||''}catch{return window.CASTLE_CONFIG?.appsScriptUrl||''}}
 function Root(){

@@ -1,0 +1,93 @@
+/* White workspace surfaces; green remains an action and status accent. */
+:root {
+  color: #202124;
+  background: #fff;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+}
+
+.main-shell { background: #fff; }
+.topbar, .metric-card, .panel, .dialog, .team-menu, .connection-modal {
+  background: #fff;
+  border-color: #e5e7eb;
+}
+.metric-card, .panel { box-shadow: 0 2px 4px #00000003; }
+
+h1, .panel h2, .breadcrumbs strong, .property-name-cell,
+.table-property-button, .balance-cell, .progress-donut strong,
+.progress-legend strong, .channel-row strong, .review-callout h3,
+.empty-state h2, .empty-state h3, .loading-state h2,
+.dialog-header h2, .drawer-summary strong, .drawer-section-heading h3,
+.mobile-property-heading strong, .mobile-property-amounts strong,
+.team-menu-heading strong, .connection-modal h2, .connection-steps strong {
+  color: #25282d;
+}
+.metric-card:not(.green) .metric-value { color: #25282d; }
+
+.muted, .breadcrumbs, .connection-indicator, .eyebrow, .page-heading p,
+.metric-header, .metric-detail, .metric-caption, .panel-heading p,
+.property-name-cell small, .table-property-button span, .table-footer,
+.progress-donut small, .progress-legend > div, .collection-note p,
+.channel-panel > p, .channel-row > div > span, .review-callout p,
+.page-footer, .empty-state p, .loading-state p, .dialog-header p,
+.field-help, .drawer-summary > div > span, .drawer-section-heading span,
+.payment-sequence, .system-field, .verification-checkbox, .drawer-info,
+.drawer-info p, .drawer-footer-actions > span, .help-content, .help-content .muted,
+.mobile-property-heading small, .mobile-property-amounts small,
+.team-menu-heading div > span, .team-menu-status, .connection-intro,
+.connection-steps, .connection-steps li, .connection-note, .connection-eyebrow {
+  color: #6b7280;
+}
+
+td, th, tfoot td:first-child, .month-select select, .search-field input,
+.select-field select, .button.secondary, .record-tabs button:not(.selected),
+.table-footer button, .collection-note strong, .page-footer a,
+.add-form label, .payment-field-grid label, .drawer-summary label,
+.add-form input, .payment-field-grid input, .drawer-summary input,
+.payment-card legend, .property-mobile-card, .team-menu > button,
+.connection-modal, .connection-modal input, .connection-label {
+  color: #4b5563;
+}
+
+.breadcrumbs svg, .month-select, .icon-button, .search-field,
+.select-field > svg, .row-open, .subtle-icon, .note-icon,
+.mobile-property-heading > svg, .team-menu > button svg, .connection-close {
+  color: #6b7280;
+}
+input::placeholder { color: #6b7280; }
+
+.preview-banner, th, tfoot td, .collection-note, .review-callout,
+.drawer-summary, .property-mobile-card:hover, .property-table tbody tr:hover,
+.button.secondary:hover, .icon-button:hover {
+  background: #f9fafb;
+}
+.preview-banner { color: #4b5563; }
+.count-pill, .record-tabs button span, .review-icon,
+.metric-card:not(.green):not(.amber):not(.blue) .metric-icon,
+.property-icon, .top-avatar, .team-menu-avatar, .connection-symbol,
+.connection-steps li > span {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #e5e7eb;
+}
+.metric-mini-bar, .channel-bar, .legend-dot.gray { background: #e5e7eb; }
+.team-menu > button:hover, .team-menu > button:focus {
+  background: #f3f4f6;
+  color: #25282d;
+}
+.team-menu-separator { background: #e5e7eb; }
+.review-callout .button { background: #fff; color: #4b5563; border-color: #d1d5db; }
+
+.topbar, .preview-banner, .metric-card, .panel, th, td, tfoot td,
+.panel-heading, .record-tabs, .table-footer, .collection-note, .review-callout,
+.month-select, .sync-button, .search-field, .select-field select, .button.secondary,
+.property-mobile-card, .mobile-property-amounts, .page-footer,
+.dialog-header, .drawer-summary, .payment-card, .verification-checkbox,
+.drawer-footer, .add-form input, .payment-field-grid input, .drawer-summary input,
+.connection-modal input, .connection-close {
+  border-color: #e5e7eb;
+}
+
+.modal-backdrop, .nav-scrim, .connection-modal::backdrop {
+  background: rgb(17 24 39 / 35%);
+}
