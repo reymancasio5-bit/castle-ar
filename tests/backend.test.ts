@@ -10,6 +10,7 @@ type Cell = string | number | boolean | Date;
 const header: Cell[] = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 const row = (...values: Cell[]) => Array.from({ length: 10 }, (_, i) => values[i] ?? '');
 function harness() {
+  const status = {exists:false, id:1, data:[] as Cell[][], formulas:[] as Cell[][], maxRows:100, maxColumns:10};
   const data: Cell[][] = [row('AM FILTER', new Date('2026-11-01T04:00:00Z')), row('Blank'), [...header], row('TeamB', 'Mtl 404 Le Bijou', 'Total Payment', 442.04), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 442.04), [...header], row('TeamA', 'Mtl 2429 Rue Allard Unit 1', 'Total Payment', 243.38), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 243.38), [...header], row('TeamB', 'Tor Unit 918-251 Jarvis St', 'Total Payment', 370.48), row('', '', 'Airbnb Payment', 116.86), row('', '', 'Airbnb Payment', 130.81), row('', '', 'Airbnb Payment', 77.19), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 45.62)];
   const formulas = data.map(() => row());
   formulas[9][3] = '=D4-D5-D6-D7-D8-D9';
@@ -61,7 +62,8 @@ function harness() {
       };
     },
   };
-  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : null, getSheets: () => [sheet, { getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
+  const statusSheet = {getName:()=> 'Status',getSheetId:()=>status.id,getLastRow:()=>status.data.length,getMaxRows:()=>status.maxRows,getMaxColumns:()=>status.maxColumns,getRange:(r:number,c:number,rows:number,columns:number)=>({getValues:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.data[r-1+y]?.[c-1+x]??'')),getFormulas:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.formulas[r-1+y]?.[c-1+x]??''))})};
+  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : name === 'Status' && status.exists ? statusSheet : null, getSheets: () => [sheet, ...(status.exists?[statusSheet]:[]), { getSheetId:()=>99, getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
   const context = vm.createContext({
     Date, JSON, Math, Number, String, Object, Array, Error, RegExp, Boolean, isFinite,
     SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
@@ -75,6 +77,13 @@ function harness() {
       assert.equal(state.locked, true, 'write must hold a script lock');
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
+        if(request.addSheet){assert.equal(status.exists,false);status.exists=true;status.id=request.addSheet.properties.sheetId;status.maxRows=request.addSheet.properties.gridProperties.rowCount;continue;}
+        if(request.appendDimension?.sheetId===status.id){if(request.appendDimension.dimension==='ROWS')status.maxRows+=request.appendDimension.length;else status.maxColumns+=request.appendDimension.length;continue;}
+        if((request.updateCells?.range?.sheetId??request.updateCells?.start?.sheetId)===status.id){
+          const u=request.updateCells;const r=u.range?.startRowIndex??u.start?.rowIndex;const c=u.range?.startColumnIndex??u.start?.columnIndex;
+          assert.ok(status.exists && r<status.maxRows && c<status.maxColumns);
+          u.rows.forEach((entry:any,y:number)=>entry.values.forEach((cell:any,x:number)=>{status.data[r+y]??=row();status.formulas[r+y]??=row();status.data[r+y][c+x]=cell.userEnteredValue?.stringValue??cell.userEnteredValue?.numberValue??'';status.formulas[r+y][c+x]='';}));continue;
+        }
         if (request.appendDimension) { if (request.appendDimension.dimension === 'COLUMNS') state.maxColumns += request.appendDimension.length; else state.maxRows += request.appendDimension.length; continue; }
         if (request.insertDimension) {
           const { startIndex, endIndex } = request.insertDimension.range;
@@ -151,7 +160,7 @@ function harness() {
     assert.equal(typeof context.doPost, 'function', 'Apps Script must expose doPost');
     return JSON.parse(context.doPost(form ? { parameter: { payload: JSON.stringify(body) } } : { postData: { contents: JSON.stringify(body), type: 'text/plain' } }).value);
   };
-  return { state, context, get, read, post, cache, properties, sheet, spreadsheet };
+  return { status, state, context, get, read, post, cache, properties, sheet, spreadsheet };
 }
 
 test('A2 edits filter entire manager blocks and switching teams restores prior hidden rows', () => {
@@ -677,13 +686,13 @@ test('follow-ups persist literal notes and images, update manager, and move with
   assert.equal(property.followUp.note, '=literal note\nCall Friday');
   assert.deepEqual(property.followUp.attachments, [attachment]);
   assert.ok(!Number.isNaN(Date.parse(property.followUp.updatedAt)));
-  assert.equal(app.state.maxColumns, 16);
-  assert.equal(app.state.data[11][10], 'Follow-up status');
-  assert.equal(app.state.formulas[12][11], '');
+  assert.equal(app.state.maxColumns, 10);
+  assert.equal(app.status.data[0][4], 'Follow-up status');
+  assert.equal(app.status.formulas[1][5], '');
   assert.equal(app.state.writes, 1);
   assert.equal(app.post(body).ok, true);
   assert.equal(app.state.writes, 1);
-  app.state.data[12][11] = 'Changed directly';
+  app.status.data[1][5] = 'Changed directly';
   const conflict = app.post({ ...body, requestId: 'followup-stale-001', revision: result.snapshot.revision });
   assert.equal(conflict.error.code, 'CONFLICT');
 });
@@ -703,8 +712,8 @@ test('follow-ups reject unsafe or excessive input and protect unrelated columns'
     const read = app.read();
     assert.equal(read.snapshot.months[0].properties[0].followUp, undefined);
     const result = app.post({ requestId: 'followup-protected', revision: read.snapshot.revision, changes: [valid] });
-    assert.equal(result.error.code, 'VALIDATION');
-    assert.equal(app.state.writes, 0);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(app.state.data[targetRow][10], 'Private unrelated information');
   }
 });
 
@@ -714,7 +723,7 @@ test('follow-ups can clear attachments and unassign managers without changing fi
   const change = { kind: 'updateFollowUp', propertyId: '0:4', manager: 'TeamA', status: 'awaiting_response', note: 'Waiting', attachments: [{ name: 'proof.webp', dataUrl: 'data:image/webp;base64,AAAA' }] };
   const saved = app.post({ requestId: 'followup-clear-first', revision: app.read().snapshot.revision, changes: [change, { ...change, propertyId: '0:12' }] });
   assert.equal(saved.ok, true, JSON.stringify(saved));
-  assert.equal(app.state.maxColumns, 16, 'one column expansion for multiple properties');
+  assert.equal(app.state.maxColumns, 10, 'monthly columns are never expanded');
   const result = app.post({ requestId: 'followup-clear-second', revision: saved.snapshot.revision, changes: [{ ...change, manager: '', status: 'resolved', note: '', attachments: [] }] });
   assert.equal(result.ok, true, JSON.stringify(result));
   const property = result.snapshot.months[0].properties[0];
@@ -723,8 +732,8 @@ test('follow-ups can clear attachments and unassign managers without changing fi
   assert.equal(property.followUp.note, '');
   assert.deepEqual(property.followUp.attachments, []);
   assert.deepEqual(app.state.data.map(cells => cells.slice(1, 10)), original);
-  assert.deepEqual(app.state.data[3].slice(13, 16), ['', '', '']);
-  assert.equal(app.state.maxColumns, 16);
+  assert.deepEqual(app.status.data[1].slice(7, 10), ['', '', '']);
+  assert.equal(app.state.maxColumns, 10);
 });
 
 test('follow-up protection includes formulas with blank displayed values', () => {
@@ -733,7 +742,57 @@ test('follow-up protection includes formulas with blank displayed values', () =>
     app.state.maxColumns = 16;
     app.state.formulas[r][14] = '=IF(TRUE,"","")';
     const result = app.post({ requestId: 'followup-formula-protect', revision: app.read().snapshot.revision, changes: [{ kind: 'updateFollowUp', propertyId: '0:4', manager: '', status: 'not_contacted', note: '', attachments: [] }] });
-    assert.equal(result.error.code, 'VALIDATION');
-    assert.equal(app.state.writes, 0);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(app.state.formulas[r][14], '=IF(TRUE,"","")');
   }
+});
+
+
+test('legacy follow-ups migrate together to an existing empty Status tab and clear only owned cells',()=>{
+ const app=harness();app.status.exists=true;app.status.maxRows=1;app.status.maxColumns=6;app.state.maxColumns=16;
+ const headers=['Follow-up status','Follow-up note','Follow-up updated at','Follow-up attachment 1','Follow-up attachment 2','Follow-up attachment 3'];
+ const attachment={name:'receipt.png',dataUrl:'data:image/png;base64,aGVsbG8='};
+ for(const r of [3,11]){app.state.data[r-1].push(...headers);app.state.data[r].push('awaiting_response','Old note','2026-10-31T12:00:00Z',JSON.stringify(attachment),'','');}
+ const before=app.read();assert.equal(before.snapshot.months[0].properties[1].followUp.note,'Old note');assert.equal(app.state.writes,0);
+ const result=app.post({requestId:'migrate-status-001',revision:before.snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'New note',attachments:[]}]});
+ assert.equal(result.ok,true,JSON.stringify(result));assert.equal(app.status.data.length,3);assert.equal(app.status.maxColumns,10);assert.equal(app.status.maxRows,3);
+ assert.equal(result.snapshot.months[0].properties[0].followUp.note,'New note');assert.deepEqual(result.snapshot.months[0].properties[1].followUp.attachments,[attachment]);
+ for(const r of [2,3,10,11])assert.deepEqual(app.state.data[r].slice(10,16),Array(6).fill(''));
+ assert.equal(app.state.writes,1);
+});
+
+test('Status records take precedence over old metadata and are updated without duplicates',()=>{
+ const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'Current',attachments:[]};
+ const saved=app.post({requestId:'status-precedence-1',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
+ app.state.maxColumns=16;app.state.data[2].push(...app.context.CASTLE_FOLLOWUP_HEADERS);app.state.data[3].push('not_contacted','Outdated','','','','');
+ const before=app.read();assert.equal(before.snapshot.months[0].properties[0].followUp.note,'Current');
+ const result=app.post({requestId:'status-precedence-2',revision:before.snapshot.revision,changes:[{...change,note:'Updated'}]});assert.equal(result.ok,true,JSON.stringify(result));
+ assert.equal(app.status.data.length,2);assert.equal(app.status.data[1][5],'Updated');assert.equal(app.state.data[3][11],'');
+});
+
+test('Status protects unrelated data and duplicate or formula-based records',()=>{
+ for(const scenario of ['header','duplicate','formula']){
+  const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'Current',attachments:[]};
+  const saved=app.post({requestId:'status-protect-1',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
+  if(scenario==='header')app.status.data[0][0]='Private records';
+  if(scenario==='duplicate')app.status.data.push([...app.status.data[1]]);
+  if(scenario==='formula')app.status.formulas[1][5]='=A1';
+  const result=app.read();assert.equal(result.error.code,'SOURCE_DATA');assert.equal(app.state.writes,1);
+ }
+});
+
+test('failed Status save leaves legacy metadata and manager intact',()=>{
+ const app=harness();app.state.maxColumns=16;app.state.data[2].push(...app.context.CASTLE_FOLLOWUP_HEADERS);app.state.data[3].push('not_contacted','Keep me','','','','');
+ const before=app.read().snapshot;const original=structuredClone(app.state.data);app.state.failWrite=true;
+ const result=app.post({requestId:'status-failure-001',revision:before.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'New',attachments:[]}]});
+ assert.equal(result.ok,false);assert.deepEqual(app.state.data,original);assert.equal(app.status.exists,false);
+});
+
+test('Status identifies properties by month sheet ID and name, independently of row positions',()=>{
+ const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'November only',attachments:[]};
+ const saved=app.post({requestId:'status-month-001',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
+ const original=app.spreadsheet.getSheets;app.spreadsheet.getSheets=()=>[...original(),{...app.sheet,getSheetId:()=>2,getName:()=> 'Dec, 2026'}];
+ const read=app.read();assert.equal(read.ok,true,JSON.stringify(read));
+ assert.equal(read.snapshot.months.find((m:any)=>m.id==='0').properties[0].followUp.note,'November only');
+ assert.equal(read.snapshot.months.find((m:any)=>m.id==='2').properties[0].followUp,undefined);
 });

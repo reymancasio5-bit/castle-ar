@@ -1,4 +1,5 @@
-﻿import {useEffect, useId, useRef, useState} from 'react';
+import {useEffect, useId, useRef, useState} from 'react';
+import {createPortal} from 'react-dom';
 import {MessageSquare, Paperclip, Pencil, X, Check, ExternalLink} from 'lucide-react';
 import type {Change, FollowUpAttachment, FollowUpStatus, Property} from './types.ts';
 import {balance, collected, money} from './domain.ts';
@@ -7,11 +8,27 @@ import type {FollowUpDraft} from './follow-ups.ts';
 import './follow-ups.css';
 export interface FollowUpsProps {properties:Property[];managers:string[];revision:string;onSave:(revision:string,change:Change)=>Promise<void>;onOpen:(property:Property)=>void;onDirtyChange?:(dirty:boolean)=>void}
 interface Edit {id:string;revision:string;initial:FollowUpDraft;draft:FollowUpDraft}
+function ScreenshotViewer({attachment,onClose}:{attachment:FollowUpAttachment;onClose:()=>void}) {
+ const dialog=useRef<HTMLDialogElement>(null);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ const [visible,setVisible]=useState(false);const title=useId();
+ useEffect(()=>{
+  const element=dialog.current!;const previousOverflow=document.body.style.overflow;const trigger=document.activeElement;
+  element.showModal();document.body.style.overflow='hidden';
+  element.getBoundingClientRect(); // Establish the closed style before starting the transition.
+  const frame=requestAnimationFrame(()=>setVisible(true));
+  return ()=>{cancelAnimationFrame(frame);if(timer.current)clearTimeout(timer.current);element.close();document.body.style.overflow=previousOverflow;if(trigger instanceof HTMLElement && trigger.isConnected)trigger.focus();};
+ },[]);
+ function close(){if(timer.current)return;setVisible(false);timer.current=setTimeout(onClose,window.matchMedia('(prefers-reduced-motion: reduce)').matches?0:200);}
+ return createPortal(<dialog ref={dialog} className={`fu-viewer${visible?' is-visible':''}`} aria-labelledby={title} onCancel={event=>{event.preventDefault();close();}} onClick={event=>{if(event.target===event.currentTarget)close();}}>
+  <div className="fu-viewer-content"><header><span id={title}>{attachment.name}</span><button type="button" className="icon-button" aria-label="Close photo viewer" onClick={close} autoFocus><X size={22}/></button></header><img src={attachment.dataUrl} alt={attachment.name}/></div>
+ </dialog>,document.body);
+}
 function Screenshots({attachments,onRemove,disabled}:{attachments:FollowUpAttachment[];onRemove?:(index:number)=>void;disabled?:boolean}) {
+ const [viewing,setViewing]=useState<FollowUpAttachment|null>(null);
  return <div className="fu-screenshots">{attachments.map((attachment,index)=><div className="fu-screenshot" key={`${index}-${attachment.name}`}>
-  {isSafeScreenshot(attachment) ? <details><summary><img src={attachment.dataUrl} alt=""/><span>{attachment.name}</span></summary><img className="fu-expanded-image" src={attachment.dataUrl} alt={`Screenshot: ${attachment.name}`}/></details> : <span className="fu-invalid-image">Screenshot unavailable: {attachment.name}</span>}
+  {isSafeScreenshot(attachment) ? <button type="button" className="fu-photo-open" aria-label={`View photo ${attachment.name}`} onClick={()=>setViewing(attachment)}><img src={attachment.dataUrl} alt=""/><span>{attachment.name}</span></button> : <span className="fu-invalid-image">Screenshot unavailable: {attachment.name}</span>}
   {onRemove && <button type="button" className="icon-button" disabled={disabled} aria-label={`Remove screenshot ${attachment.name}`} onClick={()=>onRemove(index)}><X size={16}/></button>}
- </div>)}</div>;
+ </div>)}{viewing && <ScreenshotViewer attachment={viewing} onClose={()=>setViewing(null)}/>}</div>;
 }
 export default function FollowUps({properties,managers,revision,onSave,onOpen,onDirtyChange}:FollowUpsProps) {
  const [filter,setFilter]=useState<FollowUpStatus|'all'>('all');

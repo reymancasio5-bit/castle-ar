@@ -8,6 +8,7 @@ var CASTLE_SPREADSHEET_ID = '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY';
 var CASTLE_MAX_CENTS = 999999999999;
 var CASTLE_REQUEST_PREFIX = 'castle_request_';
 var CASTLE_FOLLOWUP_HEADERS = ['Follow-up status', 'Follow-up note', 'Follow-up updated at', 'Follow-up attachment 1', 'Follow-up attachment 2', 'Follow-up attachment 3'];
+var CASTLE_STATUS_HEADERS = ['Month sheet ID', 'Month', 'Property name', 'Account manager', 'Follow-up status', 'Follow-up note', 'Follow-up updated at', 'Follow-up attachment 1', 'Follow-up attachment 2', 'Follow-up attachment 3'];
 var CASTLE_FOLLOWUP_STATUSES = ['not_contacted', 'contact_attempted', 'awaiting_response', 'owner_responded', 'payment_promised', 'follow_up_needed', 'resolved'];
 var CASTLE_HEADERS = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 
@@ -265,15 +266,84 @@ function castleRead() {
     months.push(month);
   });
   if (!months.length) castleThrow('SOURCE_DATA', 'No recognized monthly AR sheet was found. Use a month tab such as Nov, 2026 with the expected A:J headers.');
+  var statusSheet = book.getSheetByName('Status');
+  var status = { sheetId: null, lastRow: 0, maxRows: 0, maxColumns: 0, rows: Object.create(null) };
+  if (statusSheet) {
+    status.sheetId = statusSheet.getSheetId();
+    status.lastRow = statusSheet.getLastRow();
+    status.maxRows = statusSheet.getMaxRows();
+    status.maxColumns = statusSheet.getMaxColumns();
+    if (status.lastRow) {
+      var statusRange = statusSheet.getRange(1, 1, status.lastRow, Math.min(10, status.maxColumns));
+      var statusValues = statusRange.getValues(), statusFormulas = statusRange.getFormulas();
+      source.push({ id: String(status.sheetId), values: statusValues, formulas: statusFormulas });
+      if (!CASTLE_STATUS_HEADERS.every(function (header, i) { return statusValues[0][i] === header && !statusFormulas[0][i]; })) castleThrow('SOURCE_DATA', 'Status tab has unrelated headers. Preserve its contents and use an empty Status tab for follow-ups.');
+      statusValues.slice(1).forEach(function (row, i) {
+        if (!row.some(function (cell) { return cell !== ''; }) && !statusFormulas[i + 1].some(Boolean)) return;
+        if (row[0] === '' || !String(row[2] || '').trim() || statusFormulas[i + 1].some(Boolean)) castleThrow('SOURCE_DATA', 'Status: invalid or formula-based record on row ' + (i + 2) + '.');
+        var key = castleStatusKey(row[0], row[2]);
+        if (status.rows[key]) castleThrow('SOURCE_DATA', 'Status: duplicate property and month record on row ' + (i + 2) + '.');
+        var followup = { status: row[4] || 'not_contacted', note: row[5] || '', updatedAt: row[6] || '', attachments: [] };
+        row.slice(7, 10).forEach(function (cell) { if (cell) { try { followup.attachments.push(JSON.parse(cell)); } catch (_) { castleThrow('SOURCE_DATA', 'Status: invalid attachment JSON.'); } } });
+        try { castleValidateFollowUp(followup); } catch (_) { castleThrow('SOURCE_DATA', 'Status: invalid follow-up data.'); }
+        status.rows[key] = { row: i + 2, followUp: followup };
+      });
+    }
+  }
+  var propertyKeys = Object.create(null);
+  Object.keys(propertyIndex).forEach(function (id) {
+    var target = propertyIndex[id], key = castleStatusKey(target.sheetId, target.property.name);
+    target.legacyFollowUp = target.property.followUp;
+    if (propertyKeys[key]) castleThrow('SOURCE_DATA', 'Duplicate property names in a month cannot be linked safely to Status.');
+    propertyKeys[key] = true;
+    if (status.rows[key]) target.property.followUp = status.rows[key].followUp;
+  });
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     snapshot: { revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
-    months: monthIndex, properties: propertyIndex, payments: paymentIndex
+    months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
+    sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
 }
 
+function castleStatusKey(sheetId, name) {
+  return JSON.stringify([String(sheetId), String(name).trim().toLowerCase()]);
+}
+
+function castleStatusRequests(current, changes) {
+  var status = current.status, requests = [], sheetId = status.sheetId, nextRow = Math.max(2, status.lastRow + 1);
+  if (sheetId === null) {
+    sheetId = 1;
+    while (current.sheetIds.indexOf(sheetId) >= 0) sheetId++;
+    requests.push({ addSheet: { properties: { sheetId: sheetId, title: 'Status', gridProperties: { rowCount: Math.max(100, Object.keys(current.properties).length + 1), columnCount: 10, frozenRowCount: 1 } } } });
+  } else if (status.maxColumns < 10) {
+    requests.push({ appendDimension: { sheetId: sheetId, dimension: 'COLUMNS', length: 10 - status.maxColumns } });
+  }
+  if (!status.lastRow) CASTLE_STATUS_HEADERS.forEach(function (header, i) { requests.push(castleCell(sheetId, 1, i + 1, header)); });
+  Object.keys(current.properties).forEach(function (id) {
+    var target = current.properties[id], key = castleStatusKey(target.sheetId, target.property.name);
+    var existing = status.rows[key], update = changes[id];
+    // Move legacy records in the same atomic batch. Status wins if both exist.
+    var value = update || (!existing && target.legacyFollowUp);
+    if (value) {
+      var row = existing ? existing.row : nextRow++;
+      var values = [String(target.sheetId), current.months[String(target.sheetId)].month.label, target.property.name, update ? update.manager : target.property.manager, value.status, value.note, value.updatedAt || ''];
+      for (var i = 0; i < 3; i++) values.push(value.attachments[i] ? JSON.stringify(value.attachments[i]) : '');
+      values.forEach(function (cell, i) { requests.push(castleCell(sheetId, row, i + 1, cell)); });
+    }
+    if (target.legacyFollowUp) CASTLE_FOLLOWUP_HEADERS.forEach(function (header, i) {
+      if (target.followupHeaders[i] === header && !target.followupHeaderFormulas[i] && !target.followupFormulas[i]) {
+        requests.push(castleCell(target.sheetId, target.row - 1, i + 11, ''));
+        requests.push(castleCell(target.sheetId, target.row, i + 11, ''));
+      }
+    });
+  });
+  if (status.sheetId !== null && nextRow - 1 > status.maxRows) requests.unshift({ appendDimension: { sheetId: sheetId, dimension: 'ROWS', length: nextRow - 1 - status.maxRows } });
+  return requests;
+}
+
 function castleBuildRequests(changes, current) {
-  var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0, expandedColumns = {};
+  var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0, followupChanges = Object.create(null);
   function queuePayments(key, target, payments) {
     if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one payment.');
     paymentCount += payments.length;
@@ -299,22 +369,8 @@ function castleBuildRequests(changes, current) {
       castleUnique(targets, 'followup:' + change.propertyId);
       var manager = change.manager === '' ? '' : castleName(change.manager, 'Account manager');
       castleValidateFollowUp(change);
-      CASTLE_FOLLOWUP_HEADERS.forEach(function (header, offset) {
-        var owned = target.followupHeaders[offset] === header && !target.followupHeaderFormulas[offset];
-        if (!owned && (target.followupHeaders[offset] !== undefined && target.followupHeaders[offset] !== '' || target.followupValues[offset] !== undefined && target.followupValues[offset] !== '' || target.followupFormulas[offset] || target.followupHeaderFormulas[offset])) castleThrow('VALIDATION', 'Follow-up columns K:P contain unrelated data. Move it before saving follow-ups.');
-      });
-      var month = current.months[String(target.sheetId)];
-      if (month.maxColumns < 16 && !expandedColumns[target.sheetId]) {
-        expandedColumns[target.sheetId] = true;
-        requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'COLUMNS', length: 16 - month.maxColumns } });
-      }
       requests.push(castleCell(target.sheetId, target.row, 1, manager));
-      var metadata = [change.status, change.note, new Date().toISOString()];
-      for (var attachmentIndex = 0; attachmentIndex < 3; attachmentIndex++) metadata.push(change.attachments[attachmentIndex] ? JSON.stringify(change.attachments[attachmentIndex]) : '');
-      CASTLE_FOLLOWUP_HEADERS.forEach(function (header, offset) {
-        requests.push(castleCell(target.sheetId, target.row - 1, offset + 11, header));
-        requests.push(castleCell(target.sheetId, target.row, offset + 11, metadata[offset]));
-      });
+      followupChanges[change.propertyId] = { manager: manager, status: change.status, note: change.note, attachments: change.attachments, updatedAt: new Date().toISOString() };
     } else if (change.kind === 'setTotal') {
       castleKeys(change, ['kind', 'propertyId', 'amountCents']);
       target = current.properties[change.propertyId];
@@ -419,6 +475,7 @@ function castleBuildRequests(changes, current) {
       if (orderedPayments.length) requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });
+  if (Object.keys(followupChanges).length) requests = requests.concat(castleStatusRequests(current, followupChanges));
   Object.keys(appendRows).forEach(function (monthId) {
     var target = current.months[monthId], needed = appendRows[monthId] - 1;
     if (needed > target.maxRows) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'ROWS', length: needed - target.maxRows } });
