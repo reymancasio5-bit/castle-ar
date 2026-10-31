@@ -302,7 +302,7 @@ function castleBuildRequests(changes, current) {
         }
       }
     } else if (change.kind === 'addProperty') {
-      castleKeys(change, ['kind', 'monthId', 'name', 'manager', 'totalCents']);
+      castleKeys(change, ['kind', 'monthId', 'name', 'manager', 'totalCents', 'initialPayments']);
       target = current.months[change.monthId];
       if (!target) castleThrow('VALIDATION', 'Unknown month ID.');
       var name = castleName(change.name, 'Property name');
@@ -314,6 +314,18 @@ function castleBuildRequests(changes, current) {
       var firstRow = appendRows[change.monthId] || target.lastRow + 1;
       appendRows[change.monthId] = firstRow + 8;
       var totalRow = firstRow + 1;
+      var initialPayments = change.initialPayments === undefined ? [] : change.initialPayments;
+      if (!Array.isArray(initialPayments) || initialPayments.length > 5) castleThrow('VALIDATION', 'Initial payments must contain up to five payment slots.');
+      var initialSlots = {};
+      initialPayments.forEach(function (payment) {
+        if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid initial payment.');
+        castleKeys(payment, ['index', 'amountCents', 'payoutDate', 'bundleCents']);
+        if (!Number.isInteger(payment.index) || payment.index < 0 || payment.index > 4 || initialSlots[payment.index]) castleThrow('VALIDATION', 'Initial payment slots must be unique indexes from 0 to 4.');
+        castleCents(payment.amountCents, false, false);
+        if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
+        if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Initial payout dates must be valid YYYY-MM-DD values.');
+        initialSlots[payment.index] = payment;
+      });
       var rows = [CASTLE_HEADERS.slice(), [manager, name, 'Total Payment', change.totalCents / 100], ['', '', 'Airbnb Payment'], ['', '', 'Airbnb Payment'], ['', '', 'Airbnb Payment'], ['', '', 'Vrbo Payment'], ['', '', 'Owner Payment', 0], ['', '', 'AR']];
       rows.forEach(function (values, offset) {
         var cells = [];
@@ -326,6 +338,12 @@ function castleBuildRequests(changes, current) {
         requests.push({ updateCells: { start: { sheetId: target.sheetId, rowIndex: firstRow + offset - 1, columnIndex: 0 }, rows: [{ values: cells }], fields: 'userEnteredValue' } });
       });
       requests = requests.concat(castlePropertyFormatRequests(target, firstRow));
+      initialPayments.forEach(function (payment) {
+        var row = firstRow + 2 + payment.index;
+        requests.push(castleCell(target.sheetId, row, 4, payment.amountCents / 100));
+        if (payment.bundleCents !== undefined) requests.push(castleCell(target.sheetId, row, 6, payment.bundleCents / 100));
+        if (payment.payoutDate) requests.push(castleCell(target.sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
+      });
       requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: totalRow + 5, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });

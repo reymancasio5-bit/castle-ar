@@ -370,6 +370,29 @@ test('addProperty appends a complete source block, expands the grid, and preserv
   assert.equal(app.state.writes, 1);
 });
 
+test('import creates property and initial payments in one atomic save', () => {
+  const app = harness();
+  const result = app.post({ requestId: 'import_new_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'Team B', totalCents: 37048, initialPayments: [{ index: 0, amountCents: 11686, payoutDate: '2026-10-09', bundleCents: 38140 }, { index: 1, amountCents: 13081, payoutDate: '2026-10-13', bundleCents: 60217 }, { index: 2, amountCents: 7719, payoutDate: '2026-10-19', bundleCents: 661041 }] }] });
+  assert.equal(result.ok, true);
+  const property = result.snapshot.months[0].properties[3];
+  assert.equal(property.totalCents, 37048);
+  assert.equal(property.payments[0].amountCents, 11686);
+  assert.equal(property.payments[0].payoutDate, '2026-10-09');
+  assert.equal(property.payments[2].bundleCents, 661041);
+  assert.equal(property.payments[0].bankCents, null);
+  assert.equal(property.totalCents - property.payments.reduce((sum: number, p: any) => sum + (p.amountCents ?? 0), 0), 4562);
+  assert.equal(app.state.writes, 1);
+});
+
+test('invalid initial payments reject creation without any writes', () => {
+  for (const initialPayments of [[{ index: 5, amountCents: 100 }], [{ index: 0, amountCents: 100, payoutDate: '2026-02-30' }], [{ index: 0, amountCents: 100, bankCents: 100 }], [{ index: 0, amountCents: 100 }, { index: 0, amountCents: 200 }]]) {
+    const app = harness();
+    const result = app.post({ requestId: 'import_invalid_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'Team B', totalCents: 37048, initialPayments }] });
+    assert.equal(result.error.code, 'VALIDATION');
+    assert.equal(app.state.writes, 0);
+  }
+});
+
 test('multiple appended properties get distinct source rows and duplicate names fail atomically', () => {
   const app = harness();
   const change = { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 0 };

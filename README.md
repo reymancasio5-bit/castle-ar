@@ -52,7 +52,7 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 - Edit expected totals and Airbnb, Vrbo, or owner payments.
 - Record platform payout dates, payout bundle amounts, bank receipt dates and amounts, and Daisy's review.
 - Add a property with the existing spreadsheet block format.
-- Import `.xlsx`, `.xls`, and `.csv`: choose worksheet/header, map property and amount columns, choose destination, review, then apply.
+- Import `.xlsx`, `.xls`, and `.csv`: choose a database property or type a new name, enter Total Payment manually, review, then apply. Airbnb exports automatically map payments, payout dates and bundles.
 - Export a numeric Excel summary plus detailed payment rows.
 - Reject stale edits instead of overwriting changes made since opening an editor.
 
@@ -62,7 +62,15 @@ AR = expected total minus the recorded Airbnb, Vrbo, and owner payments. Bank re
 
 ## Import rules
 
-Files can have different column names and header positions. Matching uses exact property names after case/whitespace normalization; it does not guess a similar property. Unmatched and invalid rows are not applied. Blank amounts preserve existing data; explicit zero writes zero. Duplicate matches are blocked unless the user explicitly chooses to sum them. Import writes replace the selected destination value, so repeatedly importing the same snapshot does not add it again.
+Step 2 suggests property names from the loaded Google Sheet database, across months. Choose an existing property or type/paste a name. Names match within the selected month after case/whitespace normalization. A name not present in that month creates a monthly property record on confirmation, requiring a manager and a manually entered Total Payment. Existing totals are prefilled and can be edited. New property creation, payment initialization, formatting and formulas use the Add Property path in one atomic save.
+
+Airbnb exports use the detail row's **Amount** for the payment and the preceding **Payout** row's **Arriving by date** and **Paid out** for its payout date and bundle. The bundle is not added to collected payments. Multiple details for one payout are summed into one payment slot. Import one listing and currency per file; unsupported row types, malformed amounts/dates, missing payout details and full slots block the import. Default placement uses the next completely empty Airbnb slot and skips an identical amount/date/bundle already recorded. To fill payout information for amounts already entered manually, select **Replace starting at Airbnb payment 1**, **2** or **3** as appropriate. Review all replacements before confirmation. Bank receipt fields and Daisy verification remain unchanged.
+
+Total Payment never comes from the CSV. For the supplied example, enter **370.48**; three payments of **116.86**, **130.81** and **77.19** yield **45.62 AR**. Upload the files one at a time into the same selected month/property; payout dates do not change the destination month.
+
+For other spreadsheets, select the amount column and payment destination. All amounts target the chosen database property. Blank amounts and recognized summary rows are skipped; explicit zero writes zero. Multiple payment rows are blocked unless the user explicitly chooses to sum them. Invalid rows in a sum block the entire property's payment. Payment writes replace the selected destination value.
+
+**Deployment for this change:** publish the rebuilt frontend and update `apps-script/Code.gs` in the bound Apps Script project, then deploy a new version of the existing web-app deployment. The new `initialPayments` field is required for creating a property during import; older deployments reject it without saving. Keep the existing deployment URL. Local tests do not write to the live database.
 
 Amounts use US-style `1,234.56` separators and support accounting negatives. Values are rounded to cents. Formula cells require a cached numeric result; macros/formulas are never executed. Limits: 10 MB per file, 10,000 worksheet rows, 500,000 cells, and 500 changes in one server save. Larger imports must be split. Import/export uses locally bundled SheetJS CE 0.20.3; its license is in `public/vendor/LICENSE-sheetjs.txt`.
 

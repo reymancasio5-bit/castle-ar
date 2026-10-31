@@ -3,5 +3,6 @@ export interface Payment { id: string; type: PaymentType; amountCents: number | 
 export interface Property { id: string; name: string; manager: string; totalCents: number; payments: Payment[]; sourceArCents?: number; }
 export interface Month { id: string; label: string; month: string; properties: Property[]; }
 export interface Snapshot { revision: string; months: Month[]; updatedAt: string; spreadsheetUrl: string; }
-export type Change = { kind: 'setTotal'; propertyId: string; amountCents: number } | { kind: 'updatePayment'; paymentId: string; fields: Partial<Omit<Payment, 'id' | 'type'>> } | { kind: 'addProperty'; monthId: string; name: string; manager: string; totalCents: number };
-export interface ImportProps { month: Month; onClose: () => void; onApply: (changes: Change[]) => Promise<void>; }
+export interface InitialPayment { index: number; amountCents: number; payoutDate?: string; bundleCents?: number }
+export type Change = { kind: 'setTotal'; propertyId: string; amountCents: number } | { kind: 'updatePayment'; paymentId: string; fields: Partial<Omit<Payment, 'id' | 'type'>> } | { kind: 'addProperty'; monthId: string; name: string; manager: string; totalCents: number; initialPayments?: InitialPayment[] };
+export interface ImportProps { month: Month; propertyCatalog?: Pick<Property, 'name' | 'manager'>[]; onClose: () => void; onApply: (changes: Change[]) => Promise<void>; }

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { buildPropertyImportPreview } from '../src/property-import.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInThisContext } from 'node:vm';
@@ -179,4 +180,26 @@ test('oversized, empty and unsupported uploads fail before parsing', async () =>
   await assert.rejects(readSpreadsheet(new File([], 'empty.xlsx')), /empty/i);
   await assert.rejects(readSpreadsheet(new File(['hello'], 'image.png')), /xlsx/i);
   await assert.rejects(readSpreadsheet(new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'large.xlsx')), /10 MB/i);
+});
+
+test('Airbnb CSV reader and property mapper reproduce the three payments and manual AR', async () => {
+  const target: Month = { ...month, properties: [{ ...month.properties[0], totalCents: 37048, payments: [0, 1, 2].map(index => ({ ...month.properties[0].payments[0], id: `airbnb-${index}`, amountCents: null })) }] };
+  const property = target.properties[0];
+  for (const [arrival, payment, bundle] of [['10/09/2026', '116.86', '381.40'], ['10/13/2026', '130.81', '602.17'], ['10/19/2026', '77.19', '6610.41']]) {
+    const csv = 'Date,Arriving by date,Type,Confirmation code,Booking date,Start date,End date,Nights,Guest,Listing,Details,Reference code,Currency,Amount,Paid out,Service fee,Fast pay fee,Cleaning fee,Gross earnings,Airbnb remitted tax,Earnings year\r\n' +
+      `10/02/2026,${arrival},Payout,,,,,,,,"Transfer, CAD",reference,CAD,,${bundle},,,,,,\r\n` +
+      `10/02/2026,,Co-Host payout,booking,09/03/2026,10/01/2026,10/04/2026,3,Guest,Airbnb listing title,,,CAD,${payment},,,,0.00,,,2026\r\n`;
+    const [sheet] = await readSpreadsheet(new File([csv], 'airbnb.csv'));
+    const options = { ...inferColumns(sheet), destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: property.name, manager: '', total: '370.48', airbnbSlot: 'auto' as const };
+    const result = buildPropertyImportPreview(target, sheet, options);
+    assert.equal(result.changes.length, 1);
+    const change = result.changes[0];
+    assert.equal(change.kind, 'updatePayment');
+    if (change.kind === 'updatePayment') Object.assign(property.payments.find(p => p.id === change.paymentId)!, change.fields);
+    assert.equal(buildPropertyImportPreview(target, sheet, options).changes.length, 0);
+  }
+  assert.deepEqual(property.payments.map(p => p.amountCents), [11686, 13081, 7719]);
+  assert.deepEqual(property.payments.map(p => p.payoutDate), ['2026-10-09', '2026-10-13', '2026-10-19']);
+  assert.deepEqual(property.payments.map(p => p.bundleCents), [38140, 60217, 661041]);
+  assert.equal(property.totalCents - property.payments.reduce((sum, p) => sum + p.amountCents!, 0), 4562);
 });

@@ -20,7 +20,7 @@ export const destinations: { value: ImportDestination; label: string }[] = [
 export const normalizePropertyName = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
 const asText = (value: unknown) => value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
 const isBlank = (value: unknown) => value == null || (typeof value === 'string' && value.trim() === '');
-const isTotal = (name: string) => /^(?:grand\s+total|sub\s*total|total|totals|accounts?\s+receivable|balance\s+forward)\s*:?$/i.test(name.trim());
+export const isTotal = (name: string) => /^(?:grand\s+total|sub\s*total|total|totals|accounts?\s+receivable|balance\s+forward)\s*:?$/i.test(name.trim());
 
 function paymentFor(property: Property, destination: ImportDestination) {
   if (destination === 'total') return undefined;

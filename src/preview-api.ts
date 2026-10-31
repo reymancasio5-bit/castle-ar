@@ -10,6 +10,7 @@ export function createPreviewApi() {
     const month=next.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');
     const id='preview-'+crypto.randomUUID();
     month.properties.push({id,name:c.name,manager:c.manager,totalCents:c.totalCents,payments:['Airbnb','Airbnb','Airbnb','Vrbo','Owner'].map((type,i)=>({id:id+':'+i,type,amountCents:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false} as Payment))});
+    for (const { index, ...fields } of c.initialPayments ?? []) Object.assign(month.properties[month.properties.length - 1].payments[index], fields);
    } else {
     const properties=next.months.flatMap(m=>m.properties);
     if(c.kind==='setTotal'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');p.totalCents=c.amountCents;}
