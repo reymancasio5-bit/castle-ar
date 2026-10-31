@@ -76,7 +76,7 @@ Amounts use US-style `1,234.56` separators and support accounting negatives. Val
 
 For bulk import, choose the destination property once for all selected files. Total Payment and manager are shared across the batch, and the existing total is prefilled. Changing or removing files keeps the selected destination. The file list is for previewing source data and adjusting worksheet/header settings only. Multi-file batches always use automatic placement, never replacement. Review shows the one destination plus each filename and source row, and confirmation sends one atomic save. Repeated imports are identified by amount, payout date, and bundle, not reservation ID; review skipped matches if separate payouts have identical values.
 
-Airbnb is automatically recognized by its required column headers. Bulk upload currently accepts only recognized Airbnb exports. Vrbo and Booking.com detection/mapping are deferred until representative files are available; unknown single files retain manual mapping.
+Airbnb is automatically recognized by Type, Amount, Paid out, Arriving by date, and Currency headers. The Listing column and listing values are optional: the property selected for the batch determines the destination. If listing names are present, multiple distinct names within one file are still flagged for review. Bulk upload currently accepts only recognized Airbnb exports. Vrbo and Booking.com detection/mapping are deferred until representative files are available; unknown single files retain manual mapping.
 
 ## Spreadsheet structure
 

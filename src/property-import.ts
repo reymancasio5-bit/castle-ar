@@ -15,7 +15,8 @@ function airbnbColumns(sheet: ImportSheet, headerRow: number | null) {
   return Object.fromEntries(['type', 'listing', 'amount', 'paid out', 'arriving by date', 'currency'].map(name => [name, headers.indexOf(name)]));
 }
 export function isAirbnbSheet(sheet: ImportSheet, headerRow: number | null): boolean {
-  return Object.values(airbnbColumns(sheet, headerRow)).every(index => index >= 0);
+  const columns = airbnbColumns(sheet, headerRow);
+  return ['type', 'amount', 'paid out', 'arriving by date', 'currency'].every(name => columns[name] >= 0);
 }
 function validName(value: string, label: string) {
   const name = value.trim();
@@ -57,7 +58,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
     ({ rows, changes } = airbnbPreview(property, sheet, options));
   } else {
     const headers = airbnbColumns(sheet, options.headerRow);
-    if (headers['paid out'] >= 0 || headers['arriving by date'] >= 0) throw new Error('Incomplete Airbnb headers. Keep Type, Listing, Amount, Paid out, Arriving by date and Currency in the export.');
+    if (headers['paid out'] >= 0 || headers['arriving by date'] >= 0) throw new Error('Incomplete Airbnb headers. Keep Type, Amount, Paid out, Arriving by date and Currency in the export. Listing is optional.');
     if (options.destination === 'total') throw new Error('Choose a payment destination. Total Payment is entered manually.');
     // Use a synthetic name column so uploaded listing names never select a database property.
     const nameColumn = sheet.rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -109,15 +110,14 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     if (!['co-host payout', 'reservation', 'adjustment', 'resolution payout', 'resolution adjustment'].includes(type)) throw new Error(`Row ${sourceRow}: unsupported Airbnb row type “${type}”. Import a payout export with its payment details.`);
     if (!group) throw new Error(`Row ${sourceRow}: payment has no preceding Payout row.`);
     const listing = text(cells[columns.listing]?.value);
-    if (!listing) throw new Error(`Row ${sourceRow}: Airbnb listing is missing.`);
-    listings.add(normalizePropertyName(listing));
+    if (listing) listings.add(normalizePropertyName(listing));
     if (listings.size > 1) throw new Error('This file contains multiple Airbnb listings. Export one listing at a time and select its database property.');
     const currency = text(cells[columns.currency]?.value).toUpperCase();
     if (!currency || currency !== group.currency) throw new Error(`Row ${sourceRow}: payout and payment currencies must match.`);
     currencies.add(currency);
     if (currencies.size > 1) throw new Error('Import one currency at a time.');
     const amountCents = amount(cells[columns.amount], `Row ${sourceRow} payment`);
-    const row: PropertyPreviewRow = { sourceRow, name: listing, originalAmount: text(cells[columns.amount]?.value), propertyId: property.id, propertyName: property.name, amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents, status: 'ready', reason: '' };
+    const row: PropertyPreviewRow = { sourceRow, name: listing || property.name, originalAmount: text(cells[columns.amount]?.value), propertyId: property.id, propertyName: property.name, amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents, status: 'ready', reason: '' };
     group.rows.push(row); rows.push(row);
   });
   if (!groups.length || groups.some(group => !group.rows.length)) throw new Error('Every Payout row needs at least one payment detail row.');

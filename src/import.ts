@@ -34,6 +34,10 @@ export function inferColumns(sheet: ImportSheet): Pick<ImportOptions, 'headerRow
   let fallback = { headerRow: 0, nameColumn: 0, amountColumn: 1 };
   for (let row = 0; row < Math.min(sheet.rows.length, 30); row++) {
     const values = sheet.rows[row].map(cell => asText(cell.value).trim());
+    const lower = values.map(value => value.toLowerCase());
+    if (['type', 'amount', 'paid out', 'arriving by date', 'currency'].every(name => lower.includes(name))) {
+      return { headerRow: row, nameColumn: Math.max(0, lower.indexOf('listing')), amountColumn: lower.indexOf('amount') };
+    }
     const nameColumn = values.findIndex(value => nameHeader.test(value));
     const amountColumn = values.findIndex(value => amountHeader.test(value));
     if (nameColumn >= 0) {

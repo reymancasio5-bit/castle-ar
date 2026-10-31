@@ -3,11 +3,23 @@ import assert from 'node:assert/strict';
 import * as importer from '../src/property-import.ts';
 import type { Month } from '../src/types.ts';
 import type { ImportSheet } from '../src/import.ts';
+import { inferColumns } from '../src/import.ts';
 
 const month: Month = { id: 'm', label: 'September 2026', month: '2026-09', properties: [{ id: 'p', name: 'Jarvis', manager: 'Team B', totalCents: 37048, payments: [0, 1, 2].map(i => ({ id: `a${i}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false })) }] };
 const sheet = (rows: unknown[][]): ImportSheet => ({ name: 'CSV', rows: rows.map(row => row.map(value => ({ value }))) });
 const data = sheet([['Date', 'Arriving by date', 'Type', 'Listing', 'Currency', 'Amount', 'Paid out'], ['10/02/2026', '10/09/2026', 'Payout', '', 'CAD', '', '381.40'], ['10/02/2026', '', 'Co-Host payout', 'Airbnb listing title', 'CAD', '116.86', '']]);
 const options = { headerRow: 0, nameColumn: 3, amountColumn: 5, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'Jarvis', manager: '', total: '370.48', airbnbSlot: 'auto' as const };
+
+test('Airbnb listing cells and the Listing column are optional', () => {
+ const expected=importer.buildPropertyImportPreview(month,data,options).changes;
+ const blank=structuredClone(data); blank.rows[2][3].value='';
+ assert.deepEqual(importer.buildPropertyImportPreview(month,blank,options).changes,expected);
+ const absent=structuredClone(data); absent.rows.forEach(row=>row.splice(3,1));
+ assert.equal(importer.isAirbnbSheet(absent,0),true);
+ assert.deepEqual(importer.buildPropertyImportPreview(month,absent,options).changes,expected);
+ absent.rows.unshift([{value:'Payout export'}]);
+ assert.equal(inferColumns(absent).headerRow,1);
+});
 
 test('maps Airbnb detail amount and payout header to selected database property, keeping manual total', () => {
   const result = importer.buildPropertyImportPreview(month, data, options);

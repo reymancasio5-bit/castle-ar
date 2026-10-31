@@ -8,6 +8,16 @@ const options = { headerRow: 0, nameColumn: 1, amountColumn: 2, destination: 'Ai
 const sheet = (n: number, currency = 'CAD'): ImportSheet => ({ name: 'CSV', rows: [['Type','Listing','Amount','Paid out','Arriving by date','Currency'], ['Payout','','',n,'2026-10-09',currency], ['Reservation','Listing',n,'','',currency]].map(row => row.map(value => ({value}))) });
 const entry = (n: number) => ({ fileName: `${n}.csv`, sheet: sheet(n), options });
 
+test('bulk imports accept blank listing names and exports without a Listing column', () => {
+ const blank=entry(1); blank.sheet.rows[2][1].value='';
+ const absent=entry(2); absent.sheet.rows.forEach(row=>row.splice(1,1));
+ const result=buildBulkImportPreview(month,[blank,absent]);
+ assert.equal(result.readyCount,2);
+ assert.ok(result.rows.filter(row=>row.status==='ready').every(row=>row.propertyName==='House'));
+ assert.equal(result.changes.length,1);
+ assert.equal(result.changes[0].kind,'addProperty');
+});
+
 test('a bulk import cannot target more than one property', () => {
  assert.throws(() => buildBulkImportPreview(month, [entry(1), {...entry(2), options: {...options, propertyName: 'Other house'}}]), /one property/i);
 });
