@@ -9,11 +9,9 @@ export function createPreviewApi() {
    if(c.kind==='addProperty') {
     const month=next.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');
     const id='preview-'+crypto.randomUUID();
-    const owner: Payment = {id:id+':owner',type:'Owner',amountCents:0,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false};
-    const payments: Payment[] = [owner];
-    for (const { index, ...fields } of [...(c.initialPayments ?? [])].sort((a,b)=>a.index-b.index)) {
-     if(index===4) Object.assign(owner,fields);
-     else payments.push({id:id+':'+index,type:index===3?'Vrbo':'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});
+    const payments: Payment[] = [];
+    for (const { index, ...fields } of [...(c.initialPayments ?? [])].sort((a,b)=>(a.index===4?-1:a.index)-(b.index===4?-1:b.index))) {
+     payments.push({id:id+':'+index,type:index===4?'Owner':index===3?'Vrbo':'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});
     }
     month.properties.push({id,name:c.name,manager:c.manager,totalCents:c.totalCents,payments});
     for (const fields of c.additionalPayments ?? []) month.properties[month.properties.length - 1].payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});

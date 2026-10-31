@@ -55,38 +55,47 @@ test('preview API persists additional and appended Airbnb payments', async () =>
  const api=createPreviewApi(); const before=await api.read();
  const result=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Bulk test house',manager:'Team',totalCents:500,additionalPayments:[{amountCents:100,payoutDate:'2026-10-09',bundleCents:200}]}]);
  const property=result.months[0].properties.at(-1)!;
- assert.deepEqual(property.payments.map(payment=>payment.type),['Owner','Airbnb']);
+ assert.deepEqual(property.payments.map(payment=>payment.type),['Airbnb']);
  const appended=await api.save(result.revision,[{kind:'appendPayments',propertyId:property.id,payments:[{amountCents:300}]}]);
  assert.equal(appended.months[0].properties.at(-1)!.payments.at(-1)!.amountCents,300);
 });
 
-test('a new property starts with Owner only and imports append only supplied Airbnb payments', async () => {
+test('a new property starts without payments and imports append only supplied Airbnb payments', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
  const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Empty house',manager:'Team',totalCents:10000}]);
  const target=created.months[0].properties.at(-1)!;
- assert.deepEqual(target.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0]]);
+ assert.deepEqual(target.payments.map(payment=>[payment.type,payment.amountCents]),[]);
  const batch=buildBulkImportPreview(created.months[0],[{...entry(1),options:{...options,propertyName:'Empty house'}},{...entry(2),options:{...options,propertyName:'Empty house'}}]);
  assert.equal(batch.changes.length,1);
  assert.equal(batch.changes[0].kind,'appendPayments');
  const saved=await api.save(created.revision,batch.changes);
- assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0],['Airbnb',100],['Airbnb',200]]);
+ assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Airbnb',100],['Airbnb',200]]);
 });
 
-test('creating a property during bulk import saves only Owner and the supplied payouts', async () => {
+test('creating a property during bulk import saves only the supplied payouts', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
  const batch=buildBulkImportPreview(before.months[0],[entry(1),entry(2),entry(2)]);
  const saved=await api.save(before.revision,batch.changes);
- assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0],['Airbnb',100],['Airbnb',200]]);
+ assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Airbnb',100],['Airbnb',200]]);
 });
 
-test('manual Vrbo imports into an Owner-only property retain their platform through save', async () => {
+test('manual Vrbo imports into a property without payments retain their platform through save', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
  const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'House',manager:'Manager',totalCents:10000}]);
  const manual: ImportSheet={name:'CSV',rows:[['Property','Amount'],['Listing',12]].map(row=>row.map(value=>({value})))};
  const batch=buildBulkImportPreview(created.months[0],[{fileName:'vrbo.csv',sheet:manual,options:{...options,nameColumn:0,amountColumn:1,destination:'Vrbo'}}]);
  const saved=await api.save(created.revision,batch.changes);
- assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0],['Vrbo',1200]]);
+ assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Vrbo',1200]]);
+});
+
+test('an Owner payment row is created only for imported Owner data, including explicit zero', async () => {
+ const {createPreviewApi}=await import('../src/preview-api.ts');
+ const api=createPreviewApi(); const before=await api.read();
+ const manual: ImportSheet={name:'CSV',rows:[['Property','Amount'],['Listing',0]].map(row=>row.map(value=>({value})))};
+ const batch=buildBulkImportPreview(before.months[0],[{fileName:'owner.csv',sheet:manual,options:{...options,nameColumn:0,amountColumn:1,destination:'Owner'}}]);
+ const saved=await api.save(before.revision,batch.changes);
+ assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0]]);
 });

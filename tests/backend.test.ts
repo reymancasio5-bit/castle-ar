@@ -131,7 +131,7 @@ function harness() {
           if (!update.fields.includes('userEnteredValue')) return;
           const value = cell.userEnteredValue;
           formulas[r][c] = value?.formulaValue ?? '';
-          if (value?.formulaValue) { const match = value.formulaValue.match(/^=D(\d+)-SUM\(D(\d+):D(\d+)\)$/); data[r][c] = match ? Number(data[+match[1] - 1][3]) - data.slice(+match[2] - 1, +match[3]).reduce((sum, item) => sum + Number(item[3]), 0) : ''; }
+          if (value?.formulaValue) { const match = value.formulaValue.match(/^=D(\d+)-SUM\(D(\d+):D(\d+)\)$/); const direct = value.formulaValue.match(/^=D(\d+)$/); data[r][c] = direct ? Number(data[+direct[1] - 1][3]) : match ? Number(data[+match[1] - 1][3]) - data.slice(+match[2] - 1, +match[3]).reduce((sum, item) => sum + Number(item[3]), 0) : ''; }
           else if (value?.numberValue !== undefined && cell.userEnteredFormat?.numberFormat?.type === 'DATE') data[r][c] = new Date(Date.UTC(1899, 11, 30 + value.numberValue, 12));
           else data[r][c] = value?.numberValue ?? value?.stringValue ?? value?.boolValue ?? '';
         }));
@@ -375,9 +375,8 @@ test('addProperty appends a complete source block, expands the grid, and preserv
   const added = result.snapshot.months[0].properties[3];
   assert.equal(added.id, '0:28');
   assert.equal(added.name, 'New House');
-  assert.deepEqual(added.payments.map((payment: any) => payment.type), ['Owner']);
-  assert.equal(added.payments[0].amountCents, 0);
-  assert.equal(app.state.formulas[29][3], '=D28-SUM(D29:D29)');
+  assert.deepEqual(added.payments.map((payment: any) => payment.type), []);
+  assert.equal(app.state.formulas[28][3], '=D28');
   assert.equal(app.state.formulas[9][3], '=D4-D5-D6-D7-D8-D9');
   assert.ok(app.state.maxRows >= 30);
   assert.equal(app.state.writes, 1);
@@ -389,9 +388,9 @@ test('import creates property and initial payments in one atomic save', () => {
   assert.equal(result.ok, true);
   const property = result.snapshot.months[0].properties[3];
   assert.equal(property.totalCents, 37048);
-  assert.equal(property.payments[1].amountCents, 11686);
-  assert.equal(property.payments[1].payoutDate, '2026-10-09');
-  assert.equal(property.payments[3].bundleCents, 661041);
+  assert.equal(property.payments[0].amountCents, 11686);
+  assert.equal(property.payments[0].payoutDate, '2026-10-09');
+  assert.equal(property.payments[2].bundleCents, 661041);
   assert.equal(property.payments[0].bankCents, null);
   assert.equal(property.totalCents - property.payments.reduce((sum: number, p: any) => sum + (p.amountCents ?? 0), 0), 4562);
   assert.equal(app.state.writes, 1);
@@ -415,8 +414,8 @@ test('multiple appended properties get distinct source rows and duplicate names 
   assert.equal(app.state.data.length, 26);
   const added = app.post({ requestId: 'multiple_add_001', revision, changes: [change, { ...change, name: 'Other House' }] });
   assert.equal(added.ok, true);
-  assert.deepEqual(added.snapshot.months[0].properties.slice(3).map((property: any) => property.id), ['0:28', '0:32']);
-  assert.equal(app.state.data.length, 34);
+  assert.deepEqual(added.snapshot.months[0].properties.slice(3).map((property: any) => property.id), ['0:28', '0:31']);
+  assert.equal(app.state.data.length, 32);
 });
 
 test('new properties inherit the first property borders, fonts, alignment, and date formats', () => {
@@ -429,20 +428,16 @@ test('new properties inherit the first property borders, fonts, alignment, and d
     { kind: 'addProperty', monthId: '0', name: 'Zero House', manager: 'TeamA', totalCents: 0 },
   ] });
   assert.equal(result.ok, true, result.error?.message);
-  for (const firstIndex of [26, 30]) {
-    assert.deepEqual(app.state.formats.slice(firstIndex, firstIndex + 4), [originalFormats[2], originalFormats[3], originalFormats[8], originalFormats[9]]);
+  for (const firstIndex of [26, 29]) {
+    assert.deepEqual(app.state.formats.slice(firstIndex, firstIndex + 3), [originalFormats[2], originalFormats[3], originalFormats[9]]);
     assert.equal(app.state.formats[firstIndex][0].borders.top.style, 'SOLID');
     assert.equal(app.state.formats[firstIndex][0].textFormat.bold, true);
     assert.equal(app.state.formats[firstIndex + 1][1].horizontalAlignment, 'CENTER');
-    assert.equal(app.state.formats[firstIndex + 2][2].textFormat.fontSize, 9);
-    assert.equal(app.state.formats[firstIndex + 3][9].borders.bottom.style, 'SOLID');
-    for (let payment = firstIndex + 2; payment <= firstIndex + 2; payment++) {
-      assert.equal(app.state.validations[payment][9].condition.type, 'BOOLEAN');
-    }
+    assert.equal(app.state.formats[firstIndex + 2][9].borders.bottom.style, 'SOLID');
   }
   assert.equal(app.state.data[27][1], 'New House');
-  assert.equal(app.state.data[31][3], 0);
-  assert.equal(app.state.formulas[29][3], '=D28-SUM(D29:D29)');
+  assert.equal(app.state.data[30][3], 0);
+  assert.equal(app.state.formulas[28][3], '=D28');
   assert.deepEqual(app.state.data.slice(0, 26), originalValues);
   assert.deepEqual(app.state.formulas.slice(0, 26), originalFormulas);
   assert.deepEqual(app.state.formats.slice(0, 26), originalFormats);
@@ -459,9 +454,8 @@ test('format copying matches payment roles when the template has extra payment r
   ] });
   assert.equal(result.ok, true, result.error?.message);
   assert.equal(result.snapshot.months[0].properties[3].id, '0:29');
-  assert.deepEqual(app.state.formats[29][2].textFormat, { fontFamily: 'Arial', fontSize: 9, bold: true });
-  assert.equal(app.state.formats[30][9].borders.bottom.style, 'SOLID');
-  assert.equal(app.state.formulas[30][3], '=D29-SUM(D30:D30)');
+  assert.equal(app.state.formats[29][9].borders.bottom.style, 'SOLID');
+  assert.equal(app.state.formulas[29][3], '=D29');
 });
 
 test('clearing a payment preserves blank-versus-zero semantics and rejects duplicate payment fields', () => {
@@ -547,10 +541,10 @@ test('new properties support more than three Airbnb payouts with existing slots 
   ] });
   assert.equal(result.ok, true, JSON.stringify(result));
   const property = result.snapshot.months[0].properties.at(-1);
-  assert.equal(property.payments.length, 6);
+  assert.equal(property.payments.length, 5);
   assert.equal(property.payments.filter((p: any) => p.type === 'Airbnb').length, 5);
   assert.equal(property.sourceArCents, 2000);
-  assert.equal(app.state.formulas[34][3], '=D28-SUM(D29:D34)');
+  assert.equal(app.state.formulas[33][3], '=D28-SUM(D29:D33)');
 });
 
 test('bulk payment validation rejects invalid fields and aggregate overflow without writes', () => {
@@ -629,10 +623,40 @@ test('typed payment appends support manual Vrbo and Owner imports with matching 
   const result = app.post({ requestId: 'typed-append-payment', revision: created.snapshot.revision, changes: [{ kind: 'appendPayments', propertyId: '0:28', payments: [{ type: 'Vrbo', amountCents: 2000 }, { type: 'Owner', amountCents: 500 }, { amountCents: 100 }] }] });
   assert.equal(result.ok, true, JSON.stringify(result));
   const property = result.snapshot.months[0].properties.at(-1);
-  assert.deepEqual(property.payments.map((p: any) => [p.type, p.amountCents]), [['Owner', 0], ['Vrbo', 1000], ['Vrbo', 2000], ['Owner', 500], ['Airbnb', 100]]);
+  assert.deepEqual(property.payments.map((p: any) => [p.type, p.amountCents]), [['Vrbo', 1000], ['Vrbo', 2000], ['Owner', 500], ['Airbnb', 100]]);
   assert.equal(property.sourceArCents, 6400);
+  assert.equal(app.state.formats[28][2].textFormat.fontSize, 8);
   assert.equal(app.state.formats[29][2].textFormat.fontSize, 8);
-  assert.equal(app.state.formats[30][2].textFormat.fontSize, 8);
-  assert.equal(app.state.formats[31][2].textFormat.fontSize, 9);
-  assert.equal(app.state.formulas[33][3], '=D28-SUM(D29:D33)');
+  assert.equal(app.state.formats[30][2].textFormat.fontSize, 9);
+  assert.equal(app.state.formulas[32][3], '=D28-SUM(D29:D32)');
+});
+
+test('an empty first template allows future payment insertion and no default Owner is created', () => {
+  for (const keepOtherProperties of [false, true]) {
+    const app = harness();
+    for (const grid of [app.state.data, app.state.formulas, app.state.formats, app.state.validations]) {
+      grid.splice(4, 5);
+      if (!keepOtherProperties) grid.splice(5);
+    }
+    app.state.formulas[4][3] = '=D4';
+    app.state.data[4][3] = 442.04;
+    if (keepOtherProperties) app.state.formats[10][2] = { textFormat: { italic: true } };
+    const before = app.read();
+    assert.equal(before.ok, true);
+    assert.equal(before.snapshot.months[0].properties[0].payments.length, 0);
+    const result = app.post({ requestId: 'empty-template-insert', revision: before.snapshot.revision, changes: [
+      { kind: 'appendPayments', propertyId: '0:4', payments: [{ type: 'Vrbo', amountCents: 1000 }] },
+      { kind: 'addProperty', monthId: '0', name: 'No placeholders', manager: 'TeamA', totalCents: 2000, initialPayments: [{ index: 2, amountCents: 0 }] },
+      { kind: 'addProperty', monthId: '0', name: 'Bare property', manager: 'TeamA', totalCents: 3000 },
+    ] });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const properties = result.snapshot.months[0].properties;
+    assert.deepEqual(properties[0].payments.map((p: any) => p.type), ['Vrbo']);
+    assert.equal(properties[0].sourceArCents, 43204);
+    assert.deepEqual(properties.at(-2).payments.map((p: any) => [p.type, p.amountCents]), [['Airbnb', 0]]);
+    assert.deepEqual(properties.at(-1).payments, []);
+    assert.equal(properties.at(-1).sourceArCents, 3000);
+    assert.equal(app.state.validations[4][9].condition.type, 'BOOLEAN');
+    if (keepOtherProperties) assert.equal(app.state.formats[4][2].textFormat.italic, true);
+  }
 });

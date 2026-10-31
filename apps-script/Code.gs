@@ -239,7 +239,7 @@ function castleRead() {
         property.payments.push(payment);
         paymentIndex[paymentId] = { sheetId: Number(id), row: rowNumber, payment: payment };
       }
-      if (!foundAr || !property.payments.length) castleThrow('SOURCE_DATA', label + ': property ' + property.name + ' is missing payment rows or its AR row.');
+      if (!foundAr) castleThrow('SOURCE_DATA', label + ': property ' + property.name + ' is missing its AR row.');
       // Use the first established block, not a possibly unformatted recent addition.
       if (!meta.formatTemplate) {
         meta.formatTemplate = {
@@ -348,9 +348,9 @@ function castleBuildRequests(changes, current) {
         if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Initial payout dates must be valid YYYY-MM-DD values.');
         initialSlots[payment.index] = payment;
       });
-      // Slot indexes describe roles, not mandatory physical rows. Every new
-      // property starts with Owner; only supplied platform payments follow it.
-      var orderedPayments = [initialSlots[4] || { index: 4, amountCents: 0 }];
+      // Slot indexes describe roles, not mandatory physical rows. Create only
+      // supplied payments, including Owner only when explicitly provided.
+      var orderedPayments = initialSlots[4] ? [initialSlots[4]] : [];
       [0, 1, 2, 3].forEach(function (index) { if (initialSlots[index]) orderedPayments.push(initialSlots[index]); });
       var paymentTypes = orderedPayments.map(function (payment) { return payment.index === 4 ? 'Owner' : payment.index === 3 ? 'Vrbo' : 'Airbnb'; });
       var rows = [CASTLE_HEADERS.slice(), [manager, name, 'Total Payment', change.totalCents / 100]];
@@ -365,7 +365,7 @@ function castleBuildRequests(changes, current) {
       rows.forEach(function (values, offset) {
         var cells = [];
         for (var column = 0; column < 10; column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
-        if (offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' } };
+        if (offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + (orderedPayments.length ? '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' : '') } };
         if (offset >= 2 && offset < rows.length - 1) {
           var row = firstRow + offset;
           cells[9] = castleValue(false);
@@ -380,7 +380,7 @@ function castleBuildRequests(changes, current) {
         if (payment.bundleCents !== undefined) requests.push(castleCell(target.sheetId, row, 6, payment.bundleCents / 100));
         if (payment.payoutDate) requests.push(castleCell(target.sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
       });
-      requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+      if (orderedPayments.length) requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });
   Object.keys(appendRows).forEach(function (monthId) {
@@ -389,18 +389,22 @@ function castleBuildRequests(changes, current) {
   });
   // Apply all edits and new blocks at their original coordinates, then insert
   // bottom-up. Sheets relocates lower rows and their formula references atomically.
+  var appliedInsertions = [];
   Object.keys(insertions).map(function (key) { return insertions[key]; }).sort(function (a, b) {
     return a.sheetId - b.sheetId || b.arRow - a.arRow;
   }).forEach(function (insertion) {
     var first = insertion.arRow, count = insertion.payments.length, sheetId = insertion.sheetId;
     requests.push({ insertDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: first - 1, endIndex: first - 1 + count }, inheritFromBefore: true } });
+    appliedInsertions.push(insertion);
     var template = current.months[String(sheetId)].formatTemplate;
     insertion.payments.forEach(function (payment, index) {
       var row = first + index;
       var type = payment.type || 'Airbnb';
-      var source = template.payments.filter(function (candidate) { return candidate.type === type; })[0] || template.payments[0];
+      var source = castlePaymentFormatSource(current.months[String(sheetId)], type);
+      var sourceRow = source.row;
+      appliedInsertions.forEach(function (applied) { if (applied.sheetId === sheetId && applied.arRow <= source.row) sourceRow += applied.payments.length; });
       requests.push({ copyPaste: {
-        source: { sheetId: sheetId, startRowIndex: source.row - 1, endRowIndex: source.row, startColumnIndex: 0, endColumnIndex: 10 },
+        source: { sheetId: sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10 },
         destination: { sheetId: sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: 10 },
         pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
       } });
@@ -422,7 +426,7 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
     var matching = template.payments.filter(function (payment) { return payment.type === type; });
     var occurrence = used[type] || 0;
     // Reuse a body row if the template has fewer slots or omits a payment type.
-    var source = matching[Math.min(occurrence, matching.length - 1)] || template.payments[0];
+    var source = matching[Math.min(occurrence, matching.length - 1)] || castlePaymentFormatSource(month, type);
     sourceRows.push(source.row);
     used[type] = occurrence + 1;
   });
@@ -436,6 +440,16 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
       pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
     } };
   });
+}
+
+function castlePaymentFormatSource(month, type) {
+  var payments = month.formatTemplate.payments.slice();
+  // A first property can be empty. Look through other established properties
+  // before falling back to the total row's body formatting.
+  month.month.properties.forEach(function (property) {
+    property.payments.forEach(function (payment) { payments.push({ row: Number(payment.id.split(':')[1]), type: payment.type }); });
+  });
+  return payments.filter(function (payment) { return payment.type === type; })[0] || payments[0] || { row: month.formatTemplate.totalRow };
 }
 
 function castleCell(sheetId, row, column, value, type) {
