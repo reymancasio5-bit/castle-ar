@@ -262,12 +262,13 @@ function castleRead() {
 function castleBuildRequests(changes, current) {
   var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0;
   function queuePayments(key, target, payments) {
-    if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one Airbnb payment.');
+    if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one payment.');
     paymentCount += payments.length;
     if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
     payments.forEach(function (payment) {
-      if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid Airbnb payment.');
-      castleKeys(payment, ['amountCents', 'payoutDate', 'bundleCents']);
+      if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid payment.');
+      castleKeys(payment, ['type', 'amountCents', 'payoutDate', 'bundleCents']);
+      if (payment.type !== undefined && ['Airbnb', 'Vrbo', 'Owner'].indexOf(payment.type) < 0) castleThrow('VALIDATION', 'Payment type must be Airbnb, Vrbo, or Owner.');
       castleCents(payment.amountCents, false, false);
       if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
       if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Payout dates must be valid YYYY-MM-DD values.');
@@ -332,16 +333,11 @@ function castleBuildRequests(changes, current) {
       if (addedNames[nameKey] || target.month.properties.some(function (property) { return property.name.toLowerCase() === name.toLowerCase(); })) castleThrow('VALIDATION', 'This property already exists in the selected month.');
       addedNames[nameKey] = true;
       var firstRow = appendRows[change.monthId] || target.lastRow + 1;
-      appendRows[change.monthId] = firstRow + 8;
       var totalRow = firstRow + 1;
       var initialPayments = change.initialPayments === undefined ? [] : change.initialPayments;
       if (!Array.isArray(initialPayments) || initialPayments.length > 5) castleThrow('VALIDATION', 'Initial payments must contain up to five payment slots.');
       paymentCount += initialPayments.length;
       if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
-      if (change.additionalPayments !== undefined) {
-        if (!Array.isArray(change.additionalPayments)) castleThrow('VALIDATION', 'Additional payments must be an array.');
-        if (change.additionalPayments.length) queuePayments('new:' + change.monthId + ':' + totalRow, { sheetId: target.sheetId, row: totalRow, arRow: firstRow + 7 }, change.additionalPayments);
-      }
       var initialSlots = {};
       initialPayments.forEach(function (payment) {
         if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid initial payment.');
@@ -352,25 +348,39 @@ function castleBuildRequests(changes, current) {
         if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Initial payout dates must be valid YYYY-MM-DD values.');
         initialSlots[payment.index] = payment;
       });
-      var rows = [CASTLE_HEADERS.slice(), [manager, name, 'Total Payment', change.totalCents / 100], ['', '', 'Airbnb Payment'], ['', '', 'Airbnb Payment'], ['', '', 'Airbnb Payment'], ['', '', 'Vrbo Payment'], ['', '', 'Owner Payment', 0], ['', '', 'AR']];
+      // Slot indexes describe roles, not mandatory physical rows. Every new
+      // property starts with Owner; only supplied platform payments follow it.
+      var orderedPayments = [initialSlots[4] || { index: 4, amountCents: 0 }];
+      [0, 1, 2, 3].forEach(function (index) { if (initialSlots[index]) orderedPayments.push(initialSlots[index]); });
+      var paymentTypes = orderedPayments.map(function (payment) { return payment.index === 4 ? 'Owner' : payment.index === 3 ? 'Vrbo' : 'Airbnb'; });
+      var rows = [CASTLE_HEADERS.slice(), [manager, name, 'Total Payment', change.totalCents / 100]];
+      orderedPayments.forEach(function (payment, index) { rows.push(['', '', paymentTypes[index] + ' Payment', payment.amountCents / 100]); });
+      rows.push(['', '', 'AR']);
+      appendRows[change.monthId] = firstRow + rows.length;
+      var arRow = firstRow + rows.length - 1;
+      if (change.additionalPayments !== undefined) {
+        if (!Array.isArray(change.additionalPayments)) castleThrow('VALIDATION', 'Additional payments must be an array.');
+        if (change.additionalPayments.length) queuePayments('new:' + change.monthId + ':' + totalRow, { sheetId: target.sheetId, row: totalRow, arRow: arRow }, change.additionalPayments);
+      }
       rows.forEach(function (values, offset) {
         var cells = [];
         for (var column = 0; column < 10; column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
-        if (offset === 7) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + '-SUM(D' + (totalRow + 1) + ':D' + (totalRow + 5) + ')' } };
-        if (offset >= 2 && offset <= 6) {
+        if (offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' } };
+        if (offset >= 2 && offset < rows.length - 1) {
           var row = firstRow + offset;
+          cells[9] = castleValue(false);
           cells[8] = { userEnteredValue: { formulaValue: '=IF(OR(F' + row + '="",H' + row + '=""),"",ROUND(F' + row + ',2)=ROUND(H' + row + ',2))' } };
         }
         requests.push({ updateCells: { start: { sheetId: target.sheetId, rowIndex: firstRow + offset - 1, columnIndex: 0 }, rows: [{ values: cells }], fields: 'userEnteredValue' } });
       });
-      requests = requests.concat(castlePropertyFormatRequests(target, firstRow));
-      initialPayments.forEach(function (payment) {
-        var row = firstRow + 2 + payment.index;
+      requests = requests.concat(castlePropertyFormatRequests(target, firstRow, paymentTypes));
+      orderedPayments.forEach(function (payment, index) {
+        var row = firstRow + 2 + index;
         requests.push(castleCell(target.sheetId, row, 4, payment.amountCents / 100));
         if (payment.bundleCents !== undefined) requests.push(castleCell(target.sheetId, row, 6, payment.bundleCents / 100));
         if (payment.payoutDate) requests.push(castleCell(target.sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
       });
-      requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: totalRow + 5, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+      requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });
   Object.keys(appendRows).forEach(function (monthId) {
@@ -385,15 +395,16 @@ function castleBuildRequests(changes, current) {
     var first = insertion.arRow, count = insertion.payments.length, sheetId = insertion.sheetId;
     requests.push({ insertDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: first - 1, endIndex: first - 1 + count }, inheritFromBefore: true } });
     var template = current.months[String(sheetId)].formatTemplate;
-    var source = template.payments.filter(function (payment) { return payment.type === 'Airbnb'; })[0] || template.payments[0];
-    requests.push({ copyPaste: {
-      source: { sheetId: sheetId, startRowIndex: source.row - 1, endRowIndex: source.row, startColumnIndex: 0, endColumnIndex: 10 },
-      destination: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 0, endColumnIndex: 10 },
-      pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
-    } });
     insertion.payments.forEach(function (payment, index) {
       var row = first + index;
-      var values = ['', '', 'Airbnb Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false].map(castleValue);
+      var type = payment.type || 'Airbnb';
+      var source = template.payments.filter(function (candidate) { return candidate.type === type; })[0] || template.payments[0];
+      requests.push({ copyPaste: {
+        source: { sheetId: sheetId, startRowIndex: source.row - 1, endRowIndex: source.row, startColumnIndex: 0, endColumnIndex: 10 },
+        destination: { sheetId: sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: 10 },
+        pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
+      } });
+      var values = ['', '', type + ' Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false].map(castleValue);
       values[8] = { userEnteredValue: { formulaValue: '=IF(OR(F' + row + '="",H' + row + '=""),"",ROUND(F' + row + ',2)=ROUND(H' + row + ',2))' } };
       requests.push({ updateCells: { start: { sheetId: sheetId, rowIndex: row - 1, columnIndex: 0 }, rows: [{ values: values }], fields: 'userEnteredValue' } });
       if (payment.payoutDate) requests.push(castleCell(sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
@@ -404,10 +415,10 @@ function castleBuildRequests(changes, current) {
   return requests;
 }
 
-function castlePropertyFormatRequests(month, firstRow) {
+function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
   var template = month.formatTemplate, used = {};
   var sourceRows = [template.headerRow, template.totalRow];
-  ['Airbnb', 'Airbnb', 'Airbnb', 'Vrbo', 'Owner'].forEach(function (type) {
+  paymentTypes.forEach(function (type) {
     var matching = template.payments.filter(function (payment) { return payment.type === type; });
     var occurrence = used[type] || 0;
     // Reuse a body row if the template has fewer slots or omits a payment type.

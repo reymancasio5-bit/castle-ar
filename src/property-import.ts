@@ -62,7 +62,20 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
     // Use a synthetic name column so uploaded listing names never select a database property.
     const nameColumn = sheet.rows.reduce((max, row) => Math.max(max, row.length), 0);
     const mappedSheet = { ...sheet, rows: sheet.rows.map(row => { const cells = row.slice(); const sourceName = text(row[options.nameColumn]?.value); cells[nameColumn] = { value: isTotal(sourceName) ? sourceName : property.name }; return cells; }) };
-    ({ rows, changes } = buildImportPreview({ ...month, properties: [property] }, mappedSheet, { ...options, nameColumn }));
+    const type = options.destination.startsWith('Airbnb') ? 'Airbnb' : options.destination === 'Vrbo' ? 'Vrbo' : 'Owner';
+    const slot = type === 'Airbnb' ? Number(options.destination.slice(-1)) - 1 : 0;
+    const mappedProperty = { ...property, payments: property.payments.slice() };
+    const temporaryIds = new Set<string>();
+    while (mappedProperty.payments.filter(payment => payment.type === type).length <= slot) {
+      const id = `manual-import-${mappedProperty.payments.length}`;
+      temporaryIds.add(id);
+      mappedProperty.payments.push({ id, type, amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
+    }
+    ({ rows, changes } = buildImportPreview({ ...month, properties: [mappedProperty] }, mappedSheet, { ...options, nameColumn }));
+    changes = changes.map(change => change.kind === 'updatePayment' && temporaryIds.has(change.paymentId)
+      ? { kind: 'appendPayments', propertyId: property.id, payments: [{ amountCents: change.fields.amountCents!, type }] }
+      : change);
+    if (changes.some(change => change.kind === 'appendPayments')) rows.forEach(row => { if (row.status === 'ready') row.reason = `Append new ${type} payment row.`; });
   }
   // No property/total is saved when there are no usable payment rows.
   const usable = rows.some(row => row.status === 'ready' || row.reason === 'Already imported; unchanged.');

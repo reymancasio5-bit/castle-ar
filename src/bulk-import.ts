@@ -66,7 +66,7 @@ export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[])
    const appended: ImportedPayment[]=[];
    for(const payment of property.payments) {
     const before=original.payments.find(p=>p.id===payment.id);
-    if(!before) appended.push(paymentFields(payment));
+    if(!before) appended.push({...paymentFields(payment), ...(payment.type !== 'Airbnb' ? {type:payment.type} : {})});
     else if(JSON.stringify(before)!==JSON.stringify(payment)) changes.push({kind:'updatePayment',paymentId:payment.id,fields:paymentFields(payment)});
    }
    if(appended.length) changes.push({kind:'appendPayments',propertyId:property.id,payments:appended});

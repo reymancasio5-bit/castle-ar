@@ -59,6 +59,17 @@ test('plain spreadsheets exclude total rows when summing into a selected propert
   assert.deepEqual(result.changes, [{ kind: 'updatePayment', paymentId: 'a0', fields: { amountCents: 1200 } }]);
 });
 
+test('manual imports append only the selected platform row when its slot is missing', () => {
+ const compact=structuredClone(month);
+ compact.properties[0].payments=[{id:'owner',type:'Owner',amountCents:0,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false}];
+ const plain=sheet([['Property','Amount'],['Source listing',12]]);
+ for(const destination of ['Airbnb1','Airbnb3','Vrbo'] as const) {
+  const result=importer.buildPropertyImportPreview(compact,plain,{...options,nameColumn:0,amountColumn:1,destination});
+  assert.equal(result.invalidCount,0);
+  assert.deepEqual(result.changes,[{kind:'appendPayments',propertyId:'p',payments:[{amountCents:1200,type:destination==='Vrbo'?'Vrbo':'Airbnb'}]}]);
+ }
+});
+
 test('one invalid detail prevents a partial payout sum', () => {
   const bad = structuredClone(data); bad.rows.push(structuredClone(bad.rows[2])); bad.rows[3][5].value = 'invalid';
   assert.throws(() => importer.buildPropertyImportPreview(month, bad, options), /amount/i);
