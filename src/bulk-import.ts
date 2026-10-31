@@ -11,6 +11,7 @@ const paymentFields = (p: Payment): ImportedPayment => ({amountCents:p.amountCen
 const blank = (id: string, type: Payment['type'] = 'Airbnb'): Payment => ({id,type,amountCents:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false});
 export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[]): BulkImportPreview {
  if(entries.length > 50) throw new Error('Import at most 50 files at a time.');
+ if(new Set(entries.map(entry=>normalizePropertyName(entry.options.propertyName))).size>1) throw new Error('Choose one property for the entire bulk import.');
  if(entries.reduce((n,e)=>n+e.sheet.rows.length,0)>MAX_IMPORT_ROWS) throw new Error('Combined import exceeds 10,000 rows.');
  const simulated = structuredClone(month);
  const rows: BulkImportPreview['rows'] = [];

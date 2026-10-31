@@ -27,10 +27,11 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
   const [step, setStep] = useState(1);
   const [files, setFiles] = useState<ImportFile[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
+  const [destination, setDestination] = useState({ propertyName: '', manager: '', total: '' });
   const activeFile = files[fileIndex];
   const sheets = activeFile?.sheets ?? [];
   const sheetIndex = activeFile?.sheetIndex ?? 0;
-  const options = activeFile?.options ?? initialOptions;
+  const options = { ...(activeFile?.options ?? initialOptions), ...destination };
   function setOptions(update: (current: PropertyImportOptions) => PropertyImportOptions) {
     setFiles(current => current.map((file, index) => index === fileIndex ? { ...file, options: update(file.options) } : file));
   }
@@ -48,7 +49,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
   function chooseProperty(name: string) {
     const existing = month.properties.find(property => normalizePropertyName(property.name) === normalizePropertyName(name));
     const catalog = propertySuggestions.find(property => normalizePropertyName(property.name) === normalizePropertyName(name));
-    setOptions(current => {
+    setDestination(current => {
       const leavingExisting = month.properties.some(property => normalizePropertyName(property.name) === normalizePropertyName(current.propertyName));
       return { ...current, propertyName: name, manager: existing?.manager ?? catalog?.manager ?? (leavingExisting ? '' : current.manager), total: existing ? (existing.totalCents / 100).toFixed(2) : leavingExisting ? '' : current.total };
     });
@@ -66,9 +67,9 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
 
   const previewState = useMemo(() => {
     if (!files.length) return { preview: null, error: '' };
-    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: file.options }))), error: '' }; }
+    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: { ...file.options, ...destination } }))), error: '' }; }
     catch (cause) { return { preview: null, error: cause instanceof Error ? cause.message : 'Check the selected columns.' }; }
-  }, [month, files]);
+  }, [month, files, destination]);
   const preview = previewState.preview;
   const columnCount = sheet?.rows.reduce((max, row) => Math.max(max, row.length), 0) ?? 0;
   const columns = Array.from({ length: columnCount }, (_, index) => {
@@ -142,12 +143,12 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
       }}>
       <header className="import-header">
         <div className="import-header-icon"><FileSpreadsheet size={23} aria-hidden="true" /></div>
-        <div><p className="import-eyebrow">EXCEL IMPORT</p><h2 id="import-title">Bring your amounts in</h2><p id="import-description">Import into {month.label}. Choose properties for your files, then review every change.</p></div>
+        <div><p className="import-eyebrow">EXCEL IMPORT</p><h2 id="import-title">Bring your amounts in</h2><p id="import-description">Import into {month.label}. Choose one property for all files, then review every change.</p></div>
         <button className="import-icon-button" aria-label="Close import" onClick={onClose} disabled={saving}><X size={21} aria-hidden="true" /></button>
       </header>
 
       <ol className="import-steps" aria-label="Import progress">
-        {['Choose files', 'Match properties', 'Review & import'].map((label, index) => <li key={label} className={step === index + 1 ? 'import-step-current' : step > index + 1 ? 'import-step-done' : ''} aria-current={step === index + 1 ? 'step' : undefined}>
+        {['Choose files', 'Choose property', 'Review & import'].map((label, index) => <li key={label} className={step === index + 1 ? 'import-step-current' : step > index + 1 ? 'import-step-done' : ''} aria-current={step === index + 1 ? 'step' : undefined}>
           <span>{step > index + 1 ? <Check size={15} aria-hidden="true" /> : index + 1}</span>{label}
         </li>)}
       </ol>
@@ -160,7 +161,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
           <div className={`import-dropzone ${dragging ? 'import-dropzone-active' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); if (!loading) void chooseFiles(event.dataTransfer.files); }}>
             <div className="import-upload-icon"><Upload size={30} aria-hidden="true" /></div>
             <h3>{loading ? 'Reading your spreadsheet…' : 'Drop your spreadsheets here'}</h3>
-            <p>Select multiple Airbnb exports and choose a destination property for each file.</p>
+            <p>Select multiple Airbnb exports for one property. Choose the property once for the entire batch.</p>
             <button className="import-button import-button-primary" disabled={loading} onClick={() => fileRef.current?.click()}>{loading ? 'Reading file…' : 'Choose files'}</button>
             <small>Excel .xlsx / .xls or .csv · 10 MB per file / 50 MB total / Up to 50 files and 10,000 rows combined</small>
           </div>
@@ -170,23 +171,24 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
         {step >= 2 && sheet && <div className="import-file-bar"><FileSpreadsheet size={20} aria-hidden="true" /><span>{files.length} file{files.length === 1 ? '' : 's'} selected</span><button className="import-text-button" disabled={loading || saving} onClick={() => fileRef.current?.click()}>{loading ? 'Reading…' : 'Change files'}</button></div>}
 
         {step === 2 && sheet && <>
-          <div className="import-guidance"><FileSpreadsheet size={19} aria-hidden="true" /><div><strong>Choose the destination for every file</strong><p>Airbnb exports are detected from their columns. Choose one worksheet and property per file. Vrbo and Booking.com automatic mapping will require sample exports.</p></div></div>
+          <div className="import-guidance"><FileSpreadsheet size={19} aria-hidden="true" /><div><strong>One property for this import</strong><p>All selected files will be imported into the property below. Airbnb columns are detected automatically; file settings only need attention if a worksheet or header differs.</p></div></div>
+          <div className="import-field-grid" style={{ marginTop: 18 }}>
+            <label className="import-field">Property name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
+            <label className="import-field">Total Payment (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>Enter the expected total. This amount does not come from the file.</small></label>
+            {!selectedProperty && <label className="import-field import-field-full">Property manager (required for a new property)<input type="text" value={options.manager} maxLength={160} placeholder="e.g. Team B" onChange={event => setDestination(current => ({ ...current, manager: event.target.value }))} /></label>}
+          </div>
           <div className="import-file-queue" aria-label="Files to import">
             {files.map((file, index) => <div key={`${file.name}-${index}`} className="import-file-item">
               <button className="import-button import-button-secondary" aria-pressed={fileIndex === index} onClick={() => { setFileIndex(index); setPage(0); setError(''); }}>
-                <span>{index + 1}. {file.name}<small>{file.options.propertyName || 'Choose a property'} · {isAirbnbSheet(file.sheets[file.sheetIndex], file.options.headerRow) ? 'Airbnb' : 'Manual mapping'}</small></span>
+                <span>{index + 1}. {file.name}<small>{file.sheets[file.sheetIndex].name} · {isAirbnbSheet(file.sheets[file.sheetIndex], file.options.headerRow) ? 'Airbnb' : 'Manual mapping'}</small></span>
               </button>
               <button className="import-icon-button" aria-label={`Remove ${file.name}`} onClick={() => { setFiles(current => current.filter((_, i) => i !== index)); setFileIndex(0); if (files.length === 1) setStep(1); }}><X size={16} /></button>
             </div>)}
           </div>
-          <div className="import-section-heading"><h3>Configure file {fileIndex + 1}: {activeFile?.name}</h3><span>{fileIndex + 1} of {files.length}</span></div>
+          <div className="import-section-heading"><h3>File preview & settings {fileIndex + 1}: {activeFile?.name}</h3><span>{fileIndex + 1} of {files.length}</span></div>
           <div className="import-field-grid">
             <label className="import-field">Worksheet<select value={sheetIndex} onChange={event => changeSheet(Number(event.target.value))}>{sheets.map((candidate, index) => <option value={index} key={`${candidate.name}-${index}`}>{candidate.name}</option>)}</select></label>
             <div className="import-field"><label htmlFor="import-header-row">Header row</label><div className="import-header-controls"><input id="import-header-row" type="number" min={1} max={sheet.rows.length || 1} disabled={options.headerRow === null} value={options.headerRow === null ? '' : options.headerRow + 1} onChange={event => setOptions(current => ({ ...current, headerRow: Number(event.target.value) - 1 }))} /><label className="import-checkbox"><input type="checkbox" checked={options.headerRow === null} onChange={event => setOptions(current => ({ ...current, headerRow: event.target.checked ? null : 0 }))} />No headers</label></div></div>
-            <label className="import-field">Property name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
-            {files.length > 1 && options.propertyName.trim() && <div className="import-field import-field-full"><button type="button" className="import-text-button" onClick={() => setFiles(current => current.map(file => ({ ...file, options: { ...file.options, propertyName: options.propertyName, manager: options.manager, total: options.total } })))}>Use this property and total for all files</button><small>Use only when every selected file belongs to the same database property.</small></div>}
-            <label className="import-field">Total Payment (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setOptions(current => ({ ...current, total: event.target.value }))} /><small>Enter the expected total. This amount does not come from the file.</small></label>
-            {!selectedProperty && <label className="import-field import-field-full">Property manager (required for a new property)<input type="text" value={options.manager} maxLength={160} placeholder="e.g. Team B" onChange={event => setOptions(current => ({ ...current, manager: event.target.value }))} /></label>}
             {airbnb ? <label className="import-field import-field-full">Save Airbnb payments to<select disabled={files.length > 1} value={files.length > 1 ? 'auto' : options.airbnbSlot} onChange={event => setOptions(current => ({ ...current, airbnbSlot: event.target.value as PropertyImportOptions['airbnbSlot'] }))}><option value="auto">Fill empty slots, then append rows (skip identical imports)</option>{[1, 2, 3].map(slot => <option key={slot} value={String(slot)}>Replace starting at Airbnb payment {slot}</option>)}</select><small>Airbnb export detected. Amount → payment; Arriving by date → platform payout date; Paid out → payout bundle. Each payout group uses one payment slot. Full listings get new rows above AR automatically.</small></label> : <>
               <label className="import-field">Amount column<select value={options.amountColumn} onChange={event => setOptions(current => ({ ...current, amountColumn: Number(event.target.value) }))}>{columns.map(column => <option value={column.index} key={column.index}>{column.label}</option>)}</select></label>
               <label className="import-field">Save amounts to<select value={options.destination} onChange={event => setOptions(current => ({ ...current, destination: event.target.value as ImportDestination }))}>{destinations.filter(destination => destination.value !== 'total').map(destination => <option value={destination.value} key={destination.value}>{destination.label}</option>)}</select><small>This replaces the selected payment for {options.propertyName || 'your property'} in {month.label}.</small></label>
@@ -201,7 +203,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
 
         {step === 3 && preview && <>
           <div className="import-review-heading"><h3>Review all files & payments</h3><p>{files.length} files / {month.label} / One confirmed save</p></div>
-          <div className="import-guidance"><CheckCircle2 size={19} aria-hidden="true" /><div><strong>Destination properties</strong>{[...new Map(files.map(file => [normalizePropertyName(file.options.propertyName), file.options])).values()].map(item => <p key={item.propertyName}>{item.propertyName} / Total Payment: {item.total} / {month.properties.some(property => normalizePropertyName(property.name) === normalizePropertyName(item.propertyName)) ? 'Existing property' : `New property / ${item.manager}`}</p>)}</div></div>
+          <div className="import-guidance"><CheckCircle2 size={19} aria-hidden="true" /><div><strong>{destination.propertyName}</strong><p>All {files.length} files / Total Payment: {destination.total} / {selectedProperty ? 'Existing property' : `New property / ${destination.manager}`}</p></div></div>
           <div className="import-counts" aria-label="Import row counts"><div><strong>{preview.readyCount}</strong><span>Ready rows</span></div><div><strong>{preview.unmatchedCount}</strong><span>Unmatched</span></div><div><strong>{preview.invalidCount}</strong><span>Need attention</span></div><div><strong>{preview.skippedCount}</strong><span>Skipped</span></div></div>
           {(preview.invalidCount > 0 || preview.unmatchedCount > 0) && <div className="import-warning">Resolve invalid or unmatched rows before importing. Go back to change the mapping or fix the source files.</div>}
           <div className="import-section-heading"><h3>Review changes</h3><label className="import-filter-label">Show<select value={rowFilter} onChange={event => { setRowFilter(event.target.value); setPage(0); }}><option value="all">All rows</option><option value="ready">Ready</option><option value="unmatched">Unmatched</option><option value="invalid">Need attention</option><option value="skipped">Skipped</option></select></label></div>

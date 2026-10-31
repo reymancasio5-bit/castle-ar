@@ -7,6 +7,10 @@ const month: Month = { id: 'm', label: '', month: '2026-10', properties: [] };
 const options = { headerRow: 0, nameColumn: 1, amountColumn: 2, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'House', manager: 'Manager', total: '100', airbnbSlot: 'auto' as const };
 const sheet = (n: number, currency = 'CAD'): ImportSheet => ({ name: 'CSV', rows: [['Type','Listing','Amount','Paid out','Arriving by date','Currency'], ['Payout','','',n,'2026-10-09',currency], ['Reservation','Listing',n,'','',currency]].map(row => row.map(value => ({value}))) });
 const entry = (n: number) => ({ fileName: `${n}.csv`, sheet: sheet(n), options });
+
+test('a bulk import cannot target more than one property', () => {
+ assert.throws(() => buildBulkImportPreview(month, [entry(1), {...entry(2), options: {...options, propertyName: 'Other house'}}]), /one property/i);
+});
 test('consolidates a new property across files, appends beyond three, and deduplicates', () => {
  const result = buildBulkImportPreview(month, [entry(1),entry(2),entry(3),entry(4),entry(4)]);
  assert.equal(result.changes.length, 1);

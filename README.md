@@ -52,7 +52,7 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 - Edit expected totals and Airbnb, Vrbo, or owner payments.
 - Record platform payout dates, payout bundle amounts, bank receipt dates and amounts, and Daisy's review.
 - Add a property with the existing spreadsheet block format.
-- Import `.xlsx`, `.xls`, and `.csv`: select one file or a bulk batch of Airbnb exports, choose a database property for each file, enter Total Payment manually, review, then apply. Airbnb exports automatically map payments, payout dates and bundles.
+- Import `.xlsx`, `.xls`, and `.csv`: select one file or a bulk batch of Airbnb exports, choose one database property for the entire batch, enter Total Payment manually, review, then apply. Airbnb exports automatically map payments, payout dates and bundles.
 - Export a numeric Excel summary plus detailed payment rows.
 - Reject stale edits instead of overwriting changes made since opening an editor.
 
@@ -74,7 +74,7 @@ For other spreadsheets, select the amount column and payment destination. All am
 
 Amounts use US-style `1,234.56` separators and support accounting negatives. Values are rounded to cents. Formula cells require a cached numeric result; macros/formulas are never executed. Limits: 50 files, 10 MB per file, 50 MB combined uploads, 10,000 combined selected worksheet rows, 500,000 cells per worksheet, and 500 payment writes/changes in one server save. Larger imports must be split. Import/export uses locally bundled SheetJS CE 0.20.3; its license is in `public/vendor/LICENSE-sheetjs.txt`.
 
-For bulk import, choose one worksheet and destination property for each file using the file list. "Use this property and total for all files" applies the active destination to every file. Existing totals are prefilled; files targeting the same property must agree on the manual total and manager. Multi-file batches always use automatic placement, never replacement. Review shows the filename and source row, and confirmation sends one atomic save. Repeated imports are identified by amount, payout date, and bundle, not reservation ID; review skipped matches if separate payouts have identical values.
+For bulk import, choose the destination property once for all selected files. Total Payment and manager are shared across the batch, and the existing total is prefilled. Changing or removing files keeps the selected destination. The file list is for previewing source data and adjusting worksheet/header settings only. Multi-file batches always use automatic placement, never replacement. Review shows the one destination plus each filename and source row, and confirmation sends one atomic save. Repeated imports are identified by amount, payout date, and bundle, not reservation ID; review skipped matches if separate payouts have identical values.
 
 Airbnb is automatically recognized by its required column headers. Bulk upload currently accepts only recognized Airbnb exports. Vrbo and Booking.com detection/mapping are deferred until representative files are available; unknown single files retain manual mapping.
 
