@@ -25,3 +25,5 @@
  .import-status-skipped,.import-muted,.import-footnote,.import-pagination,.import-section-heading>span{color:#5e6c5c}
  .import-modal .import-button{min-height:44px;font-size:13px}
 }
+
+.import-file-queue{display:grid;gap:8px;margin:18px 0;max-height:220px;overflow:auto;padding:3px}.import-file-item{display:flex;align-items:center;gap:8px;min-width:0}.import-file-item>.import-button{flex:1;min-width:0;justify-content:flex-start;text-align:left;overflow-wrap:anywhere}.import-file-item small{display:block;margin-top:5px;font-size:11px;font-weight:400}.import-file-item [aria-pressed=true]{background:#edf4ee;border-color:#548468;color:#214d39}.import-file-item>.import-icon-button{flex-shrink:0}

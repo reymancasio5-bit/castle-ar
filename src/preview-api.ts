@@ -11,9 +11,11 @@ export function createPreviewApi() {
     const id='preview-'+crypto.randomUUID();
     month.properties.push({id,name:c.name,manager:c.manager,totalCents:c.totalCents,payments:['Airbnb','Airbnb','Airbnb','Vrbo','Owner'].map((type,i)=>({id:id+':'+i,type,amountCents:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false} as Payment))});
     for (const { index, ...fields } of c.initialPayments ?? []) Object.assign(month.properties[month.properties.length - 1].payments[index], fields);
+    for (const fields of c.additionalPayments ?? []) month.properties[month.properties.length - 1].payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});
    } else {
     const properties=next.months.flatMap(m=>m.properties);
     if(c.kind==='setTotal'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');p.totalCents=c.amountCents;}
+    else if(c.kind==='appendPayments'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');for(const fields of c.payments)p.payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});}
     else {const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p)throw new Error('Payment not found.');Object.assign(p,c.fields)}
    }
   }

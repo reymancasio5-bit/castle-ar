@@ -42,9 +42,9 @@ test('invalid dates, missing payout headers and multiple listings block Airbnb i
   assert.throws(() => importer.buildPropertyImportPreview(month, mixed, options), /listing/i);
 });
 
-test('full slots block automatic import while explicit replacement is available', () => {
+test('full slots append automatically while explicit replacement is available', () => {
   const full = structuredClone(month); full.properties[0].payments.forEach(p => { p.amountCents = 100; });
-  assert.throws(() => importer.buildPropertyImportPreview(full, data, options), /slot/i);
+  assert.equal(importer.buildPropertyImportPreview(full, data, options).changes[0].kind, 'appendPayments');
   assert.equal(importer.buildPropertyImportPreview(full, data, { ...options, airbnbSlot: '1' }).changes[0].kind, 'updatePayment');
 });
 
@@ -67,4 +67,17 @@ test('one invalid detail prevents a partial payout sum', () => {
 test('a single payout sums detail amounts while retaining the bundle once', () => {
   const grouped = structuredClone(data); grouped.rows.push(structuredClone(grouped.rows[2])); grouped.rows[3][5].value = '-6.86';
   assert.deepEqual(importer.buildPropertyImportPreview(month, grouped, options).changes, [{ kind: 'updatePayment', paymentId: 'a0', fields: { amountCents: 11000, payoutDate: '2026-10-09', bundleCents: 38140 } }]);
+});
+
+test('explicit replacement advances past an unchanged payout before writing the next payout', () => {
+  const existing = structuredClone(month);
+  Object.assign(existing.properties[0].payments[0], { amountCents: 11686, payoutDate: '2026-10-09', bundleCents: 38140 });
+  const multiple = structuredClone(data);
+  const next = structuredClone(data.rows.slice(1));
+  next[0][1].value = '10/13/2026'; next[0][6].value = '602.17'; next[1][5].value = '130.81';
+  multiple.rows.push(...next);
+  const result = importer.buildPropertyImportPreview(existing, multiple, {...options, airbnbSlot: '1'});
+  assert.deepEqual(result.changes, [{kind:'updatePayment', paymentId:'a1', fields:{amountCents:13081,payoutDate:'2026-10-13',bundleCents:60217}}]);
+  assert.equal(result.rows[1].status, 'skipped');
+  assert.equal(result.rows[3].slot, 2);
 });

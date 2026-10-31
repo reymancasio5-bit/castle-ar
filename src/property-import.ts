@@ -68,7 +68,8 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   const usable = rows.some(row => row.status === 'ready' || row.reason === 'Already imported; unchanged.');
   if (usable && !existing) {
     const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
-    changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, initialPayments }];
+    const additionalPayments = changes.flatMap(change => change.kind === 'appendPayments' ? change.payments : []);
+    changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, initialPayments, ...(additionalPayments.length ? { additionalPayments } : {}) }];
   } else if (usable && existing && existing.totalCents !== totalCents) changes.unshift({ kind: 'setTotal', propertyId: property.id, amountCents: totalCents });
   return { rows, changes, newProperty: !existing, totalCents, propertyName: property.name,
     readyCount: rows.filter(row => row.status === 'ready').length, skippedCount: rows.filter(row => row.status === 'skipped').length,
@@ -116,13 +117,21 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     if (!Number.isSafeInteger(amountCents) || Math.abs(amountCents) > 999999999999) throw new Error('Combined payment amount is too large.');
     const fields = { amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
     const duplicate = payments.findIndex(payment => payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents);
-    const slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
-    if (slot < 0 || !payments[slot]) throw new Error('No available Airbnb payment slot. Select a slot to replace, or add payment rows in the sheet.');
+    let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
+    const append = slot < 0 || !payments[slot];
+    if (append) {
+      slot = payments.length;
+      payments.push({ id: `import-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
+    }
     const payment = payments[slot];
     const unchanged = payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents;
-    group.rows.forEach(row => { row.currentCents = payment.amountCents; row.proposedCents = amountCents; row.slot = slot + 1; row.status = unchanged ? 'skipped' : 'ready'; row.reason = unchanged ? 'Already imported; unchanged.' : `Airbnb payment ${slot + 1}${group.rows.length > 1 ? `; sums ${group.rows.length} detail rows` : ''}.`; });
+    group.rows.forEach(row => { row.currentCents = payment.amountCents; row.proposedCents = amountCents; row.slot = slot + 1; row.status = unchanged ? 'skipped' : 'ready'; row.reason = unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}${group.rows.length > 1 ? `; sums ${group.rows.length} detail rows` : ''}.`; });
     if (!unchanged) {
-      changes.push({ kind: 'updatePayment', paymentId: payment.id, fields });
+      if (append) {
+        const pending = changes.find(change => change.kind === 'appendPayments');
+        if (pending?.kind === 'appendPayments') pending.payments.push(fields);
+        else changes.push({ kind: 'appendPayments', propertyId: property.id, payments: [fields] });
+      } else changes.push({ kind: 'updatePayment', paymentId: payment.id, fields });
       Object.assign(payment, fields);
     }
   }

@@ -4,5 +4,6 @@ export interface Property { id: string; name: string; manager: string; totalCent
 export interface Month { id: string; label: string; month: string; properties: Property[]; }
 export interface Snapshot { revision: string; months: Month[]; updatedAt: string; spreadsheetUrl: string; }
 export interface InitialPayment { index: number; amountCents: number; payoutDate?: string; bundleCents?: number }
-export type Change = { kind: 'setTotal'; propertyId: string; amountCents: number } | { kind: 'updatePayment'; paymentId: string; fields: Partial<Omit<Payment, 'id' | 'type'>> } | { kind: 'addProperty'; monthId: string; name: string; manager: string; totalCents: number; initialPayments?: InitialPayment[] };
+export type ImportedPayment = Omit<InitialPayment, 'index'>;
+export type Change = { kind: 'setTotal'; propertyId: string; amountCents: number } | { kind: 'updatePayment'; paymentId: string; fields: Partial<Omit<Payment, 'id' | 'type'>> } | { kind: 'appendPayments'; propertyId: string; payments: ImportedPayment[] } | { kind: 'addProperty'; monthId: string; name: string; manager: string; totalCents: number; initialPayments?: InitialPayment[]; additionalPayments?: ImportedPayment[] };
 export interface ImportProps { month: Month; propertyCatalog?: Pick<Property, 'name' | 'manager'>[]; onClose: () => void; onApply: (changes: Change[]) => Promise<void>; }

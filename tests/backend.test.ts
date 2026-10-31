@@ -76,6 +76,19 @@ function harness() {
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
         if (request.appendDimension) { state.maxRows += request.appendDimension.length; continue; }
+        if (request.insertDimension) {
+          const { startIndex, endIndex } = request.insertDimension.range;
+          const count = endIndex - startIndex;
+          data.splice(startIndex, 0, ...Array.from({ length: count }, () => row()));
+          formulas.splice(startIndex, 0, ...Array.from({ length: count }, () => row()));
+          formats.splice(startIndex, 0, ...Array.from({ length: count }, () => Array.from({ length: 10 }, () => ({}))));
+          validations.splice(startIndex, 0, ...Array.from({ length: count }, () => Array.from({ length: 10 }, () => ({}))));
+          for (const cells of formulas) cells.forEach((value, c) => {
+            if (typeof value === 'string') cells[c] = value.replace(/(\$?[A-Z]+\$?)(\d+)/g, (_, column, n) => column + (+n > startIndex ? +n + count : +n));
+          });
+          state.maxRows += count;
+          continue;
+        }
         if (request.copyPaste) {
           const { source, destination, pasteType } = request.copyPaste;
           assert.equal(pasteType, 'PASTE_FORMAT', 'formatting must never copy source values or formulas');
@@ -494,5 +507,94 @@ test('a successful batch with a failed refresh remains acknowledged and is never
   assert.equal(status.ok, true);
   assert.equal(status.snapshot.months[0].properties[0].totalCents, 1);
   assert.equal(app.post(body).ok, true);
+  assert.equal(app.state.writes, 1);
+});
+
+test('bulk Airbnb rows insert atomically, preserve lower edits, and expand AR with repeated targets', () => {
+  const app = harness();
+  const before = app.read().snapshot;
+  const body = { requestId: 'bulk-existing-01', revision: before.revision, changes: [
+    { kind: 'appendPayments', propertyId: '0:4', payments: [{ amountCents: 1000, payoutDate: '2026-11-03', bundleCents: 1000 }] },
+    { kind: 'appendPayments', propertyId: '0:12', payments: [{ amountCents: 2000 }] },
+    { kind: 'appendPayments', propertyId: '0:4', payments: [{ amountCents: 500 }] },
+    { kind: 'updatePayment', paymentId: '0:21', fields: { amountCents: 12000, bundleCents: 12000 } },
+  ] };
+  const result = app.post(body);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(app.state.writes, 1);
+  const properties = result.snapshot.months[0].properties;
+  assert.equal(properties[0].payments.length, 7);
+  assert.equal(properties[1].payments.length, 6);
+  assert.equal(properties[2].payments[0].amountCents, 12000);
+  assert.equal(app.state.formulas[11][3], '=D4-SUM(D5:D11)');
+  assert.equal(app.state.formulas[20][3], '=D14-SUM(D15:D20)');
+  assert.equal(app.state.formulas[28][3], '=D23-SUM(D24:D28)');
+  assert.match(String(app.state.formulas[23][8]), /F24/);
+  assert.equal(app.state.data[9][2], 'Airbnb Payment');
+  assert.equal(app.state.data[9][9], false);
+  assert.equal(app.state.validations[9][9].condition.type, 'BOOLEAN');
+  assert.equal(app.state.formats[9][0].borders.left.style, 'SOLID');
+  assert.match(String(app.state.formulas[9][8]), /F10/);
+  assert.equal(app.post(body).ok, true);
+  assert.equal(app.state.writes, 1);
+});
+
+test('new properties support more than three Airbnb payouts with existing slots intact', () => {
+  const app = harness();
+  const result = app.post({ requestId: 'bulk-new-property', revision: app.read().snapshot.revision, changes: [
+    { kind: 'addProperty', monthId: '0', name: 'Bulk property', manager: 'TeamA', totalCents: 10000,
+      initialPayments: [0, 1, 2].map(index => ({ index, amountCents: 1000 })),
+      additionalPayments: [{ amountCents: 2000 }, { amountCents: 3000 }] },
+  ] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const property = result.snapshot.months[0].properties.at(-1);
+  assert.equal(property.payments.length, 7);
+  assert.equal(property.payments.filter((p: any) => p.type === 'Airbnb').length, 5);
+  assert.equal(property.sourceArCents, 2000);
+  assert.equal(app.state.formulas[35][3], '=D28-SUM(D29:D35)');
+});
+
+test('bulk payment validation rejects invalid fields and aggregate overflow without writes', () => {
+  for (const payments of [[], [{ amountCents: 1, type: 'Vrbo' }], [{ amountCents: 1.5 }], [{ amountCents: 1, payoutDate: '2026-02-30' }], [{ amountCents: 1, bankCents: 1 }], Array.from({ length: 501 }, () => ({ amountCents: 1 }))]) {
+    const app = harness();
+    const result = app.post({ requestId: 'bulk-validation', revision: app.read().snapshot.revision, changes: [{ kind: 'appendPayments', propertyId: '0:4', payments }] });
+    assert.equal(result.error.code, 'VALIDATION');
+    assert.equal(app.state.writes, 0);
+  }
+  const app = harness();
+  const result = app.post({ requestId: 'bulk-aggregate', revision: app.read().snapshot.revision, changes: ['0:4', '0:12'].map(propertyId => ({ kind: 'appendPayments', propertyId, payments: Array.from({ length: 251 }, () => ({ amountCents: 1 })) })) });
+  assert.equal(result.error.code, 'VALIDATION');
+  assert.equal(app.state.writes, 0);
+});
+
+test('mixed new blocks and existing appends retain every property and enforce combined payment limit', () => {
+  const app = harness();
+  const result = app.post({ requestId: 'bulk-mixed-save', revision: app.read().snapshot.revision, changes: [
+    { kind: 'appendPayments', propertyId: '0:4', payments: [{ amountCents: -100 }] },
+    { kind: 'addProperty', monthId: '0', name: 'First new', manager: 'TeamA', totalCents: 1000, additionalPayments: [{ amountCents: 300 }] },
+    { kind: 'addProperty', monthId: '0', name: 'Second new', manager: 'TeamA', totalCents: 1000, initialPayments: [{ index: 0, amountCents: 100 }], additionalPayments: [{ amountCents: 200 }] },
+  ] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const properties = result.snapshot.months[0].properties;
+  assert.equal(properties.length, 5);
+  assert.equal(properties[3].name, 'First new');
+  assert.equal(properties[4].name, 'Second new');
+  assert.equal(properties[3].sourceArCents, 700);
+  assert.equal(properties[4].sourceArCents, 700);
+  assert.equal(properties[0].payments.at(-1).amountCents, -100);
+  const limited = harness();
+  const rejected = limited.post({ requestId: 'bulk-combined-limit', revision: limited.read().snapshot.revision, changes: [
+    { kind: 'addProperty', monthId: '0', name: 'Too many', manager: 'TeamA', totalCents: 1000, initialPayments: [{ index: 0, amountCents: 1 }], additionalPayments: Array.from({ length: 500 }, () => ({ amountCents: 1 })) },
+  ] });
+  assert.equal(rejected.error.code, 'VALIDATION');
+  assert.equal(limited.state.writes, 0);
+});
+
+test('exactly 500 appended payouts are supported in one atomic batch', () => {
+  const app = harness();
+  const result = app.post({ requestId: 'bulk-limit-boundary', revision: app.read().snapshot.revision, changes: [{ kind: 'appendPayments', propertyId: '0:4', payments: Array.from({ length: 500 }, () => ({ amountCents: 1 })) }] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.snapshot.months[0].properties[0].payments.length, 505);
+  assert.equal(result.snapshot.months[0].properties[0].sourceArCents, 43704);
   assert.equal(app.state.writes, 1);
 });

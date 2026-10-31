@@ -217,6 +217,7 @@ function castleRead() {
         var paymentRow = values[paymentIndexRow], rowNumber = paymentIndexRow + 1;
         var rowType = castleText(paymentRow[2]).replace(/\s+/g, ' ');
         if (rowType === 'ar') {
+          propertyIndex[propertyId].arRow = rowNumber;
           var ar = castleSourceCents(paymentRow[3], true, label + '!D' + rowNumber);
           if (ar !== null) property.sourceArCents = ar;
           foundAr = true;
@@ -259,7 +260,21 @@ function castleRead() {
 }
 
 function castleBuildRequests(changes, current) {
-  var requests = [], targets = {}, appendRows = {}, addedNames = {};
+  var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0;
+  function queuePayments(key, target, payments) {
+    if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one Airbnb payment.');
+    paymentCount += payments.length;
+    if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
+    payments.forEach(function (payment) {
+      if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid Airbnb payment.');
+      castleKeys(payment, ['amountCents', 'payoutDate', 'bundleCents']);
+      castleCents(payment.amountCents, false, false);
+      if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
+      if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Payout dates must be valid YYYY-MM-DD values.');
+    });
+    if (!insertions[key]) insertions[key] = { sheetId: target.sheetId, row: target.row, arRow: target.arRow, payments: [] };
+    insertions[key].payments = insertions[key].payments.concat(payments);
+  }
   changes.forEach(function (change) {
     if (!change || typeof change !== 'object' || Array.isArray(change)) castleThrow('VALIDATION', 'Every change must be an object.');
     var target;
@@ -301,8 +316,13 @@ function castleBuildRequests(changes, current) {
           requests.push(castleCell(target.sheetId, target.row, 9, '=IF(OR(F' + target.row + '="",H' + target.row + '=""),"",ROUND(F' + target.row + ',2)=ROUND(H' + target.row + ',2))', 'formula'));
         }
       }
+    } else if (change.kind === 'appendPayments') {
+      castleKeys(change, ['kind', 'propertyId', 'payments']);
+      target = current.properties[change.propertyId];
+      if (!target) castleThrow('VALIDATION', 'Unknown property ID. Refresh the sheet.');
+      queuePayments(change.propertyId, target, change.payments);
     } else if (change.kind === 'addProperty') {
-      castleKeys(change, ['kind', 'monthId', 'name', 'manager', 'totalCents', 'initialPayments']);
+      castleKeys(change, ['kind', 'monthId', 'name', 'manager', 'totalCents', 'initialPayments', 'additionalPayments']);
       target = current.months[change.monthId];
       if (!target) castleThrow('VALIDATION', 'Unknown month ID.');
       var name = castleName(change.name, 'Property name');
@@ -316,6 +336,12 @@ function castleBuildRequests(changes, current) {
       var totalRow = firstRow + 1;
       var initialPayments = change.initialPayments === undefined ? [] : change.initialPayments;
       if (!Array.isArray(initialPayments) || initialPayments.length > 5) castleThrow('VALIDATION', 'Initial payments must contain up to five payment slots.');
+      paymentCount += initialPayments.length;
+      if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
+      if (change.additionalPayments !== undefined) {
+        if (!Array.isArray(change.additionalPayments)) castleThrow('VALIDATION', 'Additional payments must be an array.');
+        if (change.additionalPayments.length) queuePayments('new:' + change.monthId + ':' + totalRow, { sheetId: target.sheetId, row: totalRow, arRow: firstRow + 7 }, change.additionalPayments);
+      }
       var initialSlots = {};
       initialPayments.forEach(function (payment) {
         if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid initial payment.');
@@ -350,6 +376,30 @@ function castleBuildRequests(changes, current) {
   Object.keys(appendRows).forEach(function (monthId) {
     var target = current.months[monthId], needed = appendRows[monthId] - 1;
     if (needed > target.maxRows) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'ROWS', length: needed - target.maxRows } });
+  });
+  // Apply all edits and new blocks at their original coordinates, then insert
+  // bottom-up. Sheets relocates lower rows and their formula references atomically.
+  Object.keys(insertions).map(function (key) { return insertions[key]; }).sort(function (a, b) {
+    return a.sheetId - b.sheetId || b.arRow - a.arRow;
+  }).forEach(function (insertion) {
+    var first = insertion.arRow, count = insertion.payments.length, sheetId = insertion.sheetId;
+    requests.push({ insertDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: first - 1, endIndex: first - 1 + count }, inheritFromBefore: true } });
+    var template = current.months[String(sheetId)].formatTemplate;
+    var source = template.payments.filter(function (payment) { return payment.type === 'Airbnb'; })[0] || template.payments[0];
+    requests.push({ copyPaste: {
+      source: { sheetId: sheetId, startRowIndex: source.row - 1, endRowIndex: source.row, startColumnIndex: 0, endColumnIndex: 10 },
+      destination: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 0, endColumnIndex: 10 },
+      pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
+    } });
+    insertion.payments.forEach(function (payment, index) {
+      var row = first + index;
+      var values = ['', '', 'Airbnb Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false].map(castleValue);
+      values[8] = { userEnteredValue: { formulaValue: '=IF(OR(F' + row + '="",H' + row + '=""),"",ROUND(F' + row + ',2)=ROUND(H' + row + ',2))' } };
+      requests.push({ updateCells: { start: { sheetId: sheetId, rowIndex: row - 1, columnIndex: 0 }, rows: [{ values: values }], fields: 'userEnteredValue' } });
+      if (payment.payoutDate) requests.push(castleCell(sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
+    });
+    requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+    requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
   });
   return requests;
 }
