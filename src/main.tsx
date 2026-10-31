@@ -8,7 +8,11 @@ import './neutral-theme.css';
 import './interactions.css';
 import './motion.css';
 declare global { interface Window { CASTLE_CONFIG?: { appsScriptUrl?:string } } }
-function storedEndpoint(){try{return localStorage.getItem('castle-apps-script-url')||window.CASTLE_CONFIG?.appsScriptUrl||''}catch{return window.CASTLE_CONFIG?.appsScriptUrl||''}}
+function storedEndpoint(){
+ const publishedEndpoint=window.CASTLE_CONFIG?.appsScriptUrl?.trim();
+ if(publishedEndpoint) return publishedEndpoint;
+ try{return localStorage.getItem('castle-apps-script-url')||''}catch{return ''}
+}
 function Root(){
  const [endpoint]=useState(storedEndpoint);
  const api=useMemo(()=>{try{return endpoint?createApi(endpoint):createPreviewApi()}catch{return createPreviewApi()}},[endpoint]);
