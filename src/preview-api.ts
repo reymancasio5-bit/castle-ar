@@ -1,5 +1,6 @@
 import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
+import { validateFollowUpDraft } from './follow-ups.ts';
 export function createPreviewApi() {
  let state:Snapshot=structuredClone(sampleSnapshot);
  return {read:async()=>structuredClone(state), save:async(revision:string, changes:Change[])=>{
@@ -18,6 +19,11 @@ export function createPreviewApi() {
    } else {
     const properties=next.months.flatMap(m=>m.properties);
     if(c.kind==='setTotal'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');p.totalCents=c.amountCents;}
+    else if(c.kind==='updateFollowUp') {
+     validateFollowUpDraft(c);
+     const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');
+     p.manager=c.manager.trim();p.followUp={status:c.status,note:c.note,attachments:structuredClone(c.attachments),updatedAt:new Date().toISOString()};
+    }
     else if(c.kind==='appendPayments'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');for(const fields of c.payments)p.payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});}
     else {const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p)throw new Error('Payment not found.');Object.assign(p,c.fields)}
    }

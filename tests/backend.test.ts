@@ -35,11 +35,11 @@ function harness() {
   }
   formats[7][2].textFormat = { fontFamily: 'Arial', fontSize: 8, bold: true };
   formats[8][2].textFormat = { fontFamily: 'Arial', fontSize: 9, bold: true };
-  const state = { data, formulas, formats, validations, maxRows: 30, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false, hiddenRows: new Set<number>(), standardFilter: true };
+  const state = { data, formulas, formats, validations, maxRows: 30, maxColumns: 10, writes: 0, locked: false, failWrite: false, failReadAfterWrite: false, hiddenRows: new Set<number>(), standardFilter: true };
   const properties = new Map<string, string>();
   const cache = new Map<string, string>();
   const sheet = {
-    getName: () => 'Nov, 2026', getSheetId: () => 0, getLastRow: () => data.length, getMaxRows: () => state.maxRows,
+    getName: () => 'Nov, 2026', getSheetId: () => 0, getLastRow: () => data.length, getMaxRows: () => state.maxRows, getMaxColumns: () => state.maxColumns,
     getFilter: () => state.standardFilter ? { remove: () => { state.standardFilter = false; } } : null,
     showRows: (first: number, count: number) => {
       assert.ok(first >= 3 && count > 0 && first + count - 1 <= data.length);
@@ -75,7 +75,7 @@ function harness() {
       assert.equal(state.locked, true, 'write must hold a script lock');
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
-        if (request.appendDimension) { state.maxRows += request.appendDimension.length; continue; }
+        if (request.appendDimension) { if (request.appendDimension.dimension === 'COLUMNS') state.maxColumns += request.appendDimension.length; else state.maxRows += request.appendDimension.length; continue; }
         if (request.insertDimension) {
           const { startIndex, endIndex } = request.insertDimension.range;
           const count = endIndex - startIndex;
@@ -658,5 +658,82 @@ test('an empty first template allows future payment insertion and no default Own
     assert.equal(properties.at(-1).sourceArCents, 3000);
     assert.equal(app.state.validations[4][9].condition.type, 'BOOLEAN');
     if (keepOtherProperties) assert.equal(app.state.formats[4][2].textFormat.italic, true);
+  }
+});
+
+test('follow-ups persist literal notes and images, update manager, and move with inserted rows', () => {
+  const app = harness();
+  const attachment = { name: 'receipt.png', dataUrl: 'data:image/png;base64,aGVsbG8=' };
+  const before = app.read().snapshot;
+  const body = { requestId: 'followup-save-001', revision: before.revision, changes: [
+    { kind: 'appendPayments', propertyId: '0:4', payments: [{ amountCents: 100 }] },
+    { kind: 'updateFollowUp', propertyId: '0:12', manager: 'TeamC', status: 'payment_promised', note: '=literal note\nCall Friday', attachments: [attachment] },
+  ] };
+  const result = app.post(body);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const property = result.snapshot.months[0].properties[1];
+  assert.equal(property.manager, 'TeamC');
+  assert.equal(property.followUp.status, 'payment_promised');
+  assert.equal(property.followUp.note, '=literal note\nCall Friday');
+  assert.deepEqual(property.followUp.attachments, [attachment]);
+  assert.ok(!Number.isNaN(Date.parse(property.followUp.updatedAt)));
+  assert.equal(app.state.maxColumns, 16);
+  assert.equal(app.state.data[11][10], 'Follow-up status');
+  assert.equal(app.state.formulas[12][11], '');
+  assert.equal(app.state.writes, 1);
+  assert.equal(app.post(body).ok, true);
+  assert.equal(app.state.writes, 1);
+  app.state.data[12][11] = 'Changed directly';
+  const conflict = app.post({ ...body, requestId: 'followup-stale-001', revision: result.snapshot.revision });
+  assert.equal(conflict.error.code, 'CONFLICT');
+});
+
+test('follow-ups reject unsafe or excessive input and protect unrelated columns', () => {
+  const valid = { kind: 'updateFollowUp', propertyId: '0:4', manager: '', status: 'not_contacted', note: '', attachments: [] };
+  for (const invalid of [{ status: 'other' }, { manager: '=bad' }, { note: 'a'.repeat(5001) }, { attachments: [{ name: 'bad.svg', dataUrl: 'data:image/svg+xml;base64,aGVsbG8=' }] }, { attachments: [{ name: 'bad.png', dataUrl: 'https://example.com/x.png' }] }, { attachments: [{ name: 'bad.png', dataUrl: 'data:image/png;base64,???' }] }, { attachments: Array(4).fill({ name: 'x', dataUrl: 'data:image/png;base64,AAAA' }) }, { attachments: [{ name: 'x', dataUrl: 'data:image/png;base64,' + 'A'.repeat(45000) }] }]) {
+    const app = harness();
+    const result = app.post({ requestId: 'followup-invalid', revision: app.read().snapshot.revision, changes: [{ ...valid, ...invalid }] });
+    assert.equal(result.error.code, 'VALIDATION');
+    assert.equal(app.state.writes, 0);
+  }
+  for (const targetRow of [2, 3]) {
+    const app = harness();
+    app.state.maxColumns = 16;
+    app.state.data[targetRow][10] = 'Private unrelated information';
+    const read = app.read();
+    assert.equal(read.snapshot.months[0].properties[0].followUp, undefined);
+    const result = app.post({ requestId: 'followup-protected', revision: read.snapshot.revision, changes: [valid] });
+    assert.equal(result.error.code, 'VALIDATION');
+    assert.equal(app.state.writes, 0);
+  }
+});
+
+test('follow-ups can clear attachments and unassign managers without changing financial cells', () => {
+  const app = harness();
+  const original = structuredClone(app.state.data.map(cells => cells.slice(1, 10)));
+  const change = { kind: 'updateFollowUp', propertyId: '0:4', manager: 'TeamA', status: 'awaiting_response', note: 'Waiting', attachments: [{ name: 'proof.webp', dataUrl: 'data:image/webp;base64,AAAA' }] };
+  const saved = app.post({ requestId: 'followup-clear-first', revision: app.read().snapshot.revision, changes: [change, { ...change, propertyId: '0:12' }] });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.equal(app.state.maxColumns, 16, 'one column expansion for multiple properties');
+  const result = app.post({ requestId: 'followup-clear-second', revision: saved.snapshot.revision, changes: [{ ...change, manager: '', status: 'resolved', note: '', attachments: [] }] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const property = result.snapshot.months[0].properties[0];
+  assert.equal(property.manager, '');
+  assert.equal(property.followUp.status, 'resolved');
+  assert.equal(property.followUp.note, '');
+  assert.deepEqual(property.followUp.attachments, []);
+  assert.deepEqual(app.state.data.map(cells => cells.slice(1, 10)), original);
+  assert.deepEqual(app.state.data[3].slice(13, 16), ['', '', '']);
+  assert.equal(app.state.maxColumns, 16);
+});
+
+test('follow-up protection includes formulas with blank displayed values', () => {
+  for (const r of [2, 3]) {
+    const app = harness();
+    app.state.maxColumns = 16;
+    app.state.formulas[r][14] = '=IF(TRUE,"","")';
+    const result = app.post({ requestId: 'followup-formula-protect', revision: app.read().snapshot.revision, changes: [{ kind: 'updateFollowUp', propertyId: '0:4', manager: '', status: 'not_contacted', note: '', attachments: [] }] });
+    assert.equal(result.error.code, 'VALIDATION');
+    assert.equal(app.state.writes, 0);
   }
 });

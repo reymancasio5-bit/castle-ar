@@ -48,7 +48,7 @@ export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[])
      simulated.properties.push(property);
     } else if(change.kind==='setTotal') simulated.properties.find(p=>p.id===change.propertyId)!.totalCents=change.amountCents;
     else if(change.kind==='updatePayment') Object.assign(simulated.properties.flatMap(p=>p.payments).find(p=>p.id===change.paymentId)!,change.fields);
-    else {
+    else if(change.kind==='appendPayments') {
      const property=simulated.properties.find(p=>p.id===change.propertyId)!;
      for(const fields of change.payments) property.payments.push({...blank(`bulk-append-${fileIndex}-${property.payments.length}`),...fields});
     }

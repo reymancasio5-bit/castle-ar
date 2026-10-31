@@ -9,6 +9,7 @@ import './interactions.css';
 import './motion.css';
 declare global { interface Window { CASTLE_CONFIG?: { appsScriptUrl?:string } } }
 function storedEndpoint(){
+ if(import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview')==='1') return '';
  const publishedEndpoint=window.CASTLE_CONFIG?.appsScriptUrl?.trim();
  if(publishedEndpoint) return publishedEndpoint;
  try{return localStorage.getItem('castle-apps-script-url')||''}catch{return ''}

@@ -34,7 +34,7 @@ export default function UserSettings({ preferences, managers, onSave, onCancel }
           </div>
           <select id={`${id}-view`} value={draft.defaultView} aria-describedby={`${id}-view-help`} onChange={event => update('defaultView', event.target.value as Preferences['defaultView'])}>
             <option value="overview">Overview</option>
-            <option value="properties">Properties</option>
+            <option value="properties">Follow-ups</option>
             <option value="reconciliation">Reconciliation</option>
           </select>
         </div>

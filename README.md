@@ -13,6 +13,8 @@ npm run dev
 
 On Windows PowerShell, use `npm.cmd` if script execution policy blocks `npm`.
 
+For local review without live writes, open `http://127.0.0.1:5173/?preview=1` after starting the dev server, then select Follow-ups. This override is available only in development and uses sample data.
+
 Without an Apps Script URL, the app opens a clearly labeled preview based on the reviewed spreadsheet. Preview edits are temporary and reset on reload. They do not update Google Sheets.
 
 ## Connect the shared database
@@ -47,6 +49,7 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 ## What the app does
 
 - Month, team, status, and property search filters.
+- **Follow-ups** replaces the Properties page: track owner-contact status, write notes, attach up to three compressed screenshots, and assign an account manager per monthly property. Saving updates Overview and the shared Google Sheet.
 - **Castle team → User settings:** choose the opening page, default manager/team and record filter, table spacing, and payout date display. Preferences apply when saved and persist in the current browser; they do not change shared records. Defaults also apply when switching months, and the default status applies when navigating pages. Restore defaults changes the draft until Save preferences is selected. If browser storage is blocked, a notice explains that preferences last only for the current session.
 - Expected payments, recorded payments, outstanding AR, and reconciliation views.
 - Edit expected totals and Airbnb, Vrbo, or owner payments.
@@ -59,6 +62,16 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 System verification is an explicit application rule: a payout bundle amount and bank amount must both exist and match. Missing amounts stay Pending. A zero is an actual value. Manual verification by Daisy is separate. The source originally left both verification columns empty.
 
 AR = expected total minus the recorded Airbnb, Vrbo, and owner payments. Bank receipts are tracked separately and do not subtract a second time. The source does not specify currency, so amounts are shown without inventing a currency symbol.
+
+## Property follow-ups
+
+Each monthly property has a shared status: Not contacted, Contact attempted, Awaiting owner response, Owner responded, Payment promised, Follow-up needed, or Resolved. These track the conversation; financial collection status remains calculated from payments. Edit one property at a time, then Save update or Cancel. Notes allow 5,000 characters. Manager assignment accepts an existing manager or a new name; leaving it empty unassigns the property.
+
+Attach up to three PNG, JPEG, or WebP screenshots (10 MB source limit each). Images are compressed in the browser to fit the sheet; inspect their previews before saving and crop dense screenshots for legibility. The app stores the current note and attachments, not an activity history. Replacing/removing an attachment removes it from the next saved record.
+
+**Deployment:** replace the bound Apps Script project with the latest `apps-script/Code.gs`, then deploy a new version of the existing web-app deployment. No new OAuth scopes are needed. Account manager writes to column A on the Total Payment row. Follow-up metadata uses K:P on that row: status, note, updated-at timestamp, and three JSON-encoded image cells. Corresponding headers identify these app-managed columns; occupied unrelated cells are rejected rather than overwritten. Do not manually change the metadata headers or image JSON. Data stays attached to the property when payment rows shift. Existing properties default to Not contacted until updated.
+
+The no-login workspace shares notes and images with anyone who can access its public endpoint, just like the financial records. Save uses the existing revision checks and atomic Sheets batch. Unsaved follow-up edits keep navigation and filters disabled until Save or Cancel.
 
 ## Import rules
 

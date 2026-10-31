@@ -23,7 +23,7 @@ const steps = [
     title: 'Follow up with the owner',
     when: 'Whenever a property has an outstanding balance',
     who: 'Account manager',
-    how: <>The account manager must follow up with the property owner whenever an outstanding balance remains. Select <strong>Outstanding</strong> and filter by manager to find these properties. Contact the owner, explain the unpaid balance, and confirm when payment will be made. Continue following up until the balance is settled, and update the payment rows as collections are confirmed.</>,
+    how: <>Open Follow-ups to assign an account manager, update the contact status, and record notes or screenshots for each property. Save the update to share it with the team. Select <strong>Outstanding</strong> and filter by manager to find these properties. Contact the owner, explain the unpaid balance, and confirm when payment will be made. Continue following up until the balance is settled, and update the payment rows as collections are confirmed.</>,
   },
   {
     title: 'Reconcile deposits and verify payments',

@@ -7,6 +7,8 @@
 var CASTLE_SPREADSHEET_ID = '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY';
 var CASTLE_MAX_CENTS = 999999999999;
 var CASTLE_REQUEST_PREFIX = 'castle_request_';
+var CASTLE_FOLLOWUP_HEADERS = ['Follow-up status', 'Follow-up note', 'Follow-up updated at', 'Follow-up attachment 1', 'Follow-up attachment 2', 'Follow-up attachment 3'];
+var CASTLE_FOLLOWUP_STATUSES = ['not_contacted', 'contact_attempted', 'awaiting_response', 'owner_responded', 'payment_promised', 'follow_up_needed', 'resolved'];
 var CASTLE_HEADERS = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 
 // Keep the spreadsheet's A2 manager selector alongside the web-app bridge.
@@ -197,12 +199,13 @@ function castleRead() {
     if (!monthKey) return; // Never read unrelated tabs.
     var lastRow = sheet.getLastRow();
     if (!lastRow) return;
-    var range = sheet.getRange(1, 1, lastRow, 10);
+    var maxColumns = sheet.getMaxColumns();
+    var range = sheet.getRange(1, 1, lastRow, Math.min(16, maxColumns));
     var values = range.getValues(), formulas = range.getFormulas();
     if (!values.some(castleHeader)) return;
     var id = String(sheet.getSheetId());
     var month = { id: id, label: label, month: monthKey, properties: [] };
-    var meta = { sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), month: month };
+    var meta = { sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
     monthIndex[id] = meta;
     source.push({ id: id, label: label, values: values, formulas: formulas });
     for (var index = 0; index < values.length; index++) {
@@ -211,7 +214,17 @@ function castleRead() {
       if (!total || castleText(total[2]) !== 'total payment' || !String(total[1] || '').trim()) castleThrow('SOURCE_DATA', label + ': expected a named Total Payment row after header row ' + (index + 1) + '.');
       var propertyId = id + ':' + (totalIndex + 1);
       var property = { id: propertyId, name: String(total[1]).trim(), manager: String(total[0] || '').trim(), totalCents: castleSourceCents(total[3], false, label + '!D' + (totalIndex + 1)), payments: [] };
-      propertyIndex[propertyId] = { sheetId: Number(id), row: totalIndex + 1, property: property };
+      var followupHeaders = values[index].slice(10, 16), followupValues = total.slice(10, 16);
+      if (CASTLE_FOLLOWUP_HEADERS.every(function (header, offset) { return followupHeaders[offset] === header; })) {
+        var followup = { status: followupValues[0] || 'not_contacted', note: followupValues[1] || '', updatedAt: followupValues[2] || '', attachments: [] };
+        followupValues.slice(3).forEach(function (value) {
+          if (!value) return;
+          try { followup.attachments.push(JSON.parse(value)); } catch (_) { castleThrow('SOURCE_DATA', label + ': invalid follow-up attachment JSON.'); }
+        });
+        try { castleValidateFollowUp(followup); } catch (_) { castleThrow('SOURCE_DATA', label + ': invalid follow-up metadata.'); }
+        property.followUp = followup;
+      }
+      propertyIndex[propertyId] = { sheetId: Number(id), row: totalIndex + 1, property: property, followupHeaders: followupHeaders, followupValues: followupValues, followupFormulas: formulas[totalIndex].slice(10, 16), followupHeaderFormulas: formulas[index].slice(10, 16) };
       var foundAr = false;
       for (var paymentIndexRow = totalIndex + 1; paymentIndexRow < values.length; paymentIndexRow++) {
         var paymentRow = values[paymentIndexRow], rowNumber = paymentIndexRow + 1;
@@ -260,7 +273,7 @@ function castleRead() {
 }
 
 function castleBuildRequests(changes, current) {
-  var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0;
+  var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0, expandedColumns = {};
   function queuePayments(key, target, payments) {
     if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one payment.');
     paymentCount += payments.length;
@@ -279,7 +292,30 @@ function castleBuildRequests(changes, current) {
   changes.forEach(function (change) {
     if (!change || typeof change !== 'object' || Array.isArray(change)) castleThrow('VALIDATION', 'Every change must be an object.');
     var target;
-    if (change.kind === 'setTotal') {
+    if (change.kind === 'updateFollowUp') {
+      castleKeys(change, ['kind', 'propertyId', 'manager', 'status', 'note', 'attachments']);
+      target = current.properties[change.propertyId];
+      if (!target) castleThrow('VALIDATION', 'Unknown property ID. Refresh the sheet.');
+      castleUnique(targets, 'followup:' + change.propertyId);
+      var manager = change.manager === '' ? '' : castleName(change.manager, 'Account manager');
+      castleValidateFollowUp(change);
+      CASTLE_FOLLOWUP_HEADERS.forEach(function (header, offset) {
+        var owned = target.followupHeaders[offset] === header && !target.followupHeaderFormulas[offset];
+        if (!owned && (target.followupHeaders[offset] !== undefined && target.followupHeaders[offset] !== '' || target.followupValues[offset] !== undefined && target.followupValues[offset] !== '' || target.followupFormulas[offset] || target.followupHeaderFormulas[offset])) castleThrow('VALIDATION', 'Follow-up columns K:P contain unrelated data. Move it before saving follow-ups.');
+      });
+      var month = current.months[String(target.sheetId)];
+      if (month.maxColumns < 16 && !expandedColumns[target.sheetId]) {
+        expandedColumns[target.sheetId] = true;
+        requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'COLUMNS', length: 16 - month.maxColumns } });
+      }
+      requests.push(castleCell(target.sheetId, target.row, 1, manager));
+      var metadata = [change.status, change.note, new Date().toISOString()];
+      for (var attachmentIndex = 0; attachmentIndex < 3; attachmentIndex++) metadata.push(change.attachments[attachmentIndex] ? JSON.stringify(change.attachments[attachmentIndex]) : '');
+      CASTLE_FOLLOWUP_HEADERS.forEach(function (header, offset) {
+        requests.push(castleCell(target.sheetId, target.row - 1, offset + 11, header));
+        requests.push(castleCell(target.sheetId, target.row, offset + 11, metadata[offset]));
+      });
+    } else if (change.kind === 'setTotal') {
       castleKeys(change, ['kind', 'propertyId', 'amountCents']);
       target = current.properties[change.propertyId];
       if (!target) castleThrow('VALIDATION', 'Unknown property ID. Refresh the sheet.');
@@ -439,6 +475,18 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
       destination: { sheetId: month.sheetId, startRowIndex: firstRow + offset - 1, endRowIndex: firstRow + offset, startColumnIndex: 0, endColumnIndex: 10 },
       pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
     } };
+  });
+}
+
+function castleValidateFollowUp(value) {
+  if (CASTLE_FOLLOWUP_STATUSES.indexOf(value.status) < 0) castleThrow('VALIDATION', 'Invalid follow-up status.');
+  if (typeof value.note !== 'string' || value.note.length > 5000) castleThrow('VALIDATION', 'Follow-up notes must contain at most 5000 characters.');
+  if (!Array.isArray(value.attachments) || value.attachments.length > 3) castleThrow('VALIDATION', 'Attach at most three images.');
+  value.attachments.forEach(function (attachment) {
+    if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) castleThrow('VALIDATION', 'Invalid image attachment.');
+    castleKeys(attachment, ['name', 'dataUrl']);
+    if (typeof attachment.name !== 'string' || !attachment.name.trim() || attachment.name.length > 160) castleThrow('VALIDATION', 'Image names must contain 1 to 160 characters.');
+    if (typeof attachment.dataUrl !== 'string' || attachment.dataUrl.length > 45000 || !/^data:image\/(png|jpeg|webp);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(attachment.dataUrl) || attachment.dataUrl.slice(attachment.dataUrl.indexOf(',') + 1).length === 0 || JSON.stringify(attachment).length > 48000) castleThrow('VALIDATION', 'Attachments must be PNG, JPEG, or WebP base64 images within the size limit.');
   });
 }
 
