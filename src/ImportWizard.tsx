@@ -9,6 +9,7 @@ import { readSpreadsheet } from './excel.ts';
 import { buildBulkImportPreview } from './bulk-import.ts';
 import { useExiting } from './Presence';
 import './import.css';
+import ManagerSelect from './ManagerSelect';
 
 const PAGE_SIZE = 30;
 const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto' };
@@ -20,7 +21,7 @@ function columnLetter(index: number) {
 }
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
-export function ImportWizard({ month, propertyCatalog = month.properties, onClose, onApply }: ImportProps) {
+export function ImportWizard({ month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
   const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -148,68 +149,68 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
       </header>
 
       <ol className="import-steps" aria-label="Import progress">
-        {['Choose files', 'Choose property', 'Review & import'].map((label, index) => <li key={label} className={step === index + 1 ? 'import-step-current' : step > index + 1 ? 'import-step-done' : ''} aria-current={step === index + 1 ? 'step' : undefined}>
+        {["Choose Files", "Choose Property", 'Review & import'].map((label, index) => <li key={label} className={step === index + 1 ? 'import-step-current' : step > index + 1 ? 'import-step-done' : ''} aria-current={step === index + 1 ? 'step' : undefined}>
           <span>{step > index + 1 ? <Check size={15} aria-hidden="true" /> : index + 1}</span>{label}
         </li>)}
       </ol>
 
       <div className="import-content" aria-busy={loading || saving}>
         {error && <div className="import-alert" role="alert">{error}</div>}
-        <input ref={fileRef} type="file" multiple accept=".xlsx,.xls,.csv" className="import-hidden-input" tabIndex={-1} aria-label="Choose spreadsheet files" onChange={event => void chooseFiles(event.target.files)} />
+        <input ref={fileRef} type="file" multiple accept=".xlsx,.xls,.csv" className="import-hidden-input" tabIndex={-1} aria-label="Choose Spreadsheet Files" onChange={event => void chooseFiles(event.target.files)} />
         <div className="import-step-content" key={step}>
         {step === 1 && <>
           <div className={`import-dropzone ${dragging ? 'import-dropzone-active' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); if (!loading) void chooseFiles(event.dataTransfer.files); }}>
             <div className="import-upload-icon"><Upload size={30} aria-hidden="true" /></div>
             <h3>{loading ? 'Reading your spreadsheet…' : 'Drop your spreadsheets here'}</h3>
             <p>Select multiple Airbnb exports for one property. Choose the property once for the entire batch.</p>
-            <button className="import-button import-button-primary" disabled={loading} onClick={() => fileRef.current?.click()}>{loading ? 'Reading file…' : 'Choose files'}</button>
+            <button className="import-button import-button-primary" disabled={loading} onClick={() => fileRef.current?.click()}>{loading ? 'Reading file…' : "Choose Files"}</button>
             <small>Excel .xlsx / .xls or .csv · 10 MB per file / 50 MB total / Up to 50 files and 10,000 rows combined</small>
           </div>
           <div className="import-guidance"><CheckCircle2 size={19} aria-hidden="true" /><div><strong>You stay in control</strong><p>The file is read in your browser. You’ll see the exact changes before any amounts are saved.</p></div></div>
         </>}
 
-        {step >= 2 && sheet && <div className="import-file-bar"><FileSpreadsheet size={20} aria-hidden="true" /><span>{files.length} file{files.length === 1 ? '' : 's'} selected</span><button className="import-text-button" disabled={loading || saving} onClick={() => fileRef.current?.click()}>{loading ? 'Reading…' : 'Change files'}</button></div>}
+        {step >= 2 && sheet && <div className="import-file-bar"><FileSpreadsheet size={20} aria-hidden="true" /><span>{files.length} file{files.length === 1 ? '' : 's'} selected</span><button className="import-text-button" disabled={loading || saving} onClick={() => fileRef.current?.click()}>{loading ? 'Reading…' : "Change Files"}</button></div>}
 
         {step === 2 && sheet && <>
           <div className="import-guidance"><FileSpreadsheet size={19} aria-hidden="true" /><div><strong>One property for this import</strong><p>All selected files will be imported into the property below. Airbnb columns are detected automatically; file settings only need attention if a worksheet or header differs.</p></div></div>
           <div className="import-field-grid" style={{ marginTop: 18 }}>
-            <label className="import-field">Property name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
+            <label className="import-field">Property Name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
             <label className="import-field">Total Payment (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>Enter the expected total. This amount does not come from the file.</small></label>
-            {!selectedProperty && <label className="import-field import-field-full">Property manager (required for a new property)<input type="text" value={options.manager} maxLength={160} placeholder="e.g. Team B" onChange={event => setDestination(current => ({ ...current, manager: event.target.value }))} /></label>}
+            {!selectedProperty && <label className="import-field import-field-full">Property Manager (Required for a New Property)<ManagerSelect managers={managers} required value={options.manager} onChange={manager=>setDestination(current=>({...current,manager}))}/>{!managers.some(m=>m.active)&&<button type="button" className="button quiet compact" onClick={()=>{if(window.confirm('Opening account managers will discard this import, including loaded files and mapping choices. Continue?'))onManageManagers?.();}}>Add an account manager first</button>}</label>}
           </div>
-          <div className="import-file-queue" aria-label="Files to import">
+          <div className="import-file-queue" aria-label="Files to Import">
             {files.map((file, index) => <div key={`${file.name}-${index}`} className="import-file-item">
               <button className="import-button import-button-secondary" aria-pressed={fileIndex === index} onClick={() => { setFileIndex(index); setPage(0); setError(''); }}>
-                <span>{index + 1}. {file.name}<small>{file.sheets[file.sheetIndex].name} · {isAirbnbSheet(file.sheets[file.sheetIndex], file.options.headerRow) ? 'Airbnb' : 'Manual mapping'}</small></span>
+                <span>{index + 1}. {file.name}<small>{file.sheets[file.sheetIndex].name} · {isAirbnbSheet(file.sheets[file.sheetIndex], file.options.headerRow) ? 'Airbnb' : "Manual Mapping"}</small></span>
               </button>
               <button className="import-icon-button" aria-label={`Remove ${file.name}`} onClick={() => { setFiles(current => current.filter((_, i) => i !== index)); setFileIndex(0); if (files.length === 1) setStep(1); }}><X size={16} /></button>
             </div>)}
           </div>
-          <div className="import-section-heading"><h3>File preview & settings {fileIndex + 1}: {activeFile?.name}</h3><span>{fileIndex + 1} of {files.length}</span></div>
+          <div className="import-section-heading"><h3>File Preview & Settings {fileIndex + 1}: {activeFile?.name}</h3><span>{fileIndex + 1} of {files.length}</span></div>
           <div className="import-field-grid">
             <label className="import-field">Worksheet<select value={sheetIndex} onChange={event => changeSheet(Number(event.target.value))}>{sheets.map((candidate, index) => <option value={index} key={`${candidate.name}-${index}`}>{candidate.name}</option>)}</select></label>
-            <div className="import-field"><label htmlFor="import-header-row">Header row</label><div className="import-header-controls"><input id="import-header-row" type="number" min={1} max={sheet.rows.length || 1} disabled={options.headerRow === null} value={options.headerRow === null ? '' : options.headerRow + 1} onChange={event => setOptions(current => ({ ...current, headerRow: Number(event.target.value) - 1 }))} /><label className="import-checkbox"><input type="checkbox" checked={options.headerRow === null} onChange={event => setOptions(current => ({ ...current, headerRow: event.target.checked ? null : 0 }))} />No headers</label></div></div>
+            <div className="import-field"><label htmlFor="import-header-row">Header Row</label><div className="import-header-controls"><input id="import-header-row" type="number" min={1} max={sheet.rows.length || 1} disabled={options.headerRow === null} value={options.headerRow === null ? '' : options.headerRow + 1} onChange={event => setOptions(current => ({ ...current, headerRow: Number(event.target.value) - 1 }))} /><label className="import-checkbox"><input type="checkbox" checked={options.headerRow === null} onChange={event => setOptions(current => ({ ...current, headerRow: event.target.checked ? null : 0 }))} />No headers</label></div></div>
             {airbnb ? <label className="import-field import-field-full">Save Airbnb payments to<select disabled={files.length > 1} value={files.length > 1 ? 'auto' : options.airbnbSlot} onChange={event => setOptions(current => ({ ...current, airbnbSlot: event.target.value as PropertyImportOptions['airbnbSlot'] }))}><option value="auto">Fill empty slots, then append rows (skip identical imports)</option>{[1, 2, 3].map(slot => <option key={slot} value={String(slot)}>Replace starting at Airbnb payment {slot}</option>)}</select><small>Airbnb export detected. Amount → payment; Arriving by date → platform payout date; Paid out → payout bundle. Each payout group uses one payment slot. Full listings get new rows above AR automatically.</small></label> : <>
-              <label className="import-field">Amount column<select value={options.amountColumn} onChange={event => setOptions(current => ({ ...current, amountColumn: Number(event.target.value) }))}>{columns.map(column => <option value={column.index} key={column.index}>{column.label}</option>)}</select></label>
-              <label className="import-field">Save amounts to<select value={options.destination} onChange={event => setOptions(current => ({ ...current, destination: event.target.value as ImportDestination }))}>{destinations.filter(destination => destination.value !== 'total').map(destination => <option value={destination.value} key={destination.value}>{destination.label}</option>)}</select><small>This updates the selected payment, or adds a row if missing, for {options.propertyName || 'your property'} in {month.label}.</small></label>
+              <label className="import-field">Amount Column<select value={options.amountColumn} onChange={event => setOptions(current => ({ ...current, amountColumn: Number(event.target.value) }))}>{columns.map(column => <option value={column.index} key={column.index}>{column.label}</option>)}</select></label>
+              <label className="import-field">Save Amounts to<select value={options.destination} onChange={event => setOptions(current => ({ ...current, destination: event.target.value as ImportDestination }))}>{destinations.filter(destination => destination.value !== 'total').map(destination => <option value={destination.value} key={destination.value}>{destination.label}</option>)}</select><small>This updates the selected payment, or adds a row if missing, for {options.propertyName || 'your property'} in {month.label}.</small></label>
             </>}
           </div>
-          {!airbnb && <label className="import-checkbox import-sum-choice"><input type="checkbox" checked={options.sumDuplicates} onChange={event => setOptions(current => ({ ...current, sumDuplicates: event.target.checked }))} /><span><strong>Sum payment rows</strong><small>All file amounts go to the selected property. Enable this to combine several rows into one payment.</small></span></label>}
-          <div className="import-section-heading"><h3>File preview</h3><span>First {Math.min(sheet.rows.length, 8)} rows · Scroll to view all columns</span></div>
+          {!airbnb && <label className="import-checkbox import-sum-choice"><input type="checkbox" checked={options.sumDuplicates} onChange={event => setOptions(current => ({ ...current, sumDuplicates: event.target.checked }))} /><span><strong>Sum Payment Rows</strong><small>All file amounts go to the selected property. Enable this to combine several rows into one payment.</small></span></label>}
+          <div className="import-section-heading"><h3>File Preview</h3><span>First {Math.min(sheet.rows.length, 8)} rows · Scroll to view all columns</span></div>
           {sheet.error ? <div className="import-alert" role="alert">{sheet.error}</div> : !sheet.rows.length ? <div className="import-empty">This worksheet is empty. Choose another worksheet.</div> : <div className="import-table-scroll import-source-scroll"><table className="import-table import-source-table"><thead><tr><th scope="col">Row</th>{columns.map(column => <th scope="col" key={column.index} className={column.index === options.amountColumn ? 'import-selected-column' : ''}>{columnLetter(column.index)}{column.index === options.nameColumn ? ' · Property' : column.index === options.amountColumn ? ' · Amount' : ''}</th>)}</tr></thead><tbody>{sheet.rows.slice(0, 8).map((row, index) => <tr key={index} className={options.headerRow === index ? 'import-header-preview' : ''}><th scope="row">{index + 1}{options.headerRow === index && <span className="import-header-tag">Header</span>}</th>{columns.map(column => <td key={column.index} title={cellText(row[column.index]?.value)}>{(row[column.index]?.formatted ?? cellText(row[column.index]?.value)) || '—'}</td>)}</tr>)}</tbody></table></div>}
           {previewState.error && !sheet.error && <p className="import-inline-error" role="status">{previewState.error}</p>}
           <p className="import-footnote">The selected property is the destination for every file. Listing names in the files are optional. Use a dot for decimals and commas for thousands. Your selected month determines where the import is saved.</p>
         </>}
 
         {step === 3 && preview && <>
-          <div className="import-review-heading"><h3>Review all files & payments</h3><p>{files.length} files / {month.label} / One confirmed save</p></div>
-          <div className="import-guidance"><CheckCircle2 size={19} aria-hidden="true" /><div><strong>{destination.propertyName}</strong><p>All {files.length} files / Total Payment: {destination.total} / {selectedProperty ? 'Existing property' : `New property / ${destination.manager}`}</p></div></div>
-          <div className="import-counts" aria-label="Import row counts"><div><strong>{preview.readyCount}</strong><span>Ready rows</span></div><div><strong>{preview.unmatchedCount}</strong><span>Unmatched</span></div><div><strong>{preview.invalidCount}</strong><span>Need attention</span></div><div><strong>{preview.skippedCount}</strong><span>Skipped</span></div></div>
+          <div className="import-review-heading"><h3>Review All Files & Payments</h3><p>{files.length} files / {month.label} / One confirmed save</p></div>
+          <div className="import-guidance"><CheckCircle2 size={19} aria-hidden="true" /><div><strong>{destination.propertyName}</strong><p>All {files.length} files / Total Payment: {destination.total} / {selectedProperty ? "Existing Property" : `New property / ${destination.manager}`}</p></div></div>
+          <div className="import-counts" aria-label="Import row counts"><div><strong>{preview.readyCount}</strong><span>Ready Rows</span></div><div><strong>{preview.unmatchedCount}</strong><span>Unmatched</span></div><div><strong>{preview.invalidCount}</strong><span>Need Attention</span></div><div><strong>{preview.skippedCount}</strong><span>Skipped</span></div></div>
           {(preview.invalidCount > 0 || preview.unmatchedCount > 0) && <div className="import-warning">Resolve invalid or unmatched rows before importing. Go back to change the mapping or fix the source files.</div>}
-          <div className="import-section-heading"><h3>Review changes</h3><label className="import-filter-label">Show<select value={rowFilter} onChange={event => { setRowFilter(event.target.value); setPage(0); }}><option value="all">All rows</option><option value="ready">Ready</option><option value="unmatched">Unmatched</option><option value="invalid">Need attention</option><option value="skipped">Skipped</option></select></label></div>
+          <div className="import-section-heading"><h3>Review Changes</h3><label className="import-filter-label">Show<select value={rowFilter} onChange={event => { setRowFilter(event.target.value); setPage(0); }}><option value="all">All Rows</option><option value="ready">Ready</option><option value="unmatched">Unmatched</option><option value="invalid">Need Attention</option><option value="skipped">Skipped</option></select></label></div>
           <div className="import-table-scroll import-review-scroll">
             <table className="import-table import-review-table">
-              <thead><tr><th scope="col">File / row</th><th scope="col">Property / source</th><th scope="col" className="import-numeric">Current</th><th scope="col" className="import-numeric">File amount</th><th scope="col" className="import-numeric">New amount</th>{airbnb && <><th scope="col">Payout date</th><th scope="col" className="import-numeric">Bundle</th></>}<th scope="col">Result</th></tr></thead>
+              <thead><tr><th scope="col">File / row</th><th scope="col">Property / source</th><th scope="col" className="import-numeric">Current</th><th scope="col" className="import-numeric">File Amount</th><th scope="col" className="import-numeric">New Amount</th>{airbnb && <><th scope="col">Payout Date</th><th scope="col" className="import-numeric">Bundle</th></>}<th scope="col">Result</th></tr></thead>
               <tbody>{pageRows.map((row, index) => <tr key={`${row.fileIndex}-${row.sourceRow}-${index}`}>
                 <td className="import-muted">{row.fileName}<small>Row {row.sourceRow}</small></td>
                 <td><strong>{row.propertyName || row.name || 'No property name'}</strong>{row.propertyName && row.propertyName !== row.name && <small>{row.name}</small>}</td>
@@ -217,7 +218,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
                 <td className="import-numeric">{row.amountCents === undefined ? row.originalAmount || '—' : money(row.amountCents)}</td>
                 <td className="import-numeric">{row.proposedCents === undefined ? '—' : money(row.proposedCents)}</td>
                 {airbnb && <><td>{row.payoutDate || '—'}</td><td className="import-numeric">{row.bundleCents === undefined ? '—' : money(row.bundleCents)}</td></>}
-                <td><span className={`import-status import-status-${row.status}`}>{row.status === 'invalid' ? 'Needs attention' : row.status === 'unmatched' ? 'Unmatched' : row.status === 'skipped' ? 'Skipped' : 'Ready'}</span><small className="import-row-reason">{row.reason}</small></td>
+                <td><span className={`import-status import-status-${row.status}`}>{row.status === 'invalid' ? "Needs Attention" : row.status === 'unmatched' ? 'Unmatched' : row.status === 'skipped' ? 'Skipped' : 'Ready'}</span><small className="import-row-reason">{row.reason}</small></td>
               </tr>)}{!pageRows.length && <tr><td colSpan={airbnb ? 8 : 6} className="import-empty">No rows in this view.</td></tr>}</tbody>
             </table>
           </div>
@@ -227,7 +228,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, onClos
         </div>
       </div>
 
-      <footer className="import-footer"><button className="import-button import-button-secondary" onClick={() => { if (step === 1) onClose(); else { setStep(step - 1); setError(''); } }} disabled={saving || loading}>{step === 1 ? 'Cancel' : <><ArrowLeft size={16} aria-hidden="true" /> Back</>}</button><div className="import-footer-right">{step === 2 && <button className="import-button import-button-primary" disabled={loading || !preview || !preview.rows.length || preview.invalidCount > 0 || preview.unmatchedCount > 0} onClick={() => { setStep(3); setPage(0); setRowFilter('all'); }}>Review import <ArrowRight size={16} aria-hidden="true" /></button>}{step === 3 && <button className="import-button import-button-primary" onClick={() => void applyImport()} disabled={saving || !preview?.changes.length || preview.invalidCount > 0 || preview.unmatchedCount > 0}>{saving ? 'Saving import…' : 'Confirm import'}<Check size={17} aria-hidden="true" /></button>}</div></footer>
+      <footer className="import-footer"><button className="import-button import-button-secondary" onClick={() => { if (step === 1) onClose(); else { setStep(step - 1); setError(''); } }} disabled={saving || loading}>{step === 1 ? 'Cancel' : <><ArrowLeft size={16} aria-hidden="true" /> Back</>}</button><div className="import-footer-right">{step === 2 && <button className="import-button import-button-primary" disabled={loading || !preview || !preview.rows.length || preview.invalidCount > 0 || preview.unmatchedCount > 0} onClick={() => { setStep(3); setPage(0); setRowFilter('all'); }}>Review Import <ArrowRight size={16} aria-hidden="true" /></button>}{step === 3 && <button className="import-button import-button-primary" onClick={() => void applyImport()} disabled={saving || !preview?.changes.length || preview.invalidCount > 0 || preview.unmatchedCount > 0}>{saving ? 'Saving import…' : "Confirm Import"}<Check size={17} aria-hidden="true" /></button>}</div></footer>
     </dialog>, document.body,
   );
 }

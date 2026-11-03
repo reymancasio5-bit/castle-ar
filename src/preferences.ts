@@ -1,4 +1,4 @@
-export type View = 'overview' | 'properties' | 'reconciliation';
+export type View = 'overview' | 'properties' | 'reconciliation' | 'managers';
 export type StatusFilter = 'all' | 'outstanding' | 'paid' | 'unverified';
 
 export interface Preferences {
@@ -28,7 +28,7 @@ export function normalizePreferences(value: unknown): Preferences {
     ? value as Record<string, unknown>
     : {};
   return {
-    defaultView: validChoice(source.defaultView, ['overview', 'properties', 'reconciliation'], DEFAULT_PREFERENCES.defaultView),
+    defaultView: validChoice(source.defaultView, ['overview', 'properties', 'reconciliation', 'managers'], DEFAULT_PREFERENCES.defaultView),
     defaultManager: typeof source.defaultManager === 'string' && source.defaultManager.trim()
       ? source.defaultManager.trim()
       : DEFAULT_PREFERENCES.defaultManager,

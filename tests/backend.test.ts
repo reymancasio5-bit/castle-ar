@@ -4,12 +4,108 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
+test('manager profiles migrate legacy headers and persist replacement and removal',()=>{
+ const app=harness();const initial=app.read().snapshot;assert.equal(initial.managerProfiles,1);
+ let saved=app.post({requestId:'profile-init',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(saved.ok,true,saved.error?.message);
+ const table=[...app.tables.values()].find(t=>t.name==='Account Managers')!;
+ table.data=table.data.map(row=>row.slice(0,5));table.maxColumns=5;
+ let before=app.read();assert.equal(before.ok,true,before.error?.message);assert.equal(before.snapshot.managers[0].profileImage,'team-b');
+ const png='data:image/png;base64,iVBORw0KGgo=';
+ for(const [index,profileImage] of [png,''].entries()){
+  saved=app.post({requestId:'profile-save-'+index,revision:before.snapshot.revision,changes:[{kind:'saveManager',manager:{...before.snapshot.managers[0],profileImage}}]});
+  assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.managers[0].profileImage,profileImage);assert.equal(table.data[0][5],'profileImage');before=app.read();
+ }
+ assert.equal(before.snapshot.managers[0].profileImage,'');
+ const invalid=app.post({requestId:'profile-unsafe',revision:before.snapshot.revision,changes:[{kind:'saveManager',manager:{...before.snapshot.managers[0],profileImage:'https://example.com/image.png'}}]});assert.equal(invalid.ok,false);assert.match(invalid.error.message,/profile/i);
+});
+
+test('legacy profile migration rejects an occupied unlabelled column',()=>{
+ const app=harness();const initial=app.read().snapshot;
+ const saved=app.post({requestId:'profile-occupied-init',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(saved.ok,true);
+ const table=[...app.tables.values()].find(t=>t.name==='Account Managers')!;table.data[0][5]='';table.data[1][5]='Do not overwrite';
+ const result=app.read();assert.equal(result.ok,false);assert.equal(result.error.code,'SOURCE_DATA');assert.equal(table.data[1][5],'Do not overwrite');
+});
+
+test('existing blank Account Managers tab is reused and initialized on first save',()=>{
+ const app=harness();const table={name:'Account Managers',data:[] as any[][],maxRows:1000,maxColumns:26};
+ app.tables.set(777,table);
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);assert.equal(table.data.length,0);
+ const manager={...before.snapshot.managers[0],email:'manager@example.com',notes:'Contact owner'};
+ const saved=app.post({requestId:'existing-blank-manager-tab',revision:before.snapshot.revision,changes:[{kind:'saveManager',manager}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.tables.get(777),table);
+ assert.deepEqual(table.data[0],['id','name','email','notes','active','profileImage']);
+ assert.equal(table.data.find(row=>row[0]===manager.id)?.[2],'manager@example.com');
+ assert.equal([...app.tables.values()].filter(t=>t.name==='Account Managers').length,1);
+ assert.deepEqual([...app.tables.values()].map(t=>t.name).sort(),['Account Managers','Manager Assignments','Manager Tasks','Manager Updates']);
+});
+
+test('manager catalog migrates on write, rejects typos, and rename preserves task/listing identity',()=>{
+ const app=harness();const first=app.read().snapshot;
+ assert.equal(first.managerSchema,1);assert.equal(first.managers.length,2);assert.equal(app.tables.size,0);
+ const manager=first.managers[0];
+ const task={id:'task-1',managerId:manager.id,title:'Call owner',description:'',dueDate:'2026-11-10',status:'open',propertyKey:''};
+ const saved=app.post({requestId:'manager-task-001',revision:first.revision,changes:[{kind:'saveTask',task}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.tasks.length,1);assert.equal(app.tables.size,4);
+ const renamed=app.post({requestId:'manager-rename-001',revision:saved.snapshot.revision,changes:[{kind:'saveManager',manager:{...manager,name:'Alice'}}]});
+ assert.equal(renamed.ok,true,renamed.error?.message);assert.equal(renamed.snapshot.tasks[0].managerId,manager.id);
+ assert.ok(renamed.snapshot.months[0].properties.some((p:any)=>p.managerId===manager.id&&p.manager==='Alice'));
+ const invalid=app.post({requestId:'manager-typo-001',revision:renamed.snapshot.revision,changes:[{kind:'addProperty',monthId:'0',name:'Typo test',manager:'Alcie',totalCents:0}]});
+ assert.equal(invalid.ok,false);assert.match(invalid.error.message,/registered/i);
+ const badDate=app.post({requestId:'manager-date-001',revision:renamed.snapshot.revision,changes:[{kind:'saveTask',task:{...task,dueDate:'2026-02-30'}}]});
+ assert.equal(badDate.ok,false);assert.match(badDate.error.message,/date/i);
+});
+
+test('inactive managers retain existing assignments but cannot receive new tasks or properties',()=>{
+ const app=harness();const before=app.read().snapshot;const manager=before.managers.find((m:any)=>m.name==='TeamB');
+ const saved=app.post({requestId:'inactive-manager-01',revision:before.revision,changes:[{kind:'saveManager',manager:{...manager,active:false}}]});
+ assert.equal(saved.ok,true,saved.error?.message);
+ const followup=app.post({requestId:'inactive-followup-01',revision:saved.snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamB',status:'resolved',note:'Done',attachments:[]}]});
+ assert.equal(followup.ok,true,followup.error?.message);
+ for(const change of [{kind:'addProperty',monthId:'0',name:'House',manager:'TeamB',totalCents:0},{kind:'saveTask',task:{id:'t',managerId:manager.id,title:'Call',description:'',dueDate:'2026-11-01',status:'open',propertyKey:''}}]){
+  const result=app.post({requestId:'inactive-'+change.kind,revision:followup.snapshot.revision,changes:[change]});assert.equal(result.ok,false);assert.match(result.error.message,/inactive/i);
+ }
+});
+
+test('unknown spreadsheet names do not enter persisted catalog and malformed task rows are rejected',()=>{
+ const app=harness();const initial=app.read().snapshot;
+ const saved=app.post({requestId:'catalog-init-001',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(saved.ok,true);
+ app.state.data[3][0]='Typo manager';const read=app.read();assert.equal(read.ok,true);assert.equal(read.snapshot.managers.length,2);assert.equal(read.snapshot.months[0].properties[0].managerId,'');
+ const taskTable=[...app.tables.values()].find(t=>t.name==='Manager Tasks')!;
+ taskTable.data.push(['bad','missing-manager','Title','','not-a-date','open','','']);
+ const invalid=app.read();assert.equal(invalid.ok,false);assert.equal(invalid.error.code,'SOURCE_DATA');
+});
+
+test('bootstrap handles manager names that coincide with object prototype keys',()=>{
+ const app=harness();app.state.data[3][0]='constructor';const result=app.read();assert.equal(result.ok,true,result.error?.message);
+ assert.ok(result.snapshot.managers.some((m:any)=>m.name==='constructor'));assert.ok(result.snapshot.months[0].properties[0].managerId);
+});
+
+test('tasks survive without monthly tabs, normalize Sheet dates, and reject stale task revisions',()=>{
+ const app=harness();const initial=app.read().snapshot;const task={id:'due',managerId:initial.managers[0].id,title:'Review',description:'',dueDate:'2026-11-10',status:'open',propertyKey:''};
+ const saved=app.post({requestId:'task-no-month-init',revision:initial.revision,changes:[{kind:'saveTask',task}]});assert.equal(saved.ok,true);
+ const table=[...app.tables.values()].find(t=>t.name==='Manager Tasks')!;table.data[1][4]=new Date('2026-11-10T05:00:00Z');
+ app.state.data.splice(0);app.state.formulas.splice(0);
+ const next=app.read();assert.equal(next.ok,true,next.error?.message);assert.equal(next.snapshot.months.length,0);assert.equal(next.snapshot.tasks[0].dueDate,'2026-11-10');
+ const stale=app.post({requestId:'task-stale-revision',revision:saved.snapshot.revision,changes:[{kind:'saveTask',task:{...task,status:'completed'}}]});assert.equal(stale.error.code,'CONFLICT');
+ const complete=app.post({requestId:'task-no-month-save',revision:next.snapshot.revision,changes:[{kind:'saveTask',task:{...task,status:'completed'}}]});assert.equal(complete.ok,true,complete.error?.message);assert.equal(complete.snapshot.tasks[0].status,'completed');
+});
+
+test('blank rows in managed tabs do not duplicate records on subsequent saves',()=>{
+ const app=harness();const initial=app.read().snapshot;
+ const first=app.post({requestId:'blank-row-init',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(first.ok,true);
+ const table=[...app.tables.values()].find(t=>t.name==='Account Managers')!;table.data.splice(1,0,[]);
+ const before=app.read();assert.equal(before.ok,true);
+ const result=app.post({requestId:'blank-row-save',revision:before.snapshot.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(result.ok,true,result.error?.message);assert.equal(result.snapshot.managers.length,2);
+});
+
 // Execute the production Apps Script with only its remote Google boundaries replaced.
 // The fixture is deliberately a sheet-shaped data model, including source formulas.
 type Cell = string | number | boolean | Date;
 const header: Cell[] = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 const row = (...values: Cell[]) => Array.from({ length: 10 }, (_, i) => values[i] ?? '');
 function harness() {
+  const tables = new Map<number, {name:string;data:any[][];maxRows:number;maxColumns:number}>();
+  const tableSheet=(id:number,t:any)=>({getName:()=>t.name,getSheetId:()=>id,getLastRow:()=>t.data.length,getMaxRows:()=>t.maxRows,getMaxColumns:()=>t.maxColumns,getRange:(r:number,c:number,n:number,w:number)=>({getValues:()=>Array.from({length:n},(_,y)=>Array.from({length:w},(_,x)=>t.data[r-1+y]?.[c-1+x]??'')),getFormulas:()=>Array.from({length:n},()=>Array(w).fill(''))})});
   const status = {exists:false, id:1, data:[] as Cell[][], formulas:[] as Cell[][], maxRows:100, maxColumns:10};
   const data: Cell[][] = [row('AM FILTER', new Date('2026-11-01T04:00:00Z')), row('Blank'), [...header], row('TeamB', 'Mtl 404 Le Bijou', 'Total Payment', 442.04), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 442.04), [...header], row('TeamA', 'Mtl 2429 Rue Allard Unit 1', 'Total Payment', 243.38), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Airbnb Payment'), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 243.38), [...header], row('TeamB', 'Tor Unit 918-251 Jarvis St', 'Total Payment', 370.48), row('', '', 'Airbnb Payment', 116.86), row('', '', 'Airbnb Payment', 130.81), row('', '', 'Airbnb Payment', 77.19), row('', '', 'Vrbo Payment'), row('', '', 'Owner Payment', 0), row('', '', 'AR', 45.62)];
   const formulas = data.map(() => row());
@@ -63,7 +159,7 @@ function harness() {
     },
   };
   const statusSheet = {getName:()=> 'Status',getSheetId:()=>status.id,getLastRow:()=>status.data.length,getMaxRows:()=>status.maxRows,getMaxColumns:()=>status.maxColumns,getRange:(r:number,c:number,rows:number,columns:number)=>({getValues:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.data[r-1+y]?.[c-1+x]??'')),getFormulas:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.formulas[r-1+y]?.[c-1+x]??''))})};
-  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : name === 'Status' && status.exists ? statusSheet : null, getSheets: () => [sheet, ...(status.exists?[statusSheet]:[]), { getSheetId:()=>99, getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
+  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : name === 'Status' && status.exists ? statusSheet : (()=>{const entry=[...tables].find(([,t])=>t.name===name);return entry?tableSheet(...entry):null;})(), getSheets: () => [...[...tables].map(([id,t])=>tableSheet(id,t)),sheet, ...(status.exists?[statusSheet]:[]), { getSheetId:()=>99, getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
   const context = vm.createContext({
     Date, JSON, Math, Number, String, Object, Array, Error, RegExp, Boolean, isFinite,
     SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
@@ -77,6 +173,9 @@ function harness() {
       assert.equal(state.locked, true, 'write must hold a script lock');
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
+        if(request.addSheet && request.addSheet.properties.title!=='Status'){const p=request.addSheet.properties;tables.set(p.sheetId,{name:p.title,data:[],maxRows:p.gridProperties.rowCount,maxColumns:p.gridProperties.columnCount});continue;}
+        const tableId=request.appendDimension?.sheetId??request.updateCells?.start?.sheetId??request.updateCells?.range?.sheetId;
+        if(tables.has(tableId)){const t=tables.get(tableId)!;if(request.appendDimension){if(request.appendDimension.dimension==='ROWS')t.maxRows+=request.appendDimension.length;else t.maxColumns+=request.appendDimension.length;}else{const u=request.updateCells,r=u.start?.rowIndex??u.range?.startRowIndex,c=u.start?.columnIndex??u.range?.startColumnIndex;u.rows.forEach((row:any,y:number)=>row.values.forEach((cell:any,x:number)=>{assert.ok(r+y<t.maxRows&&c+x<t.maxColumns);t.data[r+y]??=[];t.data[r+y][c+x]=cell.userEnteredValue?.stringValue??cell.userEnteredValue?.boolValue??cell.userEnteredValue?.numberValue??'';}));}continue;}
         if(request.addSheet){assert.equal(status.exists,false);status.exists=true;status.id=request.addSheet.properties.sheetId;status.maxRows=request.addSheet.properties.gridProperties.rowCount;continue;}
         if(request.appendDimension?.sheetId===status.id){if(request.appendDimension.dimension==='ROWS')status.maxRows+=request.appendDimension.length;else status.maxColumns+=request.appendDimension.length;continue;}
         if((request.updateCells?.range?.sheetId??request.updateCells?.start?.sheetId)===status.id){
@@ -160,7 +259,7 @@ function harness() {
     assert.equal(typeof context.doPost, 'function', 'Apps Script must expose doPost');
     return JSON.parse(context.doPost(form ? { parameter: { payload: JSON.stringify(body) } } : { postData: { contents: JSON.stringify(body), type: 'text/plain' } }).value);
   };
-  return { status, state, context, get, read, post, cache, properties, sheet, spreadsheet };
+  return { tables, status, state, context, get, read, post, cache, properties, sheet, spreadsheet };
 }
 
 test('A2 edits filter entire manager blocks and switching teams restores prior hidden rows', () => {
@@ -379,7 +478,7 @@ test('duplicate targets and reused request IDs with different bodies are rejecte
 
 test('addProperty appends a complete source block, expands the grid, and preserves existing formulas', () => {
   const app = harness();
-  const result = app.post({ requestId: 'add_property_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 10001 }] });
+  const result = app.post({ requestId: 'add_property_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamA', totalCents: 10001 }] });
   assert.equal(result.ok, true);
   const added = result.snapshot.months[0].properties[3];
   assert.equal(added.id, '0:28');
@@ -393,7 +492,7 @@ test('addProperty appends a complete source block, expands the grid, and preserv
 
 test('import creates property and initial payments in one atomic save', () => {
   const app = harness();
-  const result = app.post({ requestId: 'import_new_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'Team B', totalCents: 37048, initialPayments: [{ index: 0, amountCents: 11686, payoutDate: '2026-10-09', bundleCents: 38140 }, { index: 1, amountCents: 13081, payoutDate: '2026-10-13', bundleCents: 60217 }, { index: 2, amountCents: 7719, payoutDate: '2026-10-19', bundleCents: 661041 }] }] });
+  const result = app.post({ requestId: 'import_new_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'TeamB', totalCents: 37048, initialPayments: [{ index: 0, amountCents: 11686, payoutDate: '2026-10-09', bundleCents: 38140 }, { index: 1, amountCents: 13081, payoutDate: '2026-10-13', bundleCents: 60217 }, { index: 2, amountCents: 7719, payoutDate: '2026-10-19', bundleCents: 661041 }] }] });
   assert.equal(result.ok, true);
   const property = result.snapshot.months[0].properties[3];
   assert.equal(property.totalCents, 37048);
@@ -408,7 +507,7 @@ test('import creates property and initial payments in one atomic save', () => {
 test('invalid initial payments reject creation without any writes', () => {
   for (const initialPayments of [[{ index: 5, amountCents: 100 }], [{ index: 0, amountCents: 100, payoutDate: '2026-02-30' }], [{ index: 0, amountCents: 100, bankCents: 100 }], [{ index: 0, amountCents: 100 }, { index: 0, amountCents: 200 }]]) {
     const app = harness();
-    const result = app.post({ requestId: 'import_invalid_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'Team B', totalCents: 37048, initialPayments }] });
+    const result = app.post({ requestId: 'import_invalid_001', revision: app.read().snapshot.revision, changes: [{ kind: 'addProperty', monthId: '0', name: 'Imported house', manager: 'TeamB', totalCents: 37048, initialPayments }] });
     assert.equal(result.error.code, 'VALIDATION');
     assert.equal(app.state.writes, 0);
   }
@@ -416,7 +515,7 @@ test('invalid initial payments reject creation without any writes', () => {
 
 test('multiple appended properties get distinct source rows and duplicate names fail atomically', () => {
   const app = harness();
-  const change = { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 0 };
+  const change = { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamA', totalCents: 0 };
   const revision = app.read().snapshot.revision;
   const rejected = app.post({ requestId: 'duplicate_names_001', revision, changes: [change, { ...change, name: ' new house ' }] });
   assert.equal(rejected.error.code, 'VALIDATION');
@@ -433,7 +532,7 @@ test('new properties inherit the first property borders, fonts, alignment, and d
   const originalFormulas = structuredClone(app.state.formulas);
   const originalFormats = structuredClone(app.state.formats);
   const result = app.post({ requestId: 'formatted_properties_001', revision: app.read().snapshot.revision, changes: [
-    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 25000 },
+    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamA', totalCents: 25000 },
     { kind: 'addProperty', monthId: '0', name: 'Zero House', manager: 'TeamA', totalCents: 0 },
   ] });
   assert.equal(result.ok, true, result.error?.message);
@@ -459,7 +558,7 @@ test('format copying matches payment roles when the template has extra payment r
   app.state.formulas.splice(7, 0, row());
   app.state.formats.splice(7, 0, Array.from({ length: 10 }, () => ({ textFormat: { italic: true } })));
   const result = app.post({ requestId: 'variable_format_001', revision: app.read().snapshot.revision, changes: [
-    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamC', totalCents: 0 },
+    { kind: 'addProperty', monthId: '0', name: 'New House', manager: 'TeamA', totalCents: 0 },
   ] });
   assert.equal(result.ok, true, result.error?.message);
   assert.equal(result.snapshot.months[0].properties[3].id, '0:29');
@@ -655,8 +754,8 @@ test('an empty first template allows future payment insertion and no default Own
     assert.equal(before.snapshot.months[0].properties[0].payments.length, 0);
     const result = app.post({ requestId: 'empty-template-insert', revision: before.snapshot.revision, changes: [
       { kind: 'appendPayments', propertyId: '0:4', payments: [{ type: 'Vrbo', amountCents: 1000 }] },
-      { kind: 'addProperty', monthId: '0', name: 'No placeholders', manager: 'TeamA', totalCents: 2000, initialPayments: [{ index: 2, amountCents: 0 }] },
-      { kind: 'addProperty', monthId: '0', name: 'Bare property', manager: 'TeamA', totalCents: 3000 },
+      { kind: 'addProperty', monthId: '0', name: 'No placeholders', manager: 'TeamB', totalCents: 2000, initialPayments: [{ index: 2, amountCents: 0 }] },
+      { kind: 'addProperty', monthId: '0', name: 'Bare property', manager: 'TeamB', totalCents: 3000 },
     ] });
     assert.equal(result.ok, true, JSON.stringify(result));
     const properties = result.snapshot.months[0].properties;
@@ -676,12 +775,12 @@ test('follow-ups persist literal notes and images, update manager, and move with
   const before = app.read().snapshot;
   const body = { requestId: 'followup-save-001', revision: before.revision, changes: [
     { kind: 'appendPayments', propertyId: '0:4', payments: [{ amountCents: 100 }] },
-    { kind: 'updateFollowUp', propertyId: '0:12', manager: 'TeamC', status: 'payment_promised', note: '=literal note\nCall Friday', attachments: [attachment] },
+    { kind: 'updateFollowUp', propertyId: '0:12', manager: 'TeamA', status: 'payment_promised', note: '=literal note\nCall Friday', attachments: [attachment] },
   ] };
   const result = app.post(body);
   assert.equal(result.ok, true, JSON.stringify(result));
   const property = result.snapshot.months[0].properties[1];
-  assert.equal(property.manager, 'TeamC');
+  assert.equal(property.manager, 'TeamA');
   assert.equal(property.followUp.status, 'payment_promised');
   assert.equal(property.followUp.note, '=literal note\nCall Friday');
   assert.deepEqual(property.followUp.attachments, [attachment]);
@@ -754,7 +853,7 @@ test('legacy follow-ups migrate together to an existing empty Status tab and cle
  const attachment={name:'receipt.png',dataUrl:'data:image/png;base64,aGVsbG8='};
  for(const r of [3,11]){app.state.data[r-1].push(...headers);app.state.data[r].push('awaiting_response','Old note','2026-10-31T12:00:00Z',JSON.stringify(attachment),'','');}
  const before=app.read();assert.equal(before.snapshot.months[0].properties[1].followUp.note,'Old note');assert.equal(app.state.writes,0);
- const result=app.post({requestId:'migrate-status-001',revision:before.snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'New note',attachments:[]}]});
+ const result=app.post({requestId:'migrate-status-001',revision:before.snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamA',status:'resolved',note:'New note',attachments:[]}]});
  assert.equal(result.ok,true,JSON.stringify(result));assert.equal(app.status.data.length,3);assert.equal(app.status.maxColumns,10);assert.equal(app.status.maxRows,3);
  assert.equal(result.snapshot.months[0].properties[0].followUp.note,'New note');assert.deepEqual(result.snapshot.months[0].properties[1].followUp.attachments,[attachment]);
  for(const r of [2,3,10,11])assert.deepEqual(app.state.data[r].slice(10,16),Array(6).fill(''));
@@ -762,7 +861,7 @@ test('legacy follow-ups migrate together to an existing empty Status tab and cle
 });
 
 test('Status records take precedence over old metadata and are updated without duplicates',()=>{
- const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'Current',attachments:[]};
+ const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamA',status:'resolved',note:'Current',attachments:[]};
  const saved=app.post({requestId:'status-precedence-1',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
  app.state.maxColumns=16;app.state.data[2].push(...app.context.CASTLE_FOLLOWUP_HEADERS);app.state.data[3].push('not_contacted','Outdated','','','','');
  const before=app.read();assert.equal(before.snapshot.months[0].properties[0].followUp.note,'Current');
@@ -772,7 +871,7 @@ test('Status records take precedence over old metadata and are updated without d
 
 test('Status protects unrelated data and duplicate or formula-based records',()=>{
  for(const scenario of ['header','duplicate','formula']){
-  const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'Current',attachments:[]};
+  const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamA',status:'resolved',note:'Current',attachments:[]};
   const saved=app.post({requestId:'status-protect-1',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
   if(scenario==='header')app.status.data[0][0]='Private records';
   if(scenario==='duplicate')app.status.data.push([...app.status.data[1]]);
@@ -784,12 +883,12 @@ test('Status protects unrelated data and duplicate or formula-based records',()=
 test('failed Status save leaves legacy metadata and manager intact',()=>{
  const app=harness();app.state.maxColumns=16;app.state.data[2].push(...app.context.CASTLE_FOLLOWUP_HEADERS);app.state.data[3].push('not_contacted','Keep me','','','','');
  const before=app.read().snapshot;const original=structuredClone(app.state.data);app.state.failWrite=true;
- const result=app.post({requestId:'status-failure-001',revision:before.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'New',attachments:[]}]});
+ const result=app.post({requestId:'status-failure-001',revision:before.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamA',status:'resolved',note:'New',attachments:[]}]});
  assert.equal(result.ok,false);assert.deepEqual(app.state.data,original);assert.equal(app.status.exists,false);
 });
 
 test('Status identifies properties by month sheet ID and name, independently of row positions',()=>{
- const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamC',status:'resolved',note:'November only',attachments:[]};
+ const app=harness();const change={kind:'updateFollowUp',propertyId:'0:4',manager:'TeamA',status:'resolved',note:'November only',attachments:[]};
  const saved=app.post({requestId:'status-month-001',revision:app.read().snapshot.revision,changes:[change]});assert.equal(saved.ok,true);
  const original=app.spreadsheet.getSheets;app.spreadsheet.getSheets=()=>[...original(),{...app.sheet,getSheetId:()=>2,getName:()=> 'Dec, 2026'}];
  const read=app.read();assert.equal(read.ok,true,JSON.stringify(read));

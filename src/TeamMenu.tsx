@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronUp, CircleHelp, Settings2 } from 'lucide-react';
 import { Presence } from './Presence';
 import './TeamMenu.css';
+import CastleMark from './CastleMark';
 
 export default function TeamMenu({ onSettings, onHelp }: {
   onSettings: () => void;
@@ -97,8 +98,8 @@ export default function TeamMenu({ onSettings, onHelp }: {
           setOpen(true);
         }
       }}>
-      <span className="team-profile-avatar" aria-hidden="true">C<span /></span>
-      <span className="team-profile-name"><strong>Castle team</strong><small>Shared workspace</small></span>
+      <span className="team-profile-avatar" aria-hidden="true"><CastleMark/><span /></span>
+      <span className="team-profile-name"><strong>Castle Team</strong><small>Shared Workspace</small></span>
       <ChevronUp size={16} className="team-profile-chevron" aria-hidden="true" />
     </button>
     <Presence present={open}>{exiting => createPortal(<div ref={panel} id={menuId} role="menu" aria-labelledby={triggerId} data-exiting={exiting} inert={exiting}
@@ -108,15 +109,15 @@ export default function TeamMenu({ onSettings, onHelp }: {
         if (!event.currentTarget.contains(next) && !trigger.current?.contains(next)) setOpen(false);
       }}>
       <div className="team-menu-heading" role="presentation">
-        <span className="team-menu-avatar" aria-hidden="true">C</span>
-        <div><strong>Castle team</strong><span>Shared workspace</span></div>
+        <span className="team-menu-avatar" aria-hidden="true"><CastleMark/></span>
+        <div><strong>Castle Team</strong><span>Shared Workspace</span></div>
       </div>
       <div className="team-menu-separator" role="separator" />
       <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onHelp)}>
-        <CircleHelp size={17} aria-hidden="true" /><span>How it works</span>
+        <CircleHelp size={17} aria-hidden="true" /><span>How It Works</span>
       </button>
       <button type="button" role="menuitem" tabIndex={-1} onClick={() => choose(onSettings)}>
-        <Settings2 size={17} aria-hidden="true" /><span>User settings</span>
+        <Settings2 size={17} aria-hidden="true" /><span>User Settings</span>
       </button>
     </div>, document.body)}</Presence>
   </div>;

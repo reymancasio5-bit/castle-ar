@@ -1,8 +1,8 @@
 ﻿import type {Change, FollowUpAttachment, FollowUpStatus, Property} from './types.ts';
 export const followUpStatuses: {value: FollowUpStatus; label: string}[] = [
- {value:'not_contacted',label:'Not contacted'}, {value:'contact_attempted',label:'Contact attempted'},
- {value:'awaiting_response',label:'Awaiting owner response'}, {value:'owner_responded',label:'Owner responded'},
- {value:'payment_promised',label:'Payment promised'}, {value:'follow_up_needed',label:'Follow-up needed'}, {value:'resolved',label:'Resolved'},
+ {value:'not_contacted',label:"Not Contacted"}, {value:'contact_attempted',label:"Contact Attempted"},
+ {value:'awaiting_response',label:"Awaiting Owner Response"}, {value:'owner_responded',label:"Owner Responded"},
+ {value:'payment_promised',label:"Payment Promised"}, {value:'follow_up_needed',label:"Follow-Up Needed"}, {value:'resolved',label:'Resolved'},
 ];
 export interface FollowUpDraft {manager:string;status:FollowUpStatus;note:string;attachments:FollowUpAttachment[]}
 export function followUpDraft(property:Property):FollowUpDraft {

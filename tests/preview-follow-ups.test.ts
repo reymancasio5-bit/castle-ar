@@ -5,7 +5,7 @@ import {createPreviewApi} from '../src/preview-api.ts';
 test('follow-up saves share manager, notes, images and status without changing payments', async()=>{
  const api=createPreviewApi();const before=await api.read();const property=before.months[0].properties[0];
  const attachments=[{name:'Conversation.png',dataUrl:'data:image/png;base64,iVBORw0KGgo='}];
- const saved=await api.save(before.revision,[{kind:'updateFollowUp',propertyId:property.id,manager:'Team C',status:'owner_responded',note:'Owner asked about the balance.',attachments}]);
+ const saved=await api.save(before.revision,[{kind:'saveManager',manager:{id:'team-c',name:'Team C',email:'',notes:'',active:true}},{kind:'updateFollowUp',propertyId:property.id,manager:'Team C',status:'owner_responded',note:'Owner asked about the balance.',attachments}]);
  const after=saved.months[0].properties[0];
  assert.equal(after.manager,'Team C');assert.equal(after.followUp?.status,'owner_responded');
  assert.equal(after.followUp?.note,'Owner asked about the balance.');assert.deepEqual(after.followUp?.attachments,attachments);

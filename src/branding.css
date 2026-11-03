@@ -1,0 +1,11 @@
+.castle-mark{display:block;width:100%;height:100%;object-fit:contain;flex-shrink:0}
+.brand .brand-mark{width:44px;height:44px;flex:0 0 44px;border:0;background:none;border-radius:10px;overflow:hidden}
+.brand .brand-caption{font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;font-size:11px;font-weight:600;letter-spacing:5px;color:#f4ede3;line-height:1.2;margin-top:8px}
+.team-profile-avatar,.team-menu-avatar{background:#f4ede3;overflow:visible}
+.team-profile-avatar>.castle-mark,.team-menu-avatar>.castle-mark{border-radius:inherit}
+.top-avatar .castle-mark{border-radius:50%}
+.sidebar .brand{justify-content:center;width:100%;padding:0 0 30px}
+.brand .brand-lockup{display:inline-grid;grid-template-columns:max-content}
+.brand .brand-wordmark{display:block;white-space:nowrap;font-family:"Arial Black","Arial",sans-serif;font-size:38px;font-weight:900;letter-spacing:-1.3px;line-height:1;color:#fff}
+.brand .brand-initial{display:inline-block;width:.72em;height:.975em;vertical-align:-.035em;margin-right:1px;overflow:visible}
+.brand .brand-lockup .brand-caption{display:flex;justify-content:space-between;width:100%;margin-top:0;padding:0;font-family:"SimHei","Noto Sans CJK SC","Microsoft YaHei","PingFang SC",sans-serif;font-size:22px;font-weight:900;line-height:1;letter-spacing:0;-webkit-text-stroke:.35px currentColor}

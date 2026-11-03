@@ -265,7 +265,7 @@ function castleRead() {
     }
     months.push(month);
   });
-  if (!months.length) castleThrow('SOURCE_DATA', 'No recognized monthly AR sheet was found. Use a month tab such as Nov, 2026 with the expected A:J headers.');
+  // Manager work is independent of monthly financial tabs.
   var statusSheet = book.getSheetByName('Status');
   var status = { sheetId: null, lastRow: 0, maxRows: 0, maxColumns: 0, rows: Object.create(null) };
   if (statusSheet) {
@@ -298,12 +298,182 @@ function castleRead() {
     propertyKeys[key] = true;
     if (status.rows[key]) target.property.followUp = status.rows[key].followUp;
   });
+  var managerData = castleReadManagers(book, months, source);
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
-    snapshot: { revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    managerData: managerData,
+    snapshot: { managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
+}
+
+// Shared manager records use IDs; monthly column A remains a readable name.
+var CASTLE_MANAGER_TABLES = {
+  managers: {title:'Account Managers', fields:['id','name','email','notes','active','profileImage']},
+  tasks: {title:'Manager Tasks', fields:['id','managerId','title','description','dueDate','status','propertyKey','updatedAt']},
+  updates: {title:'Manager Updates', fields:['id','managerId','text','taskId','propertyKey','createdAt']},
+  assignments: {title:'Manager Assignments', fields:['id','propertyKey','managerId']}
+};
+function castleManagerName(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
+function castleDefaultManagerProfile(name) {
+  var key=String(name||'').replace(/\s+/g,'').toLowerCase();
+  return key==='teama'?'team-a':key==='teamb'?'team-b':'';
+}
+function castleValidateManagerProfile(value) {
+  if(value===''||value==='team-a'||value==='team-b')return;
+  if(typeof value!=='string'||value.length>45000)castleThrow('VALIDATION','Invalid profile image. Use a PNG, JPEG, or WebP image.');
+  var match=/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if(!match||match[2].length%4!==0||!(match[1]==='png'?match[2].indexOf('iVBORw0KGgo')===0:match[1]==='jpeg'?match[2].indexOf('/9j/')===0:match[2].indexOf('UklGR')===0))castleThrow('VALIDATION','Invalid profile image. Use a PNG, JPEG, or WebP image.');
+}
+function castleReadManagers(book, months, source) {
+  var tables = {};
+  Object.keys(CASTLE_MANAGER_TABLES).forEach(function(key) {
+    var definition=CASTLE_MANAGER_TABLES[key], sheet=book.getSheetByName(definition.title);
+    var table={sheetId:sheet?sheet.getSheetId():null,maxRows:sheet?sheet.getMaxRows():0,maxColumns:sheet?sheet.getMaxColumns():0,records:[],lastRow:0};
+    tables[key]=table;
+    if(!sheet || !sheet.getLastRow())return;
+    table.lastRow=sheet.getLastRow();
+    var range=sheet.getRange(1,1,table.lastRow,Math.min(table.maxColumns,definition.fields.length));
+    var values=range.getValues(), formulas=range.getFormulas();
+    source.push({id:String(table.sheetId),values:values,formulas:formulas});
+    var legacyProfiles=key==='managers'&&!values[0][5]&&!formulas[0][5];
+    var headers=legacyProfiles?definition.fields.slice(0,5):definition.fields;
+    if(!headers.every(function(f,i){return values[0][i]===f&&!formulas[0][i];})||(legacyProfiles&&values.slice(1).some(function(row,i){return (row[5]!==''&&row[5]!==undefined)||!!formulas[i+1][5];})))castleThrow('SOURCE_DATA',definition.title+': incompatible headers. Preserve this tab and use an empty tab with this name.');
+    var ids=Object.create(null);
+    values.slice(1).forEach(function(row,i){
+      if(!row.some(function(v){return v!=='';})&&!formulas[i+1].some(Boolean))return;
+      if(formulas[i+1].some(Boolean)||!row[0]||ids[row[0]])castleThrow('SOURCE_DATA',definition.title+': invalid or duplicate record.');
+      ids[row[0]]=true;var record={};definition.fields.forEach(function(f,j){record[f]=row[j]===undefined?'':row[j];});
+      if(key==='tasks'&&record.dueDate instanceof Date)record.dueDate=Utilities.formatDate(record.dueDate,book.getSpreadsheetTimeZone(),'yyyy-MM-dd');
+      ['updatedAt','createdAt'].forEach(function(f){if(record[f] instanceof Date)record[f]=record[f].toISOString();});
+      try {
+        castleManagerText(record.id,'Record ID',100,true);
+        if(key==='managers'){
+          if(legacyProfiles)record.profileImage=castleDefaultManagerProfile(record.name);
+          castleValidateManagerProfile(record.profileImage);
+          castleName(record.name,'Manager name');castleManagerText(record.email,'Email',254,false);castleManagerText(record.notes,'Notes',5000,false);
+          if(record.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record.email))throw new Error('Invalid email.');
+        }else{
+          castleManagerText(record.managerId,'Manager ID',100,key!=='assignments');castleManagerText(record.propertyKey,'Listing reference',500,key==='assignments');
+          if(key==='tasks'){
+            castleManagerText(record.title,'Task title',200,true);castleManagerText(record.description,'Description',5000,false);
+            if(typeof record.dueDate!=='string'||!castleDateValid(record.dueDate)||['open','in_progress','completed'].indexOf(record.status)<0)throw new Error('Invalid task date or status.');
+          }else if(key==='updates'){castleManagerText(record.text,'Update',5000,true);castleManagerText(record.taskId,'Task ID',100,false);}
+          ['updatedAt','createdAt'].forEach(function(f){if(record[f]!==undefined&&(typeof record[f]!=='string'||(record[f]&&!Number.isFinite(Date.parse(record[f])))))throw new Error('Invalid timestamp.');});
+        }
+      } catch(error) {castleThrow('SOURCE_DATA',definition.title+': invalid record on row '+(i+2)+'. '+error.message);}
+      if(key==='managers'&&typeof record.active!=='boolean')castleThrow('SOURCE_DATA','Account Managers: active must be TRUE or FALSE.');
+      table.records.push(record);
+    });
+  });
+  var managers=tables.managers.records, bootstrap=!tables.managers.lastRow;
+  var names=Object.create(null);managers.forEach(function(m){var key=castleManagerName(m.name);if(!key||names[key])castleThrow('SOURCE_DATA','Account Managers: duplicate or empty manager name.');names[key]=m;});
+  months.forEach(function(month){month.properties.forEach(function(p){
+    var key=castleManagerName(p.manager),m=names[key];
+    if(key&&!m&&bootstrap){m={id:'manager-'+castleHash(key).slice(0,32),name:p.manager.trim().replace(/\s+/g,' '),email:'',notes:'',active:true,profileImage:castleDefaultManagerProfile(p.manager)};managers.push(m);names[key]=m;}
+    // Column A is authoritative for direct spreadsheet assignment edits. Unknown
+    // names stay visible for repair, but never enter a persisted catalog silently.
+    p.managerId=m?m.id:'';if(m)p.manager=m.name;
+  });});
+  ['tasks','updates','assignments'].forEach(function(key){tables[key].records.forEach(function(r){if(r.managerId&&!managers.some(function(m){return m.id===r.managerId;}))castleThrow('SOURCE_DATA',CASTLE_MANAGER_TABLES[key].title+': record refers to an unknown manager.');});});
+  return tables;
+}
+function castleManagerText(value,label,max,required) {
+  if(typeof value!=='string'||value.length>max||(required&&!value.trim()))castleThrow('VALIDATION',label+' is invalid (maximum '+max+' characters).');
+  return value.trim();
+}
+function castleManagerLookup(managers,name,currentId) {
+  if(name==='')return null;
+  var m=managers.filter(function(m){return castleManagerName(m.name)===castleManagerName(name);})[0];
+  if(!m)castleThrow('VALIDATION','Choose a registered account manager.');
+  if(!m.active&&m.id!==currentId)castleThrow('VALIDATION','This account manager is inactive.');
+  return m;
+}
+function castleManagerTableRequests(current,tables) {
+  var requests=[],used=current.sheetIds.slice();
+  Object.keys(CASTLE_MANAGER_TABLES).forEach(function(key){
+    var definition=CASTLE_MANAGER_TABLES[key],table=tables[key],id=table.sheetId,count=Math.max(100,table.records.length+1);
+    if(id===null){id=1000;while(used.indexOf(id)>=0)id++;used.push(id);requests.push({addSheet:{properties:{sheetId:id,title:definition.title,gridProperties:{rowCount:count,columnCount:definition.fields.length,frozenRowCount:1}}}});}
+    else{
+      if(table.maxRows<count)requests.push({appendDimension:{sheetId:id,dimension:'ROWS',length:count-table.maxRows}});
+      if(table.maxColumns<definition.fields.length)requests.push({appendDimension:{sheetId:id,dimension:'COLUMNS',length:definition.fields.length-table.maxColumns}});
+    }
+    var rows=[definition.fields].concat(table.records.map(function(record){return definition.fields.map(function(f){return record[f]===undefined?'':record[f];});}));
+    // All records are retained (no deletion API), including orphaned historical links.
+    // Compact blank spreadsheet rows without leaving duplicate trailing records.
+    while(rows.length<table.lastRow)rows.push(definition.fields.map(function(){return '';}));
+    requests.push({updateCells:{start:{sheetId:id,rowIndex:0,columnIndex:0},rows:rows.map(function(row){return {values:row.map(castleValue)};}),fields:'userEnteredValue'}});
+  });
+  return requests;
+}
+function castleBuildRequests(changes,current) {
+  var tables=JSON.parse(JSON.stringify(current.managerData)),managers=tables.managers.records,financial=[],seen={},now=new Date().toISOString();
+  var properties=current.snapshot.months.reduce(function(all,m){m.properties.forEach(function(p){all[castleStatusKey(m.id,p.name)]=p;});return all;},{});
+  changes.forEach(function(c){
+    if(!c||typeof c!=='object')castleThrow('VALIDATION','Every change must be an object.');
+    if(c.kind!=='saveManager'&&c.kind!=='saveTask'&&c.kind!=='addManagerUpdate'){financial.push(JSON.parse(JSON.stringify(c)));return;}
+    castleKeys(c,['kind',c.kind==='saveManager'?'manager':c.kind==='saveTask'?'task':'update']);
+    var key=c.kind==='saveManager'?'managers':c.kind==='saveTask'?'tasks':'updates';
+    var record=JSON.parse(JSON.stringify(c.manager||c.task||c.update||{})),fields=CASTLE_MANAGER_TABLES[key].fields;
+    castleKeys(record,fields);castleManagerText(record.id,'Record ID',100,true);castleUnique(seen,key+':'+record.id);
+    var records=tables[key].records,index=records.map(function(r){return r.id;}).indexOf(record.id),old=index<0?null:records[index];
+    if(key==='managers'){
+      if(record.profileImage===undefined)record.profileImage=old?old.profileImage:'';
+      castleValidateManagerProfile(record.profileImage);
+      record.name=castleName(record.name,'Account manager').replace(/\s+/g,' ');
+      record.email=castleManagerText(record.email,'Email',254,false);record.notes=castleManagerText(record.notes,'Notes',5000,false);
+      if(typeof record.active!=='boolean')castleThrow('VALIDATION','Manager active must be true or false.');
+      if(record.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record.email))castleThrow('VALIDATION','Enter a valid email address.');
+      if(managers.some(function(m){return m.id!==record.id&&castleManagerName(m.name)===castleManagerName(record.name);}))castleThrow('VALIDATION','An account manager with this name already exists.');
+    }else{
+      var manager=managers.filter(function(m){return m.id===record.managerId;})[0];
+      if(!manager)castleThrow('VALIDATION','Choose a registered account manager.');
+      if(!manager.active&&(!old||old.managerId!==manager.id))castleThrow('VALIDATION','This account manager is inactive.');
+      castleManagerText(record.propertyKey,'Listing reference',500,false);
+      if(record.propertyKey&&!properties[record.propertyKey])castleThrow('VALIDATION','The linked listing no longer exists.');
+      if(key==='tasks'){
+        record.title=castleManagerText(record.title,'Task title',200,true);record.description=castleManagerText(record.description,'Description',5000,false);
+        if(typeof record.dueDate!=='string'||!castleDateValid(record.dueDate))castleThrow('VALIDATION','Choose a valid due date.');
+        if(['open','in_progress','completed'].indexOf(record.status)<0)castleThrow('VALIDATION','Choose a valid task status.');record.updatedAt=now;
+      }else{
+        if(old)castleThrow('VALIDATION','This update already exists.');
+        record.text=castleManagerText(record.text,'Update',5000,true);castleManagerText(record.taskId,'Task ID',100,false);
+        if(record.taskId&&!tables.tasks.records.some(function(t){return t.id===record.taskId&&t.managerId===record.managerId;}))castleThrow('VALIDATION','Choose a task assigned to this manager.');record.createdAt=now;
+      }
+    }
+    if(index<0)records.push(record);else records[index]=record;
+  });
+  // Validate and canonicalize every assignment against records, including imports.
+  financial.forEach(function(c){
+    if(c.kind!=='addProperty'&&c.kind!=='updateFollowUp')return;
+    var target=c.kind==='updateFollowUp'?current.properties[c.propertyId]:null;
+    var manager=castleManagerLookup(managers,c.manager,target&&target.property.managerId);
+    if(c.kind==='addProperty'&&!manager)castleThrow('VALIDATION','Choose a registered account manager.');
+    c.manager=manager?manager.name:'';
+  });
+  // Rename monthly and Status display names through the existing atomic path.
+  Object.keys(current.properties).forEach(function(id){
+    var p=current.properties[id].property,m=managers.filter(function(m){return m.id===p.managerId;})[0];
+    if(m&&m.name!==p.manager&&!financial.some(function(c){return c.kind==='updateFollowUp'&&c.propertyId===id;})){
+      var f=p.followUp||{status:'not_contacted',note:'',attachments:[]};
+      financial.push({kind:'updateFollowUp',propertyId:id,manager:m.name,status:f.status,note:f.note,attachments:f.attachments});
+    }
+  });
+  var assignments=tables.assignments.records;
+  function assign(key,managerId){var existing=assignments.filter(function(a){return a.propertyKey===key;})[0];if(existing)existing.managerId=managerId;else assignments.push({id:'assignment-'+castleHash(key).slice(0,32),propertyKey:key,managerId:managerId});}
+  Object.keys(properties).forEach(function(key){assign(key,properties[key].managerId||'');});
+  financial.forEach(function(c){if(c.kind==='addProperty'||c.kind==='updateFollowUp'){
+    var target=c.kind==='updateFollowUp'?current.properties[c.propertyId]:null;
+    if(c.kind==='updateFollowUp'&&!target)return; // The financial validator gives the precise error.
+    var key=target?castleStatusKey(target.sheetId,target.property.name):castleStatusKey(c.monthId,c.name);
+    var m=managers.filter(function(m){return m.name===c.manager;})[0];assign(key,m?m.id:'');
+  }});
+  var requests=castleFinancialRequests(financial,current);
+  // Avoid migrating on unrelated financial writes; first manager/assignment write
+  // persists the read-only bootstrap in the same transaction as the user's change.
+  if(changes.some(function(c){return ['saveManager','saveTask','addManagerUpdate','addProperty','updateFollowUp'].indexOf(c.kind)>=0;}))requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},tables));
+  return requests;
 }
 
 function castleStatusKey(sheetId, name) {
@@ -342,7 +512,7 @@ function castleStatusRequests(current, changes) {
   return requests;
 }
 
-function castleBuildRequests(changes, current) {
+function castleFinancialRequests(changes, current) {
   var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0, followupChanges = Object.create(null);
   function queuePayments(key, target, payments) {
     if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one payment.');

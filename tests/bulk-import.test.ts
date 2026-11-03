@@ -4,7 +4,7 @@ import { buildBulkImportPreview } from '../src/bulk-import.ts';
 import type { Month } from '../src/types.ts';
 import type { ImportSheet } from '../src/import.ts';
 const month: Month = { id: 'm', label: '', month: '2026-10', properties: [] };
-const options = { headerRow: 0, nameColumn: 1, amountColumn: 2, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'House', manager: 'Manager', total: '100', airbnbSlot: 'auto' as const };
+const options = { headerRow: 0, nameColumn: 1, amountColumn: 2, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'House', manager: 'Team A', total: '100', airbnbSlot: 'auto' as const };
 const sheet = (n: number, currency = 'CAD'): ImportSheet => ({ name: 'CSV', rows: [['Type','Listing','Amount','Paid out','Arriving by date','Currency'], ['Payout','','',n,'2026-10-09',currency], ['Reservation','Listing',n,'','',currency]].map(row => row.map(value => ({value}))) });
 const entry = (n: number) => ({ fileName: `${n}.csv`, sheet: sheet(n), options });
 
@@ -40,7 +40,7 @@ test('multi-file imports require recognized exports and enforce limits', () => {
 });
 
 test('fills existing slots sequentially without overwriting, despite explicit selections', () => {
- const existing: Month = { ...month, properties: [{id:'p',name:'House',manager:'Manager',totalCents:10000,payments:Array.from({length:3},(_,i)=>({id:`p${i}`,type:'Airbnb' as const,amountCents:i===0?999:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false}))}] };
+ const existing: Month = { ...month, properties: [{id:'p',name:'House',manager:'Team A',totalCents:10000,payments:Array.from({length:3},(_,i)=>({id:`p${i}`,type:'Airbnb' as const,amountCents:i===0?999:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false}))}] };
  const result=buildBulkImportPreview(existing,[{...entry(1),options:{...options,airbnbSlot:'1'}},entry(2),entry(3)]);
  assert.deepEqual(result.changes.map(c=>c.kind),['updatePayment','updatePayment','appendPayments']);
  assert.equal(existing.properties[0].payments[1].amountCents,null);
@@ -63,7 +63,7 @@ test('single-file new properties accept more than three payouts and deduplicate 
 test('preview API persists additional and appended Airbnb payments', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
- const result=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Bulk test house',manager:'Team',totalCents:500,additionalPayments:[{amountCents:100,payoutDate:'2026-10-09',bundleCents:200}]}]);
+ const result=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Bulk test house',manager:'Team A',totalCents:500,additionalPayments:[{amountCents:100,payoutDate:'2026-10-09',bundleCents:200}]}]);
  const property=result.months[0].properties.at(-1)!;
  assert.deepEqual(property.payments.map(payment=>payment.type),['Airbnb']);
  const appended=await api.save(result.revision,[{kind:'appendPayments',propertyId:property.id,payments:[{amountCents:300}]}]);
@@ -73,7 +73,7 @@ test('preview API persists additional and appended Airbnb payments', async () =>
 test('a new property starts without payments and imports append only supplied Airbnb payments', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
- const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Empty house',manager:'Team',totalCents:10000}]);
+ const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'Empty house',manager:'Team A',totalCents:10000}]);
  const target=created.months[0].properties.at(-1)!;
  assert.deepEqual(target.payments.map(payment=>[payment.type,payment.amountCents]),[]);
  const batch=buildBulkImportPreview(created.months[0],[{...entry(1),options:{...options,propertyName:'Empty house'}},{...entry(2),options:{...options,propertyName:'Empty house'}}]);
@@ -94,7 +94,7 @@ test('creating a property during bulk import saves only the supplied payouts', a
 test('manual Vrbo imports into a property without payments retain their platform through save', async () => {
  const {createPreviewApi}=await import('../src/preview-api.ts');
  const api=createPreviewApi(); const before=await api.read();
- const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'House',manager:'Manager',totalCents:10000}]);
+ const created=await api.save(before.revision,[{kind:'addProperty',monthId:before.months[0].id,name:'House',manager:'Team A',totalCents:10000}]);
  const manual: ImportSheet={name:'CSV',rows:[['Property','Amount'],['Listing',12]].map(row=>row.map(value=>({value})))};
  const batch=buildBulkImportPreview(created.months[0],[{fileName:'vrbo.csv',sheet:manual,options:{...options,nameColumn:0,amountColumn:1,destination:'Vrbo'}}]);
  const saved=await api.save(created.revision,batch.changes);

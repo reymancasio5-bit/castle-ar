@@ -65,7 +65,7 @@ AR = expected total minus the recorded Airbnb, Vrbo, and owner payments. Bank re
 
 ## Property follow-ups
 
-Each monthly property has a shared status: Not contacted, Contact attempted, Awaiting owner response, Owner responded, Payment promised, Follow-up needed, or Resolved. These track the conversation; financial collection status remains calculated from payments. Edit one property at a time, then Save update or Cancel. Notes allow 5,000 characters. Manager assignment accepts an existing manager or a new name; leaving it empty unassigns the property.
+Each monthly property has a shared status: Not contacted, Contact attempted, Awaiting owner response, Owner responded, Payment promised, Follow-up needed, or Resolved. These track the conversation; financial collection status remains calculated from payments. Edit one property at a time, then Save update or Cancel. Notes allow 5,000 characters. Manager assignment is a dropdown of saved account-manager records. Choose Unassigned to clear an assignment. Create or rename managers on the Account Managers page.
 
 Attach up to three PNG, JPEG, or WebP screenshots (10 MB source limit each). Images are compressed in the browser to fit the sheet; inspect their previews before saving and crop dense screenshots for legibility. The app stores the current note and attachments, not an activity history. Replacing/removing an attachment removes it from the next saved record.
 
@@ -123,3 +123,27 @@ Cross-origin reads use Google's documented JSONP Content Service support. Writes
 
 
 Click a screenshot thumbnail to open the full image in a centered viewer. Close using Escape, the close button, or the backdrop. Opening and closing fade/zoom smoothly, with reduced-motion preferences respected.
+
+## Account managers and tasks
+
+Account Managers is a shared directory with names, optional email/notes, and active status. Open a manager to see monthly listing assignments, separate tasks with required due dates and Open / In progress / Completed status, and timestamped updates. Tasks remain visible across reporting months. The listing view can switch between the selected month and all months. Tasks can be reassigned, completed, or reopened through Edit. Updates are append-only; current property follow-up notes are labeled separately and do not imply historical tracking.
+
+Follow-ups, Add Property, new-property imports, and task assignments use saved manager records. Inactive managers retain existing assignments but are excluded from new assignments. Existing names are deduplicated by case and whitespace during bootstrap; other spelling differences are kept separate. Unknown names typed directly in monthly sheets after migration are flagged for registration, not silently added to the directory. Rename managers through the app so their IDs and monthly display names remain linked.
+
+**Deployment:** replace the bound Apps Script with the rebuilt `apps-script/Code.gs`, then deploy a new version of the existing web-app deployment. The frontend checks `managerSchema: 1` before allowing manager/assignment writes. Keep the existing deployment URL. The first manager or assignment save atomically creates/initializes Account Managers, Manager Tasks, Manager Updates, and Manager Assignments tabs. Reads never migrate data. These tabs have validated field-name headers; do not change their IDs or headers. Existing financial cells and formulas are preserved. No new OAuth scopes are needed.
+
+**Local inspection:** run `npm.cmd run dev`, then open `http://127.0.0.1:5173/?preview=1&view=managers` for the new page with temporary sample records. Preview changes reset on reload and do not write to Google Sheets. Without `preview=1`, local development uses the configured shared Google Sheet; saving there changes shared data. Preview override is available only in the development server. No live migration or deployment is performed by the local build/tests.
+
+### Account-manager profile images
+
+Use **Account managers ? Edit details ? Upload image / Change image** to add a PNG, JPEG, or WebP (up to 5 MB). The preview appears immediately in the form; Save changes stores it with the shared manager record. Remove image returns to the blank silhouette after saving. New managers start blank. Existing Team B and Team A records receive black and red text badges matching the supplied reference designs; uploads can replace these badges. Removed badges stay blank, including after refresh or rename.
+
+Uploaded images retain their aspect ratio and transparency, are resized to at most 256 pixels, and are compressed below 45,000 characters to fit one Google Sheets cell. A new `profileImage` column is appended to Account Managers when saving with the updated script; existing five-column records remain readable, and an occupied/unrecognized sixth column is rejected without overwriting it. Redeploy the latest Apps Script to enable shared profile uploads. Preview mode supports profiles immediately.
+
+## Automatic data refresh and returning to your page
+
+Successful saves immediately apply the latest snapshot returned by Google Sheets without reloading the document or changing the current page. Connected workspaces also check for shared changes every 15 seconds while the tab is visible, refresh when returning to the tab or reconnecting, and notify other open tabs on the same origin after saves. Other devices and direct Google Sheet edits appear on the next successful check. Preview mode does not poll the shared sheet.
+
+Automatic refresh pauses while editing a follow-up, manager, task, update, payment, new property, import, or preferences. In-flight responses from before editing/saving are discarded; one fresh read catches up after Save or Cancel. Stale server revisions still reject conflicting saves, leaving the draft available. Reads are serialized, unchanged revisions do not replace rendered records, and failed reads retain the last loaded data and retry automatically.
+
+Current page, reporting month, property filters/search, and selected manager/manager section are remembered per browser tab using session storage, including after a manual browser reload. Explicit view links take precedence on entry and follow subsequent navigation. Active editors are not auto-reopened after a manual reload, and unsaved drafts are not persisted. Automatic refresh never unmounts them. If session storage is blocked, automatic updates still preserve the current in-memory view. Removed months/managers fall back to the first available record.
