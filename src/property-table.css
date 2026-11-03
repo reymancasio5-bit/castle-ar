@@ -1,0 +1,49 @@
+/* Size the same table to its panel, rather than wrapping financial labels. */
+.records-panel { container-type: inline-size; container-name: records; }
+.records-panel .property-table-wrap { display: block; }
+.records-panel .property-mobile-list { display: none; }
+.property-table-wrap .property-table { table-layout: fixed; width: 100%; min-width: 0; }
+.property-table .property-column { width: 30%; }
+.property-table .amount-column { width: 11%; }
+.property-table .bank-column { width: 17%; }
+.property-table .status-column { width: 16%; }
+.property-table .action-column { width: 4%; }
+.property-table th, .property-table td {
+ padding: 20px clamp(2px, .8cqw, 10px); vertical-align: middle;
+ white-space: nowrap; overflow-wrap: normal; word-break: normal;
+ font-size: clamp(6px, 1.3cqw, 14px);
+}
+.property-table th { padding-top: 14px; padding-bottom: 14px; font-size: clamp(5px, 1.15cqw, 12px); }
+.property-table th:first-child, .property-table td:first-child { padding-left: clamp(6px, 2cqw, 24px); }
+.property-table th:last-child, .property-table td:last-child { padding-left: 0; padding-right: 3px; text-align: center; }
+.property-table .number { white-space: nowrap; overflow-wrap: normal; }
+.property-table .bank-details-cell { min-width: 0; max-width: none; white-space: nowrap!important; overflow: hidden; text-overflow: ellipsis; line-height: 1.6; }
+.property-table th:nth-child(5), .property-table td:nth-child(5),
+.property-table th:nth-child(6), .property-table td:nth-child(6) { text-align: center; }
+.property-table .status-badge { justify-content: center; white-space: nowrap; font-size: clamp(5px, 1cqw, 11px); padding: 5px clamp(2px, .5cqw, 7px); gap: 3px; line-height: 1.4; }
+.property-table .status-badge > span { flex-shrink: 0; }
+.property-table .property-name-cell { width: 100%; min-width: 0; min-height: 44px; gap: clamp(4px, 1cqw, 10px); }
+.property-table .property-name-cell > span:last-child { min-width: 0; flex: 1; }
+.property-table .property-name-cell strong, .property-table .property-name-cell small { display: block; max-width: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.property-table .property-name-cell strong { font-size: clamp(6px, 1.3cqw, 14px); }
+.property-table .property-name-cell small { font-size: clamp(5px, 1.1cqw, 11px); }
+.property-table .row-open { width: 100%; min-width: 0; height: 44px; padding: 0; }
+.property-table .row-open svg { width: min(16px, 100%); }
+.property-table tfoot td { padding-top: 18px; padding-bottom: 18px; }
+@container records (max-width: 850px) {
+ .property-table .property-name-cell .property-icon { display: none; }
+ .property-table tbody td { padding-top: 12px; padding-bottom: 12px; }
+}
+@container records (max-width: 480px) {
+ .property-table .status-badge > span { display: none; }
+ .property-table th, .property-table td { padding-left: 2px; padding-right: 2px; }
+ .property-table th:first-child, .property-table td:first-child { padding-left: 6px; }
+ .property-table tbody td { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (max-width: 1400px) {
+ .main-shell .content-layout { grid-template-columns: minmax(0, 1fr); }
+ .main-shell .summary-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+ .main-shell .summary-column { grid-template-columns: minmax(0, 1fr); }
+}
