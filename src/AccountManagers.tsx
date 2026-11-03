@@ -1,4 +1,7 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {createPortal} from 'react-dom';
+import {Dialog} from './App';
+import {Presence} from './Presence';
 import {Users,Plus,Search,ArrowUpRight,CalendarDays,CheckCircle2,Pencil,MessageSquare,Building2,ClipboardList,Trash2} from 'lucide-react';
 import type {AccountManager,ManagerChange,ManagerTask,ManagerUpdate,Snapshot,Property} from './types.ts';
 import {balance,money} from './domain.ts';
@@ -20,6 +23,8 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
  useEffect(()=>{saveManagerLocation({selectedId,search,tab,allMonths,taskFilter});},[selectedId,search,tab,allMonths,taskFilter]);
  useEffect(()=>{if(managers.length&&!managers.some(m=>m.id===selectedId))setSelectedId(managers[0].id);},[managers,selectedId]);
  const [form,setForm]=useState<Form|null>(null);const [saving,setSaving]=useState(false);const [error,setError]=useState('');const [message,setMessage]=useState('');
+ const [deleteTarget,setDeleteTarget]=useState<{id:string;name:string;revision:string}|null>(null);
+ const deleting=useRef(false);
  const editorRef=useRef<HTMLFormElement>(null);const profileInput=useRef<HTMLInputElement>(null);
  const [processingProfile,setProcessingProfile]=useState(false);const profileSupported=snapshot.managerProfiles===1;
  const selected=managers.find(m=>m.id===selectedId)??managers[0];
@@ -27,7 +32,7 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
  const listings=allListings.filter(x=>x.property.managerId===selected?.id&&(allMonths||x.month.id===monthId));
  const tasks=(snapshot.tasks??[]).filter(t=>t.managerId===selected?.id).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
  const overdue=tasks.filter(t=>t.status!=='completed'&&t.dueDate<today()).length;
- const locked=!!form||saving;const callback=useRef(onDirtyChange);callback.current=onDirtyChange;
+ const locked=!!form||!!deleteTarget||saving;const callback=useRef(onDirtyChange);callback.current=onDirtyChange;
  useEffect(()=>{onDirtyChange(locked);},[locked,onDirtyChange]);
  useEffect(()=>()=>callback.current(false),[]);
  useEffect(()=>{if(!locked)return;const protect=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',protect);return()=>window.removeEventListener('beforeunload',protect);},[locked]);
@@ -44,18 +49,22 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
   catch(cause){setError(cause instanceof Error?cause.message:'Could not prepare this profile image.');}
   finally{setProcessingProfile(false);}
  }
- async function deleteManager(){
+ function requestDelete(){
   if(!selected||locked)return;
   setError('');setMessage('');
   if(snapshot.managerDeletion!==1){setError('Update the Apps Script deployment to enable account manager deletion.');return;}
   if(allListings.some(x=>x.property.managerId===selected.id)||tasks.length||(snapshot.managerUpdates??[]).some(u=>u.managerId===selected.id)){
    setError('This manager has linked listings, tasks, or updates. To remove them from new assignments while keeping their history, choose Edit Details and turn off Active.');return;
   }
-  if(!window.confirm('Permanently delete '+selected.name+'? Their profile will be removed from Account Managers. This cannot be undone.'))return;
-  onDirtyChange(true);setSaving(true);
-  try{await onSave(snapshot.revision,{kind:'deleteManager',managerId:selected.id});setSelectedId('');setMessage('Account manager deleted.');}
+  onDirtyChange(true);setDeleteTarget({id:selected.id,name:selected.name,revision:snapshot.revision});
+ }
+ function cancelDelete(){if(!deleting.current){setDeleteTarget(null);setError('');}}
+ async function deleteManager(){
+  if(!deleteTarget||deleting.current)return;
+  deleting.current=true;setSaving(true);setError('');
+  try{await onSave(deleteTarget.revision,{kind:'deleteManager',managerId:deleteTarget.id});setDeleteTarget(null);setSelectedId('');setMessage('Account manager deleted.');}
   catch(cause){setError(cause instanceof Error?cause.message:'Could not delete this account manager.');}
-  finally{setSaving(false);}
+  finally{deleting.current=false;setSaving(false);}
  }
  async function submit(event:FormEvent){event.preventDefault();if(!form||saving||processingProfile)return;setSaving(true);setError('');
   try{const change:ManagerChange=form.kind==='manager'?{kind:'saveManager',manager:form.value}:form.kind==='task'?{kind:'saveTask',task:form.value}:{kind:'addManagerUpdate',update:form.value};await onSave(form.revision,change);if(form.kind==='manager')setSelectedId(form.value.id);setMessage(form.kind==='manager'?'Account manager saved.':form.kind==='task'?'Task saved.':'Update added.');setForm(null);}
@@ -65,6 +74,12 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
  if(snapshot.managerSchema!==1)return <section className="panel am-upgrade"><Users size={32}/><h2>Account Managers</h2><p>This page needs the updated Google Sheets connection script. Your existing records are still available in the other pages.</p><p>Replace the bound Apps Script with the new Code.gs and deploy a new version to enable shared managers, tasks, and updates.</p>{import.meta.env.DEV&&<a className="button primary" href="?preview=1">Try the new page with preview data <ArrowUpRight size={16}/></a>}</section>;
  const unknown=allListings.filter(x=>x.property.manager&&!x.property.managerId);
  return <section className="am-workspace" aria-label="Account Managers">
+  <Presence present={!!deleteTarget}>{deleteTarget&&createPortal(<Dialog title="Delete Account Manager" className="am-delete-dialog" busy={saving} onClose={cancelDelete}>
+   <div className="am-delete-content"><p>Permanently delete <strong>{deleteTarget.name}</strong>? Their profile will be removed from Account Managers. This cannot be undone.</p>
+    {error&&<p className="form-error" role="alert">{error}</p>}
+    <div className="am-delete-actions"><button className="button secondary" disabled={saving} onClick={cancelDelete}>Cancel</button><button className="button primary am-confirm-delete" disabled={saving} onClick={()=>void deleteManager()}><Trash2 size={16}/>{saving?'Deleting?':'Delete Manager'}</button></div>
+   </div>
+  </Dialog>,document.body)}</Presence>
   {unknown.length>0&&<div className="am-warning" role="status">{unknown.length} listing assignments use unregistered names. Add those managers here, then choose their records in Follow-ups: {[...new Set(unknown.map(x=>x.property.manager))].join(', ')}.</div>}
   <div className="am-directory panel"><div className="am-directory-heading"><div><span className="eyebrow">YOUR TEAM</span><h2>Account Managers <span className="count-pill">{managers.length}</span></h2></div><button className="button primary compact" disabled={locked} onClick={newManager}><Plus size={16}/>Add Manager</button></div>
    <label className="search-field"><Search size={16}/><input type="search" aria-label="Search account managers" placeholder="Find a manager…" value={search} disabled={locked} onChange={e=>setSearch(e.target.value)}/></label>
@@ -73,11 +88,11 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
    {!!managers.length&&!managers.some(m=>`${m.name} ${m.email}`.toLowerCase().includes(search.toLowerCase()))&&<p className="am-empty">No managers match your search.</p>}
   </div>
   <div className="am-detail panel">
-   {selected&&<><header className="am-profile"><div className="am-profile-title"><ManagerAvatar manager={selected} large/><div><span className="eyebrow">ACCOUNT MANAGER {selected.active?'':'· INACTIVE'}</span><h2>{selected.name}</h2><p>{selected.email||'No email added'}</p></div></div><div className="am-profile-actions"><button className="button secondary compact" disabled={locked} onClick={()=>open({kind:'manager',value:{...selected},revision:snapshot.revision})}><Pencil size={14}/>Edit Details</button><button className="button secondary compact am-delete" disabled={locked} onClick={()=>void deleteManager()}><Trash2 size={14}/>Delete Manager</button></div></header>
+   {selected&&<><header className="am-profile"><div className="am-profile-title"><ManagerAvatar manager={selected} large/><div><span className="eyebrow">ACCOUNT MANAGER {selected.active?'':'· INACTIVE'}</span><h2>{selected.name}</h2><p>{selected.email||'No email added'}</p></div></div><div className="am-profile-actions"><button className="button secondary compact" disabled={locked} onClick={()=>open({kind:'manager',value:{...selected},revision:snapshot.revision})}><Pencil size={14}/>Edit Details</button><button className="button secondary compact am-delete" disabled={locked} onClick={requestDelete}><Trash2 size={14}/>Delete Manager</button></div></header>
    {selected.notes&&<p className="am-profile-notes">{selected.notes}</p>}
    <div className="am-stats"><div><Building2 size={18}/><strong>{allListings.filter(x=>x.property.managerId===selected.id).length}</strong><span>Monthly Listings</span></div><div><ClipboardList size={18}/><strong>{tasks.filter(t=>t.status!=='completed').length}</strong><span>Open Tasks</span></div><div className={overdue?'am-overdue':''}><CalendarDays size={18}/><strong>{overdue}</strong><span>Overdue</span></div></div>
    <div className="am-tabs" aria-label="Manager sections">{(['listings','tasks','updates'] as const).map(t=><button key={t} disabled={locked} aria-pressed={tab===t} className={tab===t?'selected':''} onClick={()=>setTab(t)}>{t[0].toUpperCase()+t.slice(1)} <span>{t==='listings'?listings.length:t==='tasks'?tasks.length:updates.length}</span></button>)}</div></>}
-   {!form&&error&&<p className="form-error am-delete-error" role="alert">{error}</p>}
+   {!form&&!deleteTarget&&error&&<p className="form-error am-delete-error" role="alert">{error}</p>}
    {message&&<p className="am-success" role="status"><CheckCircle2 size={16}/>{message}</p>}
    {form&&<form className="am-form" ref={editorRef} onSubmit={submit}><h3>{form.kind==='manager'?(managers.some(m=>m.id===form.value.id)?"Edit Account Manager":"New Account Manager"):form.kind==='task'?((snapshot.tasks??[]).some(t=>t.id===form.value.id)?"Edit Task":"New Task"):"Add an Update"}</h3><fieldset disabled={saving||processingProfile}>
     {form.kind==='manager'?<><div className="am-profile-editor"><ManagerAvatar manager={form.value} large/><div><strong>Profile Image</strong><p>Upload an image, or leave the profile blank.</p><input ref={profileInput} type="file" className="sr-only" tabIndex={-1} accept="image/png,image/jpeg,image/webp" aria-label="Upload account manager profile image" disabled={!profileSupported||saving||processingProfile} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadProfile(file);}}/><div className="am-profile-buttons"><button type="button" className="button secondary compact" disabled={!profileSupported||processingProfile} onClick={()=>profileInput.current?.click()}>{processingProfile?'Preparing image?':managerProfile(form.value)?"Change Image":"Upload Image"}</button>{managerProfile(form.value)&&<button type="button" className="button quiet compact" disabled={!profileSupported||processingProfile} onClick={()=>patch({profileImage:''})}>Remove Image</button>}</div><small>{profileSupported?'PNG, JPEG, or WebP ? up to 5 MB. Saved when you save changes.':'Update the Apps Script deployment to enable profile uploads.'}</small>{processingProfile&&<span role="status">Preparing profile image?</span>}</div></div><div className="am-form-grid"><label>Name<input required maxLength={160} value={form.value.name} onChange={e=>patch({name:e.target.value})}/></label><label>Email <small>Optional</small><input type="email" maxLength={254} value={form.value.email} onChange={e=>patch({email:e.target.value})}/></label></div><label>Notes <small>Optional</small><textarea maxLength={5000} rows={3} value={form.value.notes} onChange={e=>patch({notes:e.target.value})}/></label><label className="am-checkbox"><input type="checkbox" checked={form.value.active} onChange={e=>patch({active:e.target.checked})}/>Active — available for new assignments</label></>:form.kind==='task'?<><label>Task Title<input required maxLength={200} value={form.value.title} onChange={e=>patch({title:e.target.value})}/></label><div className="am-form-grid"><label>Account Manager<select required value={form.value.managerId} onChange={e=>patch({managerId:e.target.value})}>{managers.filter(m=>m.active||m.id===(snapshot.tasks??[]).find(t=>t.id===form.value.id)?.managerId).map(m=><option key={m.id} value={m.id}>{m.name}{m.active?'':' (inactive)'}</option>)}</select></label><label>Due Date<input type="date" required value={form.value.dueDate} onChange={e=>patch({dueDate:e.target.value})}/></label></div><div className="am-form-grid"><label>Status<select value={form.value.status} onChange={e=>patch({status:e.target.value})}>{Object.entries(statuses).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label>Listing <small>Optional</small><select value={form.value.propertyKey} onChange={e=>patch({propertyKey:e.target.value})}><option value="">No listing linked</option>{allListings.map(x=><option key={x.key} value={x.key}>{x.property.name} · {x.month.label}</option>)}</select></label></div><label>Description <small>Optional</small><textarea maxLength={5000} rows={3} value={form.value.description} onChange={e=>patch({description:e.target.value})}/></label></>:<><label>Update<textarea required maxLength={5000} rows={4} placeholder="What changed? Share progress or the next step…" value={form.value.text} onChange={e=>patch({text:e.target.value})}/></label><div className="am-form-grid"><label>Related Task <small>Optional</small><select value={form.value.taskId} onChange={e=>patch({taskId:e.target.value})}><option value="">No task linked</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label>Related Listing <small>Optional</small><select value={form.value.propertyKey} onChange={e=>patch({propertyKey:e.target.value})}><option value="">No listing linked</option>{allListings.filter(x=>x.property.managerId===selected?.id).map(x=><option key={x.key} value={x.key}>{x.property.name} · {x.month.label}</option>)}</select></label></div></>}
