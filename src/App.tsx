@@ -155,8 +155,8 @@ export default function App({ api, configured }: { api: Api; configured: boolean
       <nav aria-label="Main navigation" inert={followUpDirty || savingRecords}>
         <button className={view === 'overview' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('overview')}><LayoutDashboard size={19} /><span>Overview</span>{view === 'overview' && <span className="nav-active-dot" />}</button>
         <button className={view === 'properties' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('properties')}><Building2 size={19} /><span>Follow-Ups</span><span className="nav-count">{properties.length}</span></button>
-        <button className={view === 'managers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('managers')}><Users size={19}/><span>Account Managers</span></button>
         <button className={view === 'reconciliation' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('reconciliation')}><ClipboardCheck size={19} /><span>Reconciliation</span>{unverified > 0 && <span className="nav-count">{unverified}</span>}</button>
+        <button className={view === 'managers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('managers')}><Users size={19}/><span>Account Managers</span></button>
       </nav>
       <div style={{ marginTop: 'auto' }} inert={followUpDirty || savingRecords}><TeamMenu onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} /></div>
     </aside>

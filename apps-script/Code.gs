@@ -305,7 +305,7 @@ function castleRead() {
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData,
-    snapshot: { bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -313,7 +313,7 @@ function castleRead() {
 
 // Shared manager records use IDs; monthly column A remains a readable name.
 var CASTLE_MANAGER_TABLES = {
-  managers: {title:'Account Managers', fields:['id','name','email','notes','active','profileImage']},
+  managers: {title:'Account Managers', fields:['id','name','email','notes','active','profileImage','role','parentManagerId']},
   tasks: {title:'Manager Tasks', fields:['id','managerId','title','description','dueDate','status','propertyKey','updatedAt']},
   updates: {title:'Manager Updates', fields:['id','managerId','text','taskId','propertyKey','createdAt']},
   assignments: {title:'Manager Assignments', fields:['id','propertyKey','managerId']}
@@ -341,8 +341,10 @@ function castleReadManagers(book, months, source) {
     var values=range.getValues(), formulas=range.getFormulas();
     source.push({id:String(table.sheetId),values:values,formulas:formulas});
     var legacyProfiles=key==='managers'&&!values[0][5]&&!formulas[0][5];
-    var headers=legacyProfiles?definition.fields.slice(0,5):definition.fields;
+    var legacyHierarchy=key==='managers'&&!values[0][6]&&!values[0][7]&&!formulas[0][6]&&!formulas[0][7];
+    var headers=legacyProfiles?definition.fields.slice(0,5):legacyHierarchy?definition.fields.slice(0,6):definition.fields;
     if(!headers.every(function(f,i){return values[0][i]===f&&!formulas[0][i];})||(legacyProfiles&&values.slice(1).some(function(row,i){return (row[5]!==''&&row[5]!==undefined)||!!formulas[i+1][5];})))castleThrow('SOURCE_DATA',definition.title+': incompatible headers. Preserve this tab and use an empty tab with this name.');
+    if(key==='managers'&&values.some(function(row,i){return row.slice(headers.length).some(function(v){return v!==''&&v!==undefined;})||formulas[i].slice(headers.length).some(Boolean);}))castleThrow('SOURCE_DATA','Account Managers: migration columns are occupied. Preserve their contents before adding role and parentManagerId.');
     var ids=Object.create(null);
     values.slice(1).forEach(function(row,i){
       if(!row.some(function(v){return v!=='';})&&!formulas[i+1].some(Boolean))return;
@@ -353,6 +355,8 @@ function castleReadManagers(book, months, source) {
       try {
         castleManagerText(record.id,'Record ID',100,true);
         if(key==='managers'){
+          if(legacyHierarchy){record.role='account_manager';record.parentManagerId='';}
+          if(record.role==='')record.role='account_manager';
           if(legacyProfiles)record.profileImage=castleDefaultManagerProfile(record.name);
           castleValidateManagerProfile(record.profileImage);
           castleName(record.name,'Manager name');castleManagerText(record.email,'Email',254,false);castleManagerText(record.notes,'Notes',5000,false);
@@ -374,12 +378,13 @@ function castleReadManagers(book, months, source) {
   var names=Object.create(null);managers.forEach(function(m){var key=castleManagerName(m.name);if(!key||names[key])castleThrow('SOURCE_DATA','Account Managers: duplicate or empty manager name.');names[key]=m;});
   months.forEach(function(month){month.properties.forEach(function(p){
     var key=castleManagerName(p.manager),m=names[key];
-    if(key&&!m&&bootstrap){m={id:'manager-'+castleHash(key).slice(0,32),name:p.manager.trim().replace(/\s+/g,' '),email:'',notes:'',active:true,profileImage:castleDefaultManagerProfile(p.manager)};managers.push(m);names[key]=m;}
+    if(key&&!m&&bootstrap){m={id:'manager-'+castleHash(key).slice(0,32),name:p.manager.trim().replace(/\s+/g,' '),email:'',notes:'',active:true,role:'account_manager',parentManagerId:'',profileImage:castleDefaultManagerProfile(p.manager)};managers.push(m);names[key]=m;}
     // Column A is authoritative for direct spreadsheet assignment edits. Unknown
     // names stay visible for repair, but never enter a persisted catalog silently.
     p.managerId=m?m.id:'';if(m)p.manager=m.name;
   });});
   ['tasks','updates','assignments'].forEach(function(key){tables[key].records.forEach(function(r){if(r.managerId&&!managers.some(function(m){return m.id===r.managerId;}))castleThrow('SOURCE_DATA',CASTLE_MANAGER_TABLES[key].title+': record refers to an unknown manager.');});});
+  castleValidateManagerHierarchy(managers,'SOURCE_DATA');
   return tables;
 }
 function castleManagerText(value,label,max,required) {
@@ -420,6 +425,7 @@ function castleBuildRequests(changes,current) {
       var deleteIndex=managers.map(function(m){return m.id;}).indexOf(c.managerId);
       if(deleteIndex<0)castleThrow('VALIDATION','Account manager not found.');
       if(Object.keys(properties).some(function(key){return properties[key].managerId===c.managerId;})||['tasks','updates'].some(function(key){return tables[key].records.some(function(r){return r.managerId===c.managerId;});})||tables.assignments.records.some(function(r){return r.managerId===c.managerId&&!properties[r.propertyKey];}))castleThrow('VALIDATION','This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+      if(managers.some(function(m){return m.parentManagerId===c.managerId;}))castleThrow('VALIDATION','Reassign this manager?s assistants before deleting them.');
       managers.splice(deleteIndex,1);return;
     }
     if(c.kind!=='saveManager'&&c.kind!=='saveTask'&&c.kind!=='addManagerUpdate'){financial.push(JSON.parse(JSON.stringify(c)));return;}
@@ -429,6 +435,11 @@ function castleBuildRequests(changes,current) {
     castleKeys(record,fields);castleManagerText(record.id,'Record ID',100,true);castleUnique(seen,key+':'+record.id);
     var records=tables[key].records,index=records.map(function(r){return r.id;}).indexOf(record.id),old=index<0?null:records[index];
     if(key==='managers'){
+      record.role=record.role===undefined?(old&&old.role||'account_manager'):record.role;
+      record.parentManagerId=record.parentManagerId===undefined?(old&&old.parentManagerId||''):record.parentManagerId;
+      if(record.role==='account_manager')record.parentManagerId='';
+      var parent=managers.filter(function(m){return m.id===record.parentManagerId;})[0];
+      if(record.role==='assistant'&&parent&&!parent.active&&(!old||old.parentManagerId!==parent.id))castleThrow('VALIDATION','Choose an active parent Account Manager.');
       if(record.profileImage===undefined)record.profileImage=old?old.profileImage:'';
       castleValidateManagerProfile(record.profileImage);
       record.name=castleName(record.name,'Account manager').replace(/\s+/g,' ');
@@ -454,6 +465,7 @@ function castleBuildRequests(changes,current) {
     }
     if(index<0)records.push(record);else records[index]=record;
   });
+  castleValidateManagerHierarchy(managers,'VALIDATION');
   // Validate and canonicalize every assignment against records, including imports.
   financial.forEach(function(c){
     if(c.kind!=='addProperty'&&c.kind!=='updateFollowUp')return;
@@ -876,3 +888,12 @@ function castleValidateBankDetails(value,offset){
  if(!offset)castleThrow('VALIDATION','Insert a Bank Details column at G in this monthly sheet, with Bank Details in every property header, before importing bank details.');
 }
 function castleBankFormula(row,offset){var column=offset?'I':'H';return '=IF(OR(F'+row+'="",'+column+row+'=""),"",ROUND(F'+row+',2)=ROUND('+column+row+',2))';}
+
+function castleValidateManagerHierarchy(managers,code){
+ managers.forEach(function(m){
+  var role=m.role||'account_manager',parentId=m.parentManagerId||'';
+  if(['account_manager','assistant'].indexOf(role)<0)castleThrow(code,'Choose a valid manager role.');
+  if(role==='assistant'&&!managers.some(function(p){return p.id===parentId&&p.id!==m.id&&(p.role||'account_manager')==='account_manager';}))castleThrow(code,'Assistant Account Managers require a valid parent Account Manager.');
+  if(role==='account_manager'&&parentId)castleThrow(code,'Account Managers cannot have a parent manager.');
+ });
+}

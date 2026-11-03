@@ -5,7 +5,7 @@ export const normalizeManagerName = (name:string) => name.trim().replace(/\s+/g,
 export const listingKey = (monthId:string,name:string) => JSON.stringify([monthId,name.trim().toLowerCase()]);
 export function bootstrapManagers(snapshot:Snapshot):Snapshot {
  const next=structuredClone(snapshot);
- next.bankDetailsSchema=1;next.managerDeletion=1;next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
+ next.managerHierarchy=1;next.bankDetailsSchema=1;next.managerDeletion=1;next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
  if(!next.managers){
   next.managers=[];
   for(const p of next.months.flatMap(m=>m.properties)){
@@ -32,6 +32,7 @@ export function applyManagerChange(s:Snapshot,c:ManagerChange){
   const index=managers.findIndex(m=>m.id===c.managerId);
   if(index<0)throw new Error('Account manager not found.');
   if(s.months.some(month=>month.properties.some(p=>p.managerId===c.managerId))||(s.tasks??[]).some(t=>t.managerId===c.managerId)||(s.managerUpdates??[]).some(u=>u.managerId===c.managerId))throw new Error('This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+  if(managers.some(m=>m.parentManagerId===c.managerId))throw new Error('Reassign this manager?s assistants before deleting them.');
   managers.splice(index,1);return;
  }
  if(c.kind==='saveManager'){
@@ -42,6 +43,14 @@ export function applyManagerChange(s:Snapshot,c:ManagerChange){
   text(m.id,'Manager ID',100,true);if(typeof m.active!=='boolean')throw new Error('Manager active status is required.');
   if(m.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.email))throw new Error('Enter a valid email address.');
   if(managers.some(x=>x.id!==m.id&&normalizeManagerName(x.name)===normalizeManagerName(m.name)))throw new Error('An account manager with this name already exists.');
+  const old=managers.find(x=>x.id===m.id);
+  m.role=c.manager.role??old?.role??'account_manager';m.parentManagerId=c.manager.parentManagerId??old?.parentManagerId??'';
+  if(!['account_manager','assistant'].includes(m.role))throw new Error('Choose a valid manager role.');
+  if(m.role==='assistant'){
+   const parent=managers.find(p=>p.id===m.parentManagerId&&p.id!==m.id&&(p.role??'account_manager')==='account_manager');
+   if(!parent||(!parent.active&&old?.parentManagerId!==parent.id))throw new Error('Choose an active parent Account Manager.');
+   if(managers.some(p=>p.parentManagerId===m.id))throw new Error('Reassign this manager?s assistants before changing their role.');
+  }else m.parentManagerId='';
   const i=managers.findIndex(x=>x.id===m.id);if(i<0)managers.push(m);else managers[i]=m;
   for(const p of s.months.flatMap(m=>m.properties))if(p.managerId===m.id)p.manager=m.name;
   return;

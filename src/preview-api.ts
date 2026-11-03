@@ -4,6 +4,11 @@ import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
 export function createPreviewApi() {
  let state:Snapshot=bootstrapManagers(sampleSnapshot);
+ // Fictional, editable examples belong only to the isolated preview.
+ for(const [team,name,id] of [['Team A','Alex Chen','preview-assistant-alex'],['Team B','Maya Cruz','preview-assistant-maya']]){
+  const parent=state.managers!.find(manager=>manager.name.replace(/\s/g,'').toLowerCase()===team.replace(/\s/g,'').toLowerCase());
+  if(parent)state.managers!.push({id,name,email:id==='preview-assistant-alex'?'alex@example.com':'maya@example.com',notes:'Sample assistant. Try editing the role, selecting another Account Manager, or adding a task.',active:true,profileImage:'',role:'assistant',parentManagerId:parent.id});
+ }
  return {read:async()=>structuredClone(state), save:async(revision:string, changes:Change[])=>{
   if(revision!==state.revision)throw new Error('Preview changed. Refresh and try again.');
   const next=structuredClone(state);

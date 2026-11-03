@@ -52,7 +52,7 @@ test('existing blank Account Managers tab is reused and initialized on first sav
  const manager={...before.snapshot.managers[0],email:'manager@example.com',notes:'Contact owner'};
  const saved=app.post({requestId:'existing-blank-manager-tab',revision:before.snapshot.revision,changes:[{kind:'saveManager',manager}]});
  assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.tables.get(777),table);
- assert.deepEqual(table.data[0],['id','name','email','notes','active','profileImage']);
+ assert.deepEqual(table.data[0],['id','name','email','notes','active','profileImage','role','parentManagerId']);
  assert.equal(table.data.find(row=>row[0]===manager.id)?.[2],'manager@example.com');
  assert.equal([...app.tables.values()].filter(t=>t.name==='Account Managers').length,1);
  assert.deepEqual([...app.tables.values()].map(t=>t.name).sort(),['Account Managers','Manager Assignments','Manager Tasks','Manager Updates']);
@@ -931,4 +931,28 @@ test('bank details cannot overwrite legacy bank date columns',()=>{
  const app=harness(),before=app.read().snapshot;
  const result=app.post({requestId:'bank-legacy-block',revision:before.revision,changes:[{kind:'updatePayment',paymentId:'0:5',fields:{bankDetails:'Checking 5864'}}]});
  assert.equal(result.ok,false);assert.match(result.error.message,/column at G/i);assert.equal(app.state.writes,0);
+});
+
+test('assistant managers require a primary manager and survive legacy migration and reassignment',()=>{
+ const app=harness();let before=app.read().snapshot;const parent=before.managers[0];
+ const assistant={id:'assistant',name:'Assistant',email:'',notes:'',active:true,role:'assistant',parentManagerId:parent.id};
+ let saved=app.post({requestId:'assistant-create',revision:before.revision,changes:[{kind:'saveManager',manager:assistant}]});assert.equal(saved.ok,true,saved.error?.message);
+ assert.equal(saved.snapshot.managerHierarchy,1);assert.equal(saved.snapshot.managers.find((m:any)=>m.id===assistant.id).parentManagerId,parent.id);
+ for(const invalid of [{...assistant,parentManagerId:''},{...assistant,parentManagerId:assistant.id},{...parent,role:'assistant',parentManagerId:before.managers[1].id}]){
+  const result=app.post({requestId:'assistant-invalid-'+invalid.id+'-'+invalid.parentManagerId,revision:saved.snapshot.revision,changes:[{kind:'saveManager',manager:invalid}]});assert.equal(result.ok,false);
+ }
+ const deleted=app.post({requestId:'assistant-parent-delete',revision:saved.snapshot.revision,changes:[{kind:'deleteManager',managerId:parent.id}]});assert.equal(deleted.ok,false);
+ saved=app.post({requestId:'assistant-reassign',revision:saved.snapshot.revision,changes:[{kind:'saveManager',manager:{...assistant,parentManagerId:before.managers[1].id}}]});assert.equal(saved.ok,true,saved.error?.message);
+ assert.equal(app.read().snapshot.managers.find((m:any)=>m.id===assistant.id).parentManagerId,before.managers[1].id);
+});
+
+test('assistant schema upgrades six-column manager records without overwriting unrelated columns',()=>{
+ const app=harness();let initial=app.read().snapshot;
+ const saved=app.post({requestId:'hierarchy-legacy-init',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(saved.ok,true);
+ const table=[...app.tables.values()].find(t=>t.name==='Account Managers')!;
+ table.data=table.data.map(row=>row.slice(0,6));table.maxColumns=8;
+ initial=app.read().snapshot;assert.equal(initial.managers[0].role,'account_manager');
+ table.data[1][6]='Preserve me';assert.equal(app.read().ok,false);table.data[1][6]='';
+ const next=app.post({requestId:'hierarchy-legacy-save',revision:initial.revision,changes:[{kind:'saveManager',manager:{id:'helper',name:'Helper',email:'',notes:'',active:true,role:'assistant',parentManagerId:initial.managers[0].id}}]});
+ assert.equal(next.ok,true,next.error?.message);assert.equal(table.data[0][6],'role');assert.equal(table.data[0][7],'parentManagerId');
 });

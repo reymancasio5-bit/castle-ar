@@ -41,3 +41,12 @@ test('preview manager and task changes persist across reads and reject stale rev
  assert.equal((await api.read()).tasks!.length,1);
  await assert.rejects(api.save(s.revision,[]),/changed/i);assert.notEqual(next.revision,s.revision);
 });
+
+test('preview assistant role requires a valid parent and protects parent records',()=>{
+ const s=fixture();const parent=s.managers![0];const assistant={id:'assistant',name:'Helper',email:'',notes:'',active:true,role:'assistant' as const,parentManagerId:parent.id};
+ assert.throws(()=>applyManagerChange(s,{kind:'saveManager',manager:{...assistant,parentManagerId:''}}),/parent/i);
+ applyManagerChange(s,{kind:'saveManager',manager:assistant});assert.equal(s.managers![1].parentManagerId,parent.id);
+ assert.throws(()=>applyManagerChange(s,{kind:'saveManager',manager:{...parent,role:'assistant',parentManagerId:assistant.id}}),/parent|assistant/i);
+ assert.throws(()=>applyManagerChange(s,{kind:'deleteManager',managerId:parent.id}),/assistant|linked/i);
+ applyManagerChange(s,{kind:'saveManager',manager:{...assistant,role:'account_manager',parentManagerId:''}});assert.equal(s.managers![1].role,'account_manager');
+});

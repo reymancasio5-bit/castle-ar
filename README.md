@@ -155,3 +155,9 @@ Airbnb imports extract account labels such as "Checking 5864" from the Payout ro
 Monthly tabs with Bank Details in column G use H for Bank Received Time, I for Bank Received Amount, J for Verify By System and K for Verify By Daisy. Every property header in the tab must use this layout. Older tabs retain their existing column mapping; to import bank details into an older tab, insert G and label every property header Bank Details first. The script rejects bank-detail writes to the old layout rather than overwriting dates. Deploy the updated apps-script/Code.gs and publish the frontend before using this feature.
 
 Overview shows each property's distinct bank accounts. Bank Report (in the property table footer) downloads the selected month's payment records for all banks or multiple selected banks. The Excel workbook contains bank totals and filterable payment records, including an explicit Not Specified group. Bank totals sum recorded payments, not payout bundles or property balances. Existing overview filters do not limit the bank report.
+
+### Assistant Account Managers
+
+Account Managers appears below Reconciliation. When adding or editing a manager, choose Account Manager or Assistant Account Manager. Assistants require a saved parent Account Manager, selected from a dropdown; self-parenting and nested assistants are rejected. The directory groups assistants under their parent and both profiles link to the related records. Listings, tasks and updates retain their existing individual assignments. Reassign assistants before deleting a parent or changing that parent to an assistant.
+
+Deploy the updated Code.gs to enable roles. The next manager save safely extends the Account Managers tab with role and parentManagerId columns (G and H of that tab). Existing five- and six-column records default to Account Manager, preserving profile images. Migration refuses to overwrite occupied extra columns.
