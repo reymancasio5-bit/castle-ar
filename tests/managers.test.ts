@@ -4,6 +4,16 @@ import {bootstrapManagers, applyManagerChange, resolveManager} from '../src/mana
 import {createPreviewApi} from '../src/preview-api.ts';
 import type {Snapshot} from '../src/types.ts';
 function fixture():Snapshot { return bootstrapManagers({revision:'r',updatedAt:'',spreadsheetUrl:'',months:[{id:'1',label:'Nov',month:'2026-11',properties:[{id:'p',name:'Listing',manager:' Team  A ',totalCents:100,payments:[]},{id:'q',name:'Other',manager:'team a',totalCents:200,payments:[]}]}]}); }
+test('preview deletes an unused manager and protects linked managers',async()=>{
+ const api=createPreviewApi();const initial=await api.read();
+ await assert.rejects(api.save(initial.revision,[{kind:'deleteManager',managerId:initial.managers![0].id}]),/linked/i);
+ const added=await api.save(initial.revision,[{kind:'saveManager',manager:{id:'unused',name:'Unused',email:'',notes:'',active:true}}]);
+ const removed=await api.save(added.revision,[{kind:'deleteManager',managerId:'unused'}]);
+ assert.ok(!removed.managers!.some(m=>m.id==='unused'));
+ assert.deepEqual((await api.read()).managers,removed.managers);
+ await assert.rejects(api.save(removed.revision,[{kind:'deleteManager',managerId:'missing'}]),/not found/i);
+});
+
 test('bootstrap deduplicates whitespace/case and keeps IDs on rename',()=>{
  const s=fixture();assert.equal(s.managers!.length,1);const manager=s.managers![0];
  applyManagerChange(s,{kind:'saveManager',manager:{...manager,name:'Alice'}});

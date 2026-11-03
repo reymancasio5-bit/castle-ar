@@ -302,7 +302,7 @@ function castleRead() {
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData,
-    snapshot: { managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -400,7 +400,7 @@ function castleManagerTableRequests(current,tables) {
       if(table.maxColumns<definition.fields.length)requests.push({appendDimension:{sheetId:id,dimension:'COLUMNS',length:definition.fields.length-table.maxColumns}});
     }
     var rows=[definition.fields].concat(table.records.map(function(record){return definition.fields.map(function(f){return record[f]===undefined?'':record[f];});}));
-    // All records are retained (no deletion API), including orphaned historical links.
+    // Preserve linked records; clear trailing cells after deleting unused managers.
     // Compact blank spreadsheet rows without leaving duplicate trailing records.
     while(rows.length<table.lastRow)rows.push(definition.fields.map(function(){return '';}));
     requests.push({updateCells:{start:{sheetId:id,rowIndex:0,columnIndex:0},rows:rows.map(function(row){return {values:row.map(castleValue)};}),fields:'userEnteredValue'}});
@@ -412,6 +412,13 @@ function castleBuildRequests(changes,current) {
   var properties=current.snapshot.months.reduce(function(all,m){m.properties.forEach(function(p){all[castleStatusKey(m.id,p.name)]=p;});return all;},{});
   changes.forEach(function(c){
     if(!c||typeof c!=='object')castleThrow('VALIDATION','Every change must be an object.');
+    if(c.kind==='deleteManager'){
+      castleKeys(c,['kind','managerId']);castleManagerText(c.managerId,'Manager ID',100,true);castleUnique(seen,'managers:'+c.managerId);
+      var deleteIndex=managers.map(function(m){return m.id;}).indexOf(c.managerId);
+      if(deleteIndex<0)castleThrow('VALIDATION','Account manager not found.');
+      if(Object.keys(properties).some(function(key){return properties[key].managerId===c.managerId;})||['tasks','updates'].some(function(key){return tables[key].records.some(function(r){return r.managerId===c.managerId;});})||tables.assignments.records.some(function(r){return r.managerId===c.managerId&&!properties[r.propertyKey];}))castleThrow('VALIDATION','This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+      managers.splice(deleteIndex,1);return;
+    }
     if(c.kind!=='saveManager'&&c.kind!=='saveTask'&&c.kind!=='addManagerUpdate'){financial.push(JSON.parse(JSON.stringify(c)));return;}
     castleKeys(c,['kind',c.kind==='saveManager'?'manager':c.kind==='saveTask'?'task':'update']);
     var key=c.kind==='saveManager'?'managers':c.kind==='saveTask'?'tasks':'updates';
@@ -472,7 +479,7 @@ function castleBuildRequests(changes,current) {
   var requests=castleFinancialRequests(financial,current);
   // Avoid migrating on unrelated financial writes; first manager/assignment write
   // persists the read-only bootstrap in the same transaction as the user's change.
-  if(changes.some(function(c){return ['saveManager','saveTask','addManagerUpdate','addProperty','updateFollowUp'].indexOf(c.kind)>=0;}))requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},tables));
+  if(changes.some(function(c){return ['deleteManager','saveManager','saveTask','addManagerUpdate','addProperty','updateFollowUp'].indexOf(c.kind)>=0;}))requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},tables));
   return requests;
 }
 

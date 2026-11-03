@@ -5,7 +5,7 @@ export const normalizeManagerName = (name:string) => name.trim().replace(/\s+/g,
 export const listingKey = (monthId:string,name:string) => JSON.stringify([monthId,name.trim().toLowerCase()]);
 export function bootstrapManagers(snapshot:Snapshot):Snapshot {
  const next=structuredClone(snapshot);
- next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
+ next.managerDeletion=1;next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
  if(!next.managers){
   next.managers=[];
   for(const p of next.months.flatMap(m=>m.properties)){
@@ -28,6 +28,12 @@ function text(value:string,label:string,max:number,required=false){if(typeof val
 export function applyManagerChange(s:Snapshot,c:ManagerChange){
  if(s.managerSchema!==1)throw new Error('Update the Apps Script deployment to manage account managers.');
  const managers=s.managers!;
+ if(c.kind==='deleteManager'){
+  const index=managers.findIndex(m=>m.id===c.managerId);
+  if(index<0)throw new Error('Account manager not found.');
+  if(s.months.some(month=>month.properties.some(p=>p.managerId===c.managerId))||(s.tasks??[]).some(t=>t.managerId===c.managerId)||(s.managerUpdates??[]).some(u=>u.managerId===c.managerId))throw new Error('This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+  managers.splice(index,1);return;
+ }
  if(c.kind==='saveManager'){
   const m={...c.manager,name:text(c.manager.name,'Manager name',160,true).replace(/\s+/g,' '),email:text(c.manager.email,'Email',254),notes:text(c.manager.notes,'Notes',5000)};
   if(/^[=+@-]/.test(m.name)||/[\u0000-\u001f\u007f]/.test(m.name))throw new Error('Manager name cannot begin with a formula marker or contain control characters.');

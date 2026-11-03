@@ -25,6 +25,7 @@ try {
  assert.ok(!newAssignment.includes(inactive.name));
  const currentAssignment=renderToStaticMarkup(React.createElement(ManagerSelect,{managers:[inactive],value:inactive.name,currentValue:inactive.name,onChange:()=>{}}));
  assert.ok(currentAssignment.includes('(inactive)'));
+ assert.ok(renderToStaticMarkup(React.createElement(AccountManagers,props)).includes('Delete Manager'));
  const upgrade=renderToStaticMarkup(React.createElement(AccountManagers,{...props,snapshot:{...snapshot,managerSchema:undefined}}));
  assert.ok(upgrade.includes('updated Google Sheets connection script'));
  for(const [name,profile] of [['Team B','team-b'],['Team A','team-a']]){

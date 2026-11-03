@@ -109,7 +109,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
   }
   async function saveChanges(revision: string, changes: Change[]) {
     if (savePending.current) throw new Error('Another save is in progress. Please wait.');
-    if (snapshot?.managerSchema !== 1 && changes.some(c => ['saveManager','saveTask','addManagerUpdate','updateFollowUp','addProperty'].includes(c.kind))) throw new Error('Update the Apps Script deployment before saving manager assignments or records.');
+    if (snapshot?.managerSchema !== 1 && changes.some(c => ['deleteManager','saveManager','saveTask','addManagerUpdate','updateFollowUp','addProperty'].includes(c.kind))) throw new Error('Update the Apps Script deployment before saving manager assignments or records.');
     savePending.current = true; setSavingRecords(true);
     pauseRefresh();
     try {

@@ -4,6 +4,25 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
+test('delete manager persists removal, rejects linked records and stale revisions',()=>{
+ const app=harness();const before=app.read().snapshot;
+ const linked=app.post({requestId:'delete-linked',revision:before.revision,changes:[{kind:'deleteManager',managerId:before.managers[0].id}]});
+ assert.equal(linked.ok,false);assert.match(linked.error.message,/linked/i);
+ const manager={id:'unused',name:'Unused Manager',email:'',notes:'',active:true,profileImage:''};
+ const added=app.post({requestId:'delete-create',revision:before.revision,changes:[{kind:'saveManager',manager}]});assert.equal(added.ok,true);
+ const removed=app.post({requestId:'delete-unused',revision:added.snapshot.revision,changes:[{kind:'deleteManager',managerId:manager.id}]});
+ assert.equal(removed.ok,true,removed.error?.message);assert.equal(removed.snapshot.managerDeletion,1);
+ assert.ok(!app.read().snapshot.managers.some((m:any)=>m.id===manager.id));
+ assert.equal(app.post({requestId:'delete-stale',revision:added.snapshot.revision,changes:[{kind:'deleteManager',managerId:manager.id}]}).error.code,'CONFLICT');
+ for(const kind of ['saveTask','addManagerUpdate']){
+  const manager={id:'history-'+kind,name:'History '+kind,email:'',notes:'',active:true,profileImage:''};
+  const initial=app.read().snapshot;
+  const record=kind==='saveTask'?{kind,task:{id:'linked-task',managerId:manager.id,title:'Review',description:'',dueDate:'2026-11-10',status:'open',propertyKey:''}}:{kind,update:{id:'linked-update',managerId:manager.id,text:'History',taskId:'',propertyKey:''}};
+  const saved=app.post({requestId:'delete-history-'+kind,revision:initial.revision,changes:[{kind:'saveManager',manager},record]});assert.equal(saved.ok,true,saved.error?.message);
+  const blocked=app.post({requestId:'delete-block-'+kind,revision:saved.snapshot.revision,changes:[{kind:'deleteManager',managerId:manager.id}]});assert.equal(blocked.ok,false);assert.match(blocked.error.message,/linked/i);
+ }
+});
+
 test('manager profiles migrate legacy headers and persist replacement and removal',()=>{
  const app=harness();const initial=app.read().snapshot;assert.equal(initial.managerProfiles,1);
  let saved=app.post({requestId:'profile-init',revision:initial.revision,changes:[{kind:'saveManager',manager:initial.managers[0]}]});assert.equal(saved.ok,true,saved.error?.message);

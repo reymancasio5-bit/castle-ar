@@ -8,7 +8,7 @@ export function createPreviewApi() {
   if(revision!==state.revision)throw new Error('Preview changed. Refresh and try again.');
   const next=structuredClone(state);
   for(const c of changes) {
-   if(c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
+   if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
    if(c.kind==='addProperty') {
     const manager=resolveManager(next,c.manager);if(!manager)throw new Error('Choose a registered account manager.');
     const month=next.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');
