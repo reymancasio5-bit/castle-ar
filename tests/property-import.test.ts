@@ -104,3 +104,14 @@ test('explicit replacement advances past an unchanged payout before writing the 
   assert.equal(result.rows[1].status, 'skipped');
   assert.equal(result.rows[3].slot, 2);
 });
+
+test('Airbnb imports bank details and enriches existing payments without duplicating them',()=>{
+ const bankData=structuredClone(data);bankData.rows[0].push({value:'Details'});bankData.rows[1].push({value:'Transfer to Xin Hong, Checking 5864 (CAD)'});
+ const preview=importer.buildPropertyImportPreview(month,bankData,options);
+ const change=preview.changes.find(c=>c.kind==='updatePayment');assert.equal(change?.kind,'updatePayment');if(change?.kind!=='updatePayment')return;
+ assert.equal(change.fields.bankDetails,'Checking 5864');
+ const existing=structuredClone(month);Object.assign(existing.properties[0].payments[0],change.fields);delete existing.properties[0].payments[0].bankDetails;
+ const backfill=importer.buildPropertyImportPreview(existing,bankData,options);assert.equal(backfill.changes.length,1);assert.equal(backfill.changes[0].kind,'updatePayment');
+ Object.assign(existing.properties[0].payments[0],change.fields);assert.equal(importer.buildPropertyImportPreview(existing,bankData,options).changes.length,0);
+ bankData.rows[1][7].value='Transfer to Someone, Checking 9999 (CAD)';assert.equal(importer.buildPropertyImportPreview(existing,bankData,options).changes.length,1);
+});

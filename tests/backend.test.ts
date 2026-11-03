@@ -914,3 +914,21 @@ test('Status identifies properties by month sheet ID and name, independently of 
  assert.equal(read.snapshot.months.find((m:any)=>m.id==='0').properties[0].followUp.note,'November only');
  assert.equal(read.snapshot.months.find((m:any)=>m.id==='2').properties[0].followUp,undefined);
 });
+
+test('Bank Details layout preserves shifted dates amounts and verification for edits and inserts',()=>{
+ const app=harness();app.state.maxColumns=11;
+ for(const [i,cells] of app.state.data.entries()){cells.splice(6,0,cells[0]==='Account Manager'?'Bank Details':'');app.state.formulas[i].splice(6,0,'');app.state.formats[i].splice(6,0,{});app.state.validations[i].splice(6,0,{});}
+ app.state.data[4][6]='Checking 5864';app.state.data[4][7]='2026-11-01';app.state.data[4][8]=25;app.state.data[4][10]=true;
+ const first=app.read();assert.equal(first.ok,true,first.error?.message);assert.equal(first.snapshot.months.length,1);
+ const payment=first.snapshot.months[0].properties[0].payments[0];assert.equal(payment.bankDetails,'Checking 5864');assert.equal(payment.bankCents,2500);assert.equal(payment.verifiedByDaisy,true);
+ const saved=app.post({requestId:'bank-edit',revision:first.snapshot.revision,changes:[{kind:'updatePayment',paymentId:payment.id,fields:{bankDetails:'Checking 1111',bankDate:'2026-11-02',bankCents:3000,bundleCents:3000,verifiedByDaisy:false}},{kind:'appendPayments',propertyId:'0:4',payments:[{amountCents:500,bankDetails:'Checking 5864'}]},{kind:'addProperty',monthId:'0',name:'Bank Test',manager:'TeamA',totalCents:2000,initialPayments:[{index:0,amountCents:700,bankDetails:'Savings 2222'}]}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.state.data[4][6],'Checking 1111');assert.equal(app.state.data[4][8],30);assert.equal(app.state.data[4][10],false);assert.match(app.state.formulas[4][9],/I5/);
+ assert.ok(saved.snapshot.months[0].properties[0].payments.some((p:any)=>p.bankDetails==='Checking 5864'&&p.amountCents===500));
+ assert.equal(saved.snapshot.months[0].properties.find((p:any)=>p.name==='Bank Test').payments[0].bankDetails,'Savings 2222');
+});
+
+test('bank details cannot overwrite legacy bank date columns',()=>{
+ const app=harness(),before=app.read().snapshot;
+ const result=app.post({requestId:'bank-legacy-block',revision:before.revision,changes:[{kind:'updatePayment',paymentId:'0:5',fields:{bankDetails:'Checking 5864'}}]});
+ assert.equal(result.ok,false);assert.match(result.error.message,/column at G/i);assert.equal(app.state.writes,0);
+});

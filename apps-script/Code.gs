@@ -201,12 +201,14 @@ function castleRead() {
     var lastRow = sheet.getLastRow();
     if (!lastRow) return;
     var maxColumns = sheet.getMaxColumns();
-    var range = sheet.getRange(1, 1, lastRow, Math.min(16, maxColumns));
+    var range = sheet.getRange(1, 1, lastRow, Math.min(17, maxColumns));
     var values = range.getValues(), formulas = range.getFormulas();
     if (!values.some(castleHeader)) return;
+    var bankOffset=castleText(values.filter(castleHeader)[0][6])==='bank details'?1:0;
+    if(values.filter(castleHeader).some(function(row){return (castleText(row[6])==='bank details'?1:0)!==bankOffset;}))castleThrow('SOURCE_DATA',label+': use the same Bank Details column layout for every property header.');
     var id = String(sheet.getSheetId());
     var month = { id: id, label: label, month: monthKey, properties: [] };
-    var meta = { sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
+    var meta = { bankOffset:bankOffset, sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
     monthIndex[id] = meta;
     source.push({ id: id, label: label, values: values, formulas: formulas });
     for (var index = 0; index < values.length; index++) {
@@ -215,7 +217,7 @@ function castleRead() {
       if (!total || castleText(total[2]) !== 'total payment' || !String(total[1] || '').trim()) castleThrow('SOURCE_DATA', label + ': expected a named Total Payment row after header row ' + (index + 1) + '.');
       var propertyId = id + ':' + (totalIndex + 1);
       var property = { id: propertyId, name: String(total[1]).trim(), manager: String(total[0] || '').trim(), totalCents: castleSourceCents(total[3], false, label + '!D' + (totalIndex + 1)), payments: [] };
-      var followupHeaders = values[index].slice(10, 16), followupValues = total.slice(10, 16);
+      var followupHeaders = values[index].slice(10+bankOffset, 16+bankOffset), followupValues = total.slice(10+bankOffset, 16+bankOffset);
       if (CASTLE_FOLLOWUP_HEADERS.every(function (header, offset) { return followupHeaders[offset] === header; })) {
         var followup = { status: followupValues[0] || 'not_contacted', note: followupValues[1] || '', updatedAt: followupValues[2] || '', attachments: [] };
         followupValues.slice(3).forEach(function (value) {
@@ -225,7 +227,7 @@ function castleRead() {
         try { castleValidateFollowUp(followup); } catch (_) { castleThrow('SOURCE_DATA', label + ': invalid follow-up metadata.'); }
         property.followUp = followup;
       }
-      propertyIndex[propertyId] = { sheetId: Number(id), row: totalIndex + 1, property: property, followupHeaders: followupHeaders, followupValues: followupValues, followupFormulas: formulas[totalIndex].slice(10, 16), followupHeaderFormulas: formulas[index].slice(10, 16) };
+      propertyIndex[propertyId] = { bankOffset:bankOffset, sheetId: Number(id), row: totalIndex + 1, property: property, followupHeaders: followupHeaders, followupValues: followupValues, followupFormulas: formulas[totalIndex].slice(10+bankOffset, 16+bankOffset), followupHeaderFormulas: formulas[index].slice(10+bankOffset, 16+bankOffset) };
       var foundAr = false;
       for (var paymentIndexRow = totalIndex + 1; paymentIndexRow < values.length; paymentIndexRow++) {
         var paymentRow = values[paymentIndexRow], rowNumber = paymentIndexRow + 1;
@@ -246,12 +248,13 @@ function castleRead() {
           amountCents: castleSourceCents(paymentRow[3], true, label + '!D' + rowNumber),
           payoutDate: castleSourceDate(paymentRow[4], timezone, label + '!E' + rowNumber),
           bundleCents: castleSourceCents(paymentRow[5], true, label + '!F' + rowNumber),
-          bankDate: castleSourceDate(paymentRow[6], timezone, label + '!G' + rowNumber),
-          bankCents: castleSourceCents(paymentRow[7], true, label + '!H' + rowNumber),
-          verifiedByDaisy: paymentRow[9] === true || castleText(paymentRow[9]) === 'true'
+          bankDetails: bankOffset ? String(paymentRow[6] || '').trim() : '',
+          bankDate: castleSourceDate(paymentRow[6+bankOffset], timezone, label + '!' + (bankOffset?'H':'G') + rowNumber),
+          bankCents: castleSourceCents(paymentRow[7+bankOffset], true, label + '!' + (bankOffset?'I':'H') + rowNumber),
+          verifiedByDaisy: paymentRow[9+bankOffset] === true || castleText(paymentRow[9+bankOffset]) === 'true'
         };
         property.payments.push(payment);
-        paymentIndex[paymentId] = { sheetId: Number(id), row: rowNumber, payment: payment };
+        paymentIndex[paymentId] = { bankOffset:bankOffset, sheetId: Number(id), row: rowNumber, payment: payment };
       }
       if (!foundAr) castleThrow('SOURCE_DATA', label + ': property ' + property.name + ' is missing its AR row.');
       // Use the first established block, not a possibly unformatted recent addition.
@@ -302,7 +305,7 @@ function castleRead() {
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData,
-    snapshot: { managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -510,8 +513,8 @@ function castleStatusRequests(current, changes) {
     }
     if (target.legacyFollowUp) CASTLE_FOLLOWUP_HEADERS.forEach(function (header, i) {
       if (target.followupHeaders[i] === header && !target.followupHeaderFormulas[i] && !target.followupFormulas[i]) {
-        requests.push(castleCell(target.sheetId, target.row - 1, i + 11, ''));
-        requests.push(castleCell(target.sheetId, target.row, i + 11, ''));
+        requests.push(castleCell(target.sheetId, target.row - 1, i + 11 + (target.bankOffset||0), ''));
+        requests.push(castleCell(target.sheetId, target.row, i + 11 + (target.bankOffset||0), ''));
       }
     });
   });
@@ -527,9 +530,10 @@ function castleFinancialRequests(changes, current) {
     if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
     payments.forEach(function (payment) {
       if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid payment.');
-      castleKeys(payment, ['type', 'amountCents', 'payoutDate', 'bundleCents']);
+      castleKeys(payment, ['type', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
       if (payment.type !== undefined && ['Airbnb', 'Vrbo', 'Owner'].indexOf(payment.type) < 0) castleThrow('VALIDATION', 'Payment type must be Airbnb, Vrbo, or Owner.');
       castleCents(payment.amountCents, false, false);
+      if (payment.bankDetails !== undefined) castleValidateBankDetails(payment.bankDetails,current.months[String(target.sheetId)].bankOffset);
       if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
       if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Payout dates must be valid YYYY-MM-DD values.');
     });
@@ -561,12 +565,14 @@ function castleFinancialRequests(changes, current) {
       if (!target) castleThrow('VALIDATION', 'Unknown payment ID. Refresh the sheet.');
       var fields = change.fields;
       if (!fields || typeof fields !== 'object' || Array.isArray(fields) || !Object.keys(fields).length) castleThrow('VALIDATION', 'Payment fields are required.');
-      var columns = { amountCents: 4, payoutDate: 5, bundleCents: 6, bankDate: 7, bankCents: 8, verifiedByDaisy: 10 };
+      var offset=target.bankOffset||0;
+      var columns = { amountCents: 4, payoutDate: 5, bundleCents: 6, bankDetails:7, bankDate: 7+offset, bankCents: 8+offset, verifiedByDaisy: 10+offset };
       castleKeys(fields, Object.keys(columns));
       Object.keys(fields).forEach(function (key) {
         castleUnique(targets, 'payment:' + change.paymentId + ':' + key);
         var value = fields[key];
-        if (key === 'verifiedByDaisy') {
+        if(key==='bankDetails'){castleValidateBankDetails(value,offset);requests.push(castleCell(target.sheetId,target.row,7,value.trim()));
+        } else if (key === 'verifiedByDaisy') {
           if (typeof value !== 'boolean') castleThrow('VALIDATION', 'Daisy verification must be true or false.');
           requests.push(castleCell(target.sheetId, target.row, columns[key], value));
         } else if (key === 'payoutDate' || key === 'bankDate') {
@@ -583,7 +589,7 @@ function castleFinancialRequests(changes, current) {
         var verificationKey = 'system:' + change.paymentId;
         if (!targets[verificationKey]) {
           targets[verificationKey] = true;
-          requests.push(castleCell(target.sheetId, target.row, 9, '=IF(OR(F' + target.row + '="",H' + target.row + '=""),"",ROUND(F' + target.row + ',2)=ROUND(H' + target.row + ',2))', 'formula'));
+          requests.push(castleCell(target.sheetId, target.row, 9+offset, castleBankFormula(target.row,offset), 'formula'));
         }
       }
     } else if (change.kind === 'appendPayments') {
@@ -610,9 +616,10 @@ function castleFinancialRequests(changes, current) {
       var initialSlots = {};
       initialPayments.forEach(function (payment) {
         if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid initial payment.');
-        castleKeys(payment, ['index', 'amountCents', 'payoutDate', 'bundleCents']);
+        castleKeys(payment, ['index', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
         if (!Number.isInteger(payment.index) || payment.index < 0 || payment.index > 4 || initialSlots[payment.index]) castleThrow('VALIDATION', 'Initial payment slots must be unique indexes from 0 to 4.');
         castleCents(payment.amountCents, false, false);
+        if (payment.bankDetails !== undefined) castleValidateBankDetails(payment.bankDetails,target.bankOffset);
         if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
         if (payment.payoutDate !== undefined && (typeof payment.payoutDate !== 'string' || (payment.payoutDate !== '' && !castleDateValid(payment.payoutDate)))) castleThrow('VALIDATION', 'Initial payout dates must be valid YYYY-MM-DD values.');
         initialSlots[payment.index] = payment;
@@ -622,7 +629,8 @@ function castleFinancialRequests(changes, current) {
       var orderedPayments = initialSlots[4] ? [initialSlots[4]] : [];
       [0, 1, 2, 3].forEach(function (index) { if (initialSlots[index]) orderedPayments.push(initialSlots[index]); });
       var paymentTypes = orderedPayments.map(function (payment) { return payment.index === 4 ? 'Owner' : payment.index === 3 ? 'Vrbo' : 'Airbnb'; });
-      var rows = [CASTLE_HEADERS.slice(), [manager, name, 'Total Payment', change.totalCents / 100]];
+      var newHeaders=CASTLE_HEADERS.slice();if(target.bankOffset)newHeaders.splice(6,0,'Bank Details');
+      var rows = [newHeaders, [manager, name, 'Total Payment', change.totalCents / 100]];
       orderedPayments.forEach(function (payment, index) { rows.push(['', '', paymentTypes[index] + ' Payment', payment.amountCents / 100]); });
       rows.push(['', '', 'AR']);
       appendRows[change.monthId] = firstRow + rows.length;
@@ -633,12 +641,12 @@ function castleFinancialRequests(changes, current) {
       }
       rows.forEach(function (values, offset) {
         var cells = [];
-        for (var column = 0; column < 10; column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
+        for (var column = 0; column < 10+(target.bankOffset||0); column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
         if (offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + (orderedPayments.length ? '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' : '') } };
         if (offset >= 2 && offset < rows.length - 1) {
           var row = firstRow + offset;
-          cells[9] = castleValue(false);
-          cells[8] = { userEnteredValue: { formulaValue: '=IF(OR(F' + row + '="",H' + row + '=""),"",ROUND(F' + row + ',2)=ROUND(H' + row + ',2))' } };
+          cells[9+(target.bankOffset||0)] = castleValue(false);
+          cells[8+(target.bankOffset||0)] = { userEnteredValue: { formulaValue:castleBankFormula(row,target.bankOffset) } };
         }
         requests.push({ updateCells: { start: { sheetId: target.sheetId, rowIndex: firstRow + offset - 1, columnIndex: 0 }, rows: [{ values: cells }], fields: 'userEnteredValue' } });
       });
@@ -646,10 +654,11 @@ function castleFinancialRequests(changes, current) {
       orderedPayments.forEach(function (payment, index) {
         var row = firstRow + 2 + index;
         requests.push(castleCell(target.sheetId, row, 4, payment.amountCents / 100));
+        if(payment.bankDetails!==undefined)requests.push(castleCell(target.sheetId,row,7,payment.bankDetails.trim()));
         if (payment.bundleCents !== undefined) requests.push(castleCell(target.sheetId, row, 6, payment.bundleCents / 100));
         if (payment.payoutDate) requests.push(castleCell(target.sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
       });
-      if (orderedPayments.length) requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+      if (orderedPayments.length) requests.push({ setDataValidation: { range: { sheetId: target.sheetId, startRowIndex: totalRow, endRowIndex: arRow - 1, startColumnIndex: 9+(target.bankOffset||0), endColumnIndex: 10+(target.bankOffset||0) }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     } else castleThrow('VALIDATION', 'Unknown change kind.');
   });
   if (Object.keys(followupChanges).length) requests = requests.concat(castleStatusRequests(current, followupChanges));
@@ -666,6 +675,7 @@ function castleFinancialRequests(changes, current) {
     var first = insertion.arRow, count = insertion.payments.length, sheetId = insertion.sheetId;
     requests.push({ insertDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: first - 1, endIndex: first - 1 + count }, inheritFromBefore: true } });
     appliedInsertions.push(insertion);
+    var bankOffset=current.months[String(sheetId)].bankOffset||0;
     var template = current.months[String(sheetId)].formatTemplate;
     insertion.payments.forEach(function (payment, index) {
       var row = first + index;
@@ -674,22 +684,25 @@ function castleFinancialRequests(changes, current) {
       var sourceRow = source.row;
       appliedInsertions.forEach(function (applied) { if (applied.sheetId === sheetId && applied.arRow <= source.row) sourceRow += applied.payments.length; });
       requests.push({ copyPaste: {
-        source: { sheetId: sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10 },
-        destination: { sheetId: sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: 10 },
+        source: { sheetId: sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
+        destination: { sheetId: sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
         pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
       } });
-      var values = ['', '', type + ' Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false].map(castleValue);
-      values[8] = { userEnteredValue: { formulaValue: '=IF(OR(F' + row + '="",H' + row + '=""),"",ROUND(F' + row + ',2)=ROUND(H' + row + ',2))' } };
+      var values = ['', '', type + ' Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false];
+      if(bankOffset)values.splice(6,0,(payment.bankDetails||'').trim());
+      values=values.map(castleValue);
+      values[8+bankOffset] = { userEnteredValue: { formulaValue:castleBankFormula(row,bankOffset) } };
       requests.push({ updateCells: { start: { sheetId: sheetId, rowIndex: row - 1, columnIndex: 0 }, rows: [{ values: values }], fields: 'userEnteredValue' } });
       if (payment.payoutDate) requests.push(castleCell(sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
     });
-    requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10 }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+    requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10+bankOffset }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
   });
   return requests;
 }
 
 function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
+  var bankOffset=month.bankOffset||0;
   var template = month.formatTemplate, used = {};
   var sourceRows = [template.headerRow, template.totalRow];
   paymentTypes.forEach(function (type) {
@@ -705,8 +718,8 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
     // Copy one matching row at a time so variable-length templates cannot spill
     // into the next property. PASTE_FORMAT preserves values, formulas, and validation.
     return { copyPaste: {
-      source: { sheetId: month.sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10 },
-      destination: { sheetId: month.sheetId, startRowIndex: firstRow + offset - 1, endRowIndex: firstRow + offset, startColumnIndex: 0, endColumnIndex: 10 },
+      source: { sheetId: month.sheetId, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
+      destination: { sheetId: month.sheetId, startRowIndex: firstRow + offset - 1, endRowIndex: firstRow + offset, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
       pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
     } };
   });
@@ -749,7 +762,8 @@ function castleValue(value) {
 }
 
 function castleHeader(row) {
-  return row && CASTLE_HEADERS.every(function (header, index) { return !header || castleText(row[index]) === castleText(header); });
+  if(!row)return false;var headers=CASTLE_HEADERS.slice();if(castleText(row[6])==='bank details')headers.splice(6,0,'Bank Details');
+  return headers.every(function(header,index){return !header||castleText(row[index])===castleText(header);});
 }
 
 function castleMonth(label) {
@@ -856,3 +870,9 @@ function castleOutput(result, callback) {
   var json = JSON.stringify(result).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   return ContentService.createTextOutput(callback ? callback + '(' + json + ');' : json).setMimeType(callback ? ContentService.MimeType.JAVASCRIPT : ContentService.MimeType.JSON);
 }
+
+function castleValidateBankDetails(value,offset){
+ if(typeof value!=='string'||value.length>160||/[\u0000-\u001f\u007f]/.test(value))castleThrow('VALIDATION','Bank Details must be text up to 160 characters.');
+ if(!offset)castleThrow('VALIDATION','Insert a Bank Details column at G in this monthly sheet, with Bank Details in every property header, before importing bank details.');
+}
+function castleBankFormula(row,offset){var column=offset?'I':'H';return '=IF(OR(F'+row+'="",'+column+row+'=""),"",ROUND(F'+row+',2)=ROUND('+column+row+',2))';}

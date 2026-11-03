@@ -109,3 +109,9 @@ test('an Owner payment row is created only for imported Owner data, including ex
  const saved=await api.save(before.revision,batch.changes);
  assert.deepEqual(saved.months[0].properties.at(-1)!.payments.map(payment=>[payment.type,payment.amountCents]),[['Owner',0]]);
 });
+
+test('bulk new properties retain bank accounts from each file',()=>{
+ const entries=[entry(1),entry(2)];entries.forEach((e,i)=>{e.sheet.rows[0].push({value:'Details'});e.sheet.rows[1].push({value:'Transfer to Name, Checking '+(5864+i)+' (CAD)'});});
+ const result=buildBulkImportPreview(month,entries);const change=result.changes[0];assert.equal(change.kind,'addProperty');if(change.kind!=='addProperty')return;
+ assert.deepEqual(change.initialPayments?.map(p=>p.bankDetails),['Checking 5864','Checking 5865']);
+});

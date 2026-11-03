@@ -7,7 +7,7 @@ import type { Change, ImportedPayment, Month, Payment, Property } from './types.
 
 export interface BulkImportEntry { fileName: string; sheet: ImportSheet; options: PropertyImportOptions }
 export interface BulkImportPreview { rows: (PropertyPreviewRow & {fileName: string; fileIndex: number})[]; changes: Change[]; readyCount: number; skippedCount: number; invalidCount: number; unmatchedCount: number }
-const paymentFields = (p: Payment): ImportedPayment => ({amountCents:p.amountCents!, ...(p.payoutDate ? {payoutDate:p.payoutDate} : {}), ...(p.bundleCents !== null ? {bundleCents:p.bundleCents} : {})});
+const paymentFields = (p: Payment): ImportedPayment => ({...(p.bankDetails ? {bankDetails:p.bankDetails} : {}),amountCents:p.amountCents!, ...(p.payoutDate ? {payoutDate:p.payoutDate} : {}), ...(p.bundleCents !== null ? {bundleCents:p.bundleCents} : {})});
 const blank = (id: string, type: Payment['type'] = 'Airbnb'): Payment => ({id,type,amountCents:null,payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false});
 export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[]): BulkImportPreview {
  if(entries.length > 50) throw new Error('Import at most 50 files at a time.');

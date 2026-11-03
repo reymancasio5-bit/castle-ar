@@ -14,6 +14,9 @@ try {
  const {createPreviewApi}=await server.ssrLoadModule('/src/preview-api.ts');
  const snapshot=await createPreviewApi().read();
  const props={snapshot,monthId:snapshot.months[0].id,onSave:async()=>{},onDirtyChange:()=>{},onOpenListing:()=>{}};
+ const {default:BankReport}=await server.ssrLoadModule('/src/BankReport.tsx');
+ const bankDialog=renderToStaticMarkup(React.createElement(BankReport,{snapshot,monthId:snapshot.months[0].id,onClose:()=>{}}));
+ for(const label of ['Download Bank Report','All Banks','Selected Banks','Download Excel'])assert.ok(bankDialog.includes(label));
  const html=renderToStaticMarkup(React.createElement(AccountManagers,props));
  for(const text of ['Account Managers','Assigned Listings','Tasks','Updates','Team B'])assert.ok(html.includes(text),text);
  const noMonths=renderToStaticMarkup(React.createElement(AccountManagers,{...props,snapshot:{...snapshot,months:[]},monthId:''}));

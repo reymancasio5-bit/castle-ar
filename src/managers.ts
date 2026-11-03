@@ -5,7 +5,7 @@ export const normalizeManagerName = (name:string) => name.trim().replace(/\s+/g,
 export const listingKey = (monthId:string,name:string) => JSON.stringify([monthId,name.trim().toLowerCase()]);
 export function bootstrapManagers(snapshot:Snapshot):Snapshot {
  const next=structuredClone(snapshot);
- next.managerDeletion=1;next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
+ next.bankDetailsSchema=1;next.managerDeletion=1;next.managerSchema=1;next.managerProfiles=1;next.tasks??=[];next.managerUpdates??=[];
  if(!next.managers){
   next.managers=[];
   for(const p of next.months.flatMap(m=>m.properties)){

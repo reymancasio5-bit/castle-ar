@@ -1,3 +1,4 @@
+import {extractBankDetails} from './bank-details.ts';
 import { parseMoney } from './domain.ts';
 import { buildImportPreview, normalizePropertyName, isTotal, MAX_IMPORT_ROWS } from './import.ts';
 import type { ImportCell, ImportOptions, ImportPreview, ImportSheet, PreviewRow } from './import.ts';
@@ -6,13 +7,13 @@ import type { Change, InitialPayment, Month, Payment, Property } from './types.t
 export interface PropertyImportOptions extends ImportOptions {
   propertyName: string; manager: string; total: string; airbnbSlot: 'auto' | '1' | '2' | '3';
 }
-export interface PropertyPreviewRow extends PreviewRow { payoutDate?: string; bundleCents?: number; slot?: number }
+export interface PropertyPreviewRow extends PreviewRow { bankDetails?: string; payoutDate?: string; bundleCents?: number; slot?: number }
 export interface PropertyImportPreview extends ImportPreview { rows: PropertyPreviewRow[]; newProperty: boolean; totalCents: number; propertyName: string }
 const text = (value: unknown) => value == null ? '' : String(value).trim();
 
 function airbnbColumns(sheet: ImportSheet, headerRow: number | null) {
   const headers = headerRow === null ? [] : (sheet.rows[headerRow] ?? []).map(cell => text(cell.value).toLowerCase());
-  return Object.fromEntries(['type', 'listing', 'amount', 'paid out', 'arriving by date', 'currency'].map(name => [name, headers.indexOf(name)]));
+  return Object.fromEntries(['details', 'type', 'listing', 'amount', 'paid out', 'arriving by date', 'currency'].map(name => [name, headers.indexOf(name)]));
 }
 export function isAirbnbSheet(sheet: ImportSheet, headerRow: number | null): boolean {
   const columns = airbnbColumns(sheet, headerRow);
@@ -38,7 +39,7 @@ function payoutDate(cell: ImportCell | undefined): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso < '1900-01-01' || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== iso) throw new Error('Payout date must be a valid MM/DD/YYYY or YYYY-MM-DD date.');
   return iso;
 }
-const emptyPayment = (payment: Payment) => payment.amountCents === null && !payment.payoutDate && payment.bundleCents === null && !payment.bankDate && payment.bankCents === null && !payment.verifiedByDaisy;
+const emptyPayment = (payment: Payment) => payment.amountCents === null && !payment.payoutDate && payment.bundleCents === null && !payment.bankDetails && !payment.bankDate && payment.bankCents === null && !payment.verifiedByDaisy;
 
 export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, options: PropertyImportOptions): PropertyImportPreview {
   if (sheet.error) throw new Error(sheet.error);
@@ -81,7 +82,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   // No property/total is saved when there are no usable payment rows.
   const usable = rows.some(row => row.status === 'ready' || row.reason === 'Already imported; unchanged.');
   if (usable && !existing) {
-    const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
+    const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ ...(change.fields.bankDetails ? {bankDetails:change.fields.bankDetails} : {}), index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
     const additionalPayments = changes.flatMap(change => change.kind === 'appendPayments' ? change.payments : []);
     changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, initialPayments, ...(additionalPayments.length ? { additionalPayments } : {}) }];
   } else if (usable && existing && existing.totalCents !== totalCents) changes.unshift({ kind: 'setTotal', propertyId: property.id, amountCents: totalCents });
@@ -93,7 +94,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
 function airbnbPreview(property: Property, sheet: ImportSheet, options: PropertyImportOptions): { rows: PropertyPreviewRow[]; changes: Change[] } {
   const columns = airbnbColumns(sheet, options.headerRow);
   const rows: PropertyPreviewRow[] = [];
-  const groups: { payoutDate: string; bundleCents: number; currency: string; rows: PropertyPreviewRow[] }[] = [];
+  const groups: { bankDetails:string; payoutDate: string; bundleCents: number; currency: string; rows: PropertyPreviewRow[] }[] = [];
   let group: typeof groups[number] | undefined;
   const listings = new Set<string>();
   const currencies = new Set<string>();
@@ -102,7 +103,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     if (cells.every(cell => !text(cell.value))) return;
     const type = text(cells[columns.type]?.value).toLowerCase();
     if (type === 'payout') {
-      group = { payoutDate: payoutDate(cells[columns['arriving by date']]), bundleCents: amount(cells[columns['paid out']], `Row ${sourceRow} payout bundle`), currency: text(cells[columns.currency]?.value).toUpperCase(), rows: [] };
+      group = { bankDetails:extractBankDetails(cells[columns.details]?.value), payoutDate: payoutDate(cells[columns['arriving by date']]), bundleCents: amount(cells[columns['paid out']], `Row ${sourceRow} payout bundle`), currency: text(cells[columns.currency]?.value).toUpperCase(), rows: [] };
       groups.push(group);
       rows.push({ sourceRow, name: 'Payout bundle', originalAmount: text(cells[columns['paid out']]?.value), status: 'skipped', reason: 'Bundle and arrival date are attached to the following payment; bundle is not added to collected payments.', payoutDate: group.payoutDate, bundleCents: group.bundleCents });
       return;
@@ -117,7 +118,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     currencies.add(currency);
     if (currencies.size > 1) throw new Error('Import one currency at a time.');
     const amountCents = amount(cells[columns.amount], `Row ${sourceRow} payment`);
-    const row: PropertyPreviewRow = { sourceRow, name: listing || property.name, originalAmount: text(cells[columns.amount]?.value), propertyId: property.id, propertyName: property.name, amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents, status: 'ready', reason: '' };
+    const row: PropertyPreviewRow = { sourceRow, name: listing || property.name, originalAmount: text(cells[columns.amount]?.value), propertyId: property.id, propertyName: property.name, amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents, bankDetails:group.bankDetails, status: 'ready', reason: '' };
     group.rows.push(row); rows.push(row);
   });
   if (!groups.length || groups.some(group => !group.rows.length)) throw new Error('Every Payout row needs at least one payment detail row.');
@@ -128,8 +129,8 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
   for (const group of groups) {
     const amountCents = group.rows.reduce((sum, row) => sum + row.amountCents!, 0);
     if (!Number.isSafeInteger(amountCents) || Math.abs(amountCents) > 999999999999) throw new Error('Combined payment amount is too large.');
-    const fields = { amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
-    const duplicate = payments.findIndex(payment => payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents);
+    const fields = { ...(group.bankDetails?{bankDetails:group.bankDetails}:{}), amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
+    const duplicate = payments.findIndex(payment => payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||!payment.bankDetails||payment.bankDetails===group.bankDetails));
     let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
     const append = slot < 0 || !payments[slot];
     if (append) {
@@ -137,7 +138,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
       payments.push({ id: `import-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
     }
     const payment = payments[slot];
-    const unchanged = payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents;
+    const unchanged = payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||payment.bankDetails===group.bankDetails);
     group.rows.forEach(row => { row.currentCents = payment.amountCents; row.proposedCents = amountCents; row.slot = slot + 1; row.status = unchanged ? 'skipped' : 'ready'; row.reason = unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}${group.rows.length > 1 ? `; sums ${group.rows.length} detail rows` : ''}.`; });
     if (!unchanged) {
       if (append) {

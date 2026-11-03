@@ -1,3 +1,4 @@
+import {bankReport} from './bank-details.ts';
 import type { Snapshot } from './types.ts';
 import type { ImportCell, ImportSheet } from './import.ts';
 
@@ -73,10 +74,10 @@ export function createExportSheets(snapshot: Snapshot, monthId: string) {
     paidCents += paid;
     const base = { Month: month.label, Property: property.name, Manager: property.manager, Total: property.totalCents / 100, 'Accounts receivable': (property.totalCents - paid) / 100 };
     let airbnbIndex = 0;
-    if (!property.payments.length) records.push({ ...base, 'Payment type': '', 'Payment amount': null, 'Payout date': '', 'Bundled payment': null, 'Bank date': '', 'Bank amount': null, 'Verified by Daisy': false });
+    if (!property.payments.length) records.push({ ...base, 'Payment type': '', 'Payment amount': null, 'Payout date': '', 'Bundled payment': null, 'Bank Details': '', 'Bank date': '', 'Bank amount': null, 'Verified by Daisy': false });
     property.payments.forEach(payment => {
       const label = payment.type === 'Airbnb' ? `Airbnb ${++airbnbIndex}` : payment.type;
-      records.push({ ...base, 'Payment type': label, 'Payment amount': payment.amountCents === null ? null : payment.amountCents / 100, 'Payout date': payment.payoutDate, 'Bundled payment': payment.bundleCents === null ? null : payment.bundleCents / 100, 'Bank date': payment.bankDate, 'Bank amount': payment.bankCents === null ? null : payment.bankCents / 100, 'Verified by Daisy': payment.verifiedByDaisy });
+      records.push({ ...base, 'Payment type': label, 'Payment amount': payment.amountCents === null ? null : payment.amountCents / 100, 'Payout date': payment.payoutDate, 'Bundled payment': payment.bundleCents === null ? null : payment.bundleCents / 100, 'Bank Details': payment.bankDetails??'', 'Bank date': payment.bankDate, 'Bank amount': payment.bankCents === null ? null : payment.bankCents / 100, 'Verified by Daisy': payment.verifiedByDaisy });
     });
   });
   const summary: unknown[][] = [
@@ -95,7 +96,7 @@ export function exportWorkbook(snapshot: Snapshot, monthId: string): void {
   const workbook = xlsx.utils.book_new();
   const details = xlsx.utils.json_to_sheet(records);
   const summarySheet = xlsx.utils.aoa_to_sheet(summary);
-  details['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 20 }];
+  details['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, {wch:20}];
   summarySheet['!cols'] = [{ wch: 24 }, { wch: 85 }];
   for (const [address, cell] of Object.entries(details)) {
     if (!address.startsWith('!') && typeof cell === 'object' && cell !== null && 't' in cell && cell.t === 'n') (cell as SpreadsheetCell).z = '#,##0.00;[Red](#,##0.00)';
@@ -107,4 +108,29 @@ export function exportWorkbook(snapshot: Snapshot, monthId: string): void {
   xlsx.utils.book_append_sheet(workbook, details, 'Payments');
   xlsx.utils.book_append_sheet(workbook, summarySheet, 'Summary');
   xlsx.writeFile(workbook, `Castle-AR-${month.month.replace(/[^a-zA-Z0-9-]/g, '-')}.xlsx`);
+}
+
+export function exportBankWorkbook(snapshot:Snapshot,monthId:string,selected:string[]|null):void {
+ const month=snapshot.months.find(m=>m.id===monthId);if(!month)throw new Error('The selected month is no longer available.');
+ const report=bankReport(month,selected);if(!report.records.length)throw new Error('No payment records match the selected banks.');
+ const xlsx=getSheetJS(),book=xlsx.utils.book_new();
+ const summary=xlsx.utils.aoa_to_sheet([
+  ['Castle ? Bank Payment Report'],['Reporting Month',month.label],['Banks',selected===null?'All Banks':selected.join(', ')],
+  ['Generated',new Date().toISOString()],[],['Bank','Properties','Payment Records','Recorded Payments'],
+  ...report.summary.map(row=>[row.Bank,row.Properties,row.Payments,row['Recorded Payments']]),
+  ['Total','',report.records.length,report.total],[],
+  ['Report Notes'],['Recorded Payments are the imported payment amounts, grouped by destination bank.'],
+  ['Payout bundles and property outstanding balances are not summed in this report.'],
+  ['Not Specified means no bank account has been recorded for that payment.'],
+  ['Amounts use the source spreadsheet currency. Bank Received Amounts are shown as entered, not allocated.']
+ ]);
+ summary['!cols']=[{wch:32},{wch:24},{wch:24},{wch:24}];
+ summary['!merges']=[{s:{r:0,c:0},e:{r:0,c:3}},...[1,2,3].map(r=>({s:{r,c:1},e:{r,c:3}})),...[0,1,2,3,4].map(i=>({s:{r:report.summary.length+9+i,c:0},e:{r:report.summary.length+9+i,c:3}}))];
+ for(let r=7;r<=7+report.summary.length;r++){const cell=summary['D'+r] as SpreadsheetCell|undefined;if(cell)cell.z='#,##0.00;[Red](#,##0.00)';}
+ const details=xlsx.utils.json_to_sheet(report.records);
+ details['!cols']=[{wch:24},{wch:42},{wch:24},{wch:15},{wch:16},{wch:20},{wch:22},{wch:24},{wch:20}];
+ details['!autofilter']={ref:'A1:I'+(report.records.length+1)};
+ for(let r=2;r<=report.records.length+1;r++)for(const c of ['F','H']){const cell=details[c+r] as SpreadsheetCell|undefined;if(cell)cell.z='#,##0.00;[Red](#,##0.00)';}
+ xlsx.utils.book_append_sheet(book,summary,'Bank Summary');xlsx.utils.book_append_sheet(book,details,'Payment Records');
+ xlsx.writeFile(book,'Castle-Bank-Report-'+month.month.replace(/[^a-zA-Z0-9-]/g,'-')+'.xlsx');
 }
