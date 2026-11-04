@@ -1,0 +1,131 @@
+﻿/* Shared filter geometry. Keep native selects consistent across browser engines. */
+:root { --filter-control-height: 46px; --filter-control-radius: 8px; }
+body .app-shell .search-field {
+  box-sizing: border-box;
+  height: var(--filter-control-height);
+  min-height: var(--filter-control-height);
+  margin: 0;
+  padding: 0 14px;
+  gap: 10px;
+  border: 1px solid #dce2e8;
+  border-radius: var(--filter-control-radius);
+  background: #fff;
+}
+body .app-shell .search-field input {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: normal;
+}
+body .app-shell .search-field > svg { flex-shrink: 0; }
+body .app-shell .filter-row .select-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  height: var(--filter-control-height);
+  margin: 0;
+}
+body .app-shell .filter-row .select-field select,
+body :is(.app-shell, .import-modal) :is(.fu-filter, .am-scope, .import-filter-label) select {
+  box-sizing: border-box;
+  appearance: auto;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: var(--filter-control-height);
+  min-height: var(--filter-control-height);
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid #dce2e8;
+  border-radius: var(--filter-control-radius);
+  background-color: #fff;
+  color: #4b5563;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: normal;
+  cursor: pointer;
+}
+body .app-shell .filter-row .select-field select { appearance: none; padding-right: 36px; }
+body .app-shell .filter-row .select-field > svg {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+body .app-shell .filter-row .select-field:has(select:open) > svg { transform: translateY(-50%) rotate(180deg); }
+.records-panel { container: record-filters / inline-size; min-width: 0; }
+body .app-shell .filter-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(140px, 180px));
+  align-items: center;
+  gap: 12px;
+}
+body .app-shell .filter-row.reconciliation-filter-row {
+  grid-template-columns: minmax(200px, 1fr) repeat(4, minmax(140px, 170px));
+}
+body .app-shell .filter-row .search-field { width: 100%; min-width: 0; grid-column: auto; }
+body .app-shell .fu-heading { flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+body .app-shell .fu-filter { flex: 0 1 260px; min-width: 0; }
+body .app-shell .am-scope { min-width: 0; flex-wrap: wrap; }
+body .app-shell .am-scope select { width: min(220px, 100%); }
+body .app-shell .am-task-filters { gap: 8px; }
+body .app-shell .am-task-filters button { min-height: 44px; padding: 10px 16px; }
+body .import-modal .import-section-heading { flex-wrap: wrap; gap: 12px; }
+body .import-modal .import-filter-label { min-width: 0; }
+body .import-modal .import-filter-label select { width: 170px; max-width: 100%; }
+@container record-filters (max-width: 950px) {
+  body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  body .app-shell .filter-row.reconciliation-filter-row .search-field { grid-column: 1 / -1; }
+}
+@container record-filters (max-width: 650px) {
+  body .app-shell .filter-row,
+  body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body .app-shell .filter-row .search-field { grid-column: 1 / -1; }
+}
+@container record-filters (max-width: 480px) {
+  body .app-shell .filter-row,
+  body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 780px) {
+  body .app-shell .search-field input,
+  body .app-shell .filter-row .select-field select,
+  body :is(.app-shell, .import-modal) :is(.fu-filter, .am-scope, .import-filter-label) select { font-size: 16px; }
+  body .app-shell .fu-filter { flex-basis: 100%; }
+}
+/* Fallback for older browsers without container queries. */
+@supports not (container-type: inline-size) {
+  @media (max-width: 1250px) {
+    body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    body .app-shell .filter-row.reconciliation-filter-row .search-field { grid-column: 1 / -1; }
+  }
+  @media (max-width: 780px) {
+    body .app-shell .filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    body .app-shell .filter-row .search-field { grid-column: 1 / -1; }
+  }
+  @media (max-width: 580px) {
+    body .app-shell .filter-row,
+    body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: minmax(0, 1fr); }
+  }
+}
+
+
+/* Retain the rounded, checkmarked menus while keeping filter triggers aligned. */
+@supports (appearance: base-select) {
+  body .app-shell .filter-row .select-field select,
+  body :is(.app-shell, .import-modal) :is(.fu-filter, .am-scope, .import-filter-label) select {
+    appearance: base-select;
+    box-sizing: border-box;
+    height: var(--filter-control-height);
+    min-height: var(--filter-control-height);
+    max-height: var(--filter-control-height);
+    align-items: center;
+  }
+}

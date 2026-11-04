@@ -7,6 +7,7 @@ import './styles.css';
 import './neutral-theme.css';
 import './interactions.css';
 import './motion.css';
+import './filter-controls.css';
 declare global { interface Window { CASTLE_CONFIG?: { appsScriptUrl?:string } } }
 function storedEndpoint(){
  if(import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview')==='1') return '';
