@@ -11,7 +11,7 @@ const steps = [
     title: "Check the Expected Amounts",
     when: 'At the start of the month, or when an amount changes',
     who: "Account Manager",
-    how: <>Open each property and check its <strong>Expected Amount</strong> against the monthly records. Correct it and <strong>Save Changes</strong>. Use <strong>Add Property</strong> for missing properties. For bulk updates, use <strong>Import Excel</strong>, choose the destination field, and review the proposed changes before importing.</>,
+    how: <>Open each property and check its <strong>Expected Amount</strong> against the monthly records. Correct it and <strong>Save Changes</strong>. Use <strong>Import Excel</strong> to add missing properties. For bulk updates, use <strong>Import Excel</strong>, choose the destination field, and review the proposed changes before importing.</>,
   },
   {
     title: "Record Incoming Payments",
@@ -29,7 +29,7 @@ const steps = [
     title: "Reconcile Deposits and Verify Payments",
     when: 'When bank deposits and supporting records are available',
     who: 'Daisy',
-    how: <>Open <strong>Reconciliation</strong> and use <strong>Needs Verification</strong> to find properties to review. Open a property, compare its payout record with the bank deposit, and enter the <strong>Bank Amount</strong> and <strong>Bank Date</strong>. <strong>Matched</strong> means the bundle and bank amounts agree; <strong>Pending</strong> means an amount is missing. Investigate any <strong>Mismatch</strong>. After completing the manual review, select <strong>Verified by Daisy</strong> and <strong>Save Changes</strong>.</>,
+    how: <>Use <strong>Import Bank Statement</strong> to upload an RBC PDF and review matched Airbnb deposits. Saving fills each matched row�s bank amount and date and checks Verify By System. For manual review, open <strong>Reconciliation</strong> and use <strong>Needs Verification</strong> to find properties to review. Open a property, compare its payout record with the bank deposit, and enter the <strong>Bank Amount</strong> and <strong>Bank Date</strong>. <strong>Matched</strong> means the payment has passed the system check; <strong>Pending</strong> means an amount is missing. Investigate any <strong>Mismatch</strong>. After completing the manual review, select <strong>Verified by Daisy</strong> and <strong>Save Changes</strong>.</>,
   },
   {
     title: "Review the Month Together",

@@ -161,3 +161,13 @@ Overview shows each property's distinct bank accounts. Bank Report (in the prope
 Account Managers appears below Reconciliation. When adding or editing a manager, choose Account Manager or Assistant Account Manager. Assistants require a saved parent Account Manager, selected from a dropdown; self-parenting and nested assistants are rejected. The directory groups assistants under their parent and both profiles link to the related records. Listings, tasks and updates retain their existing individual assignments. Reassign assistants before deleting a parent or changing that parent to an assistant.
 
 Deploy the updated Code.gs to enable roles. The next manager save safely extends the Account Managers tab with role and parentManagerId columns (G and H of that tab). Existing five- and six-column records default to Account Manager, preserving profile images. Migration refuses to overwrite occupied extra columns.
+
+### Bank statement import
+
+The toolbar now offers **Import Excel** and **Import Bank Statement**. Select the reporting month, upload up to 10 RBC text-based chequing PDFs (20 MB each, 50 MB combined), review the matches, and click **Verify Matched Rows**. The files are read locally with PDF.js. Scanned/image-only PDFs require OCR before importing; OCR is not built in.
+
+Only AIRBNB PAYMENTS credits are considered. Matching uses the account's last four digits and exact bundle cents in F, across all properties in the selected month regardless of dashboard filters. Shared bundle rows must have the same platform payout date, on or before the deposit date; their amounts cannot exceed the deposit total. Repeated deposit amounts, conflicting bank values, missing dates, unknown PDF columns and unmatched deposits are skipped for review. Already verified rows are not rewritten.
+
+A dedicated revision-protected Apps Script action revalidates the account/bundle, copies the current row's D amount to I, writes the bank transaction date to H and TRUE to J. It never modifies Daisy's K checkbox. Changes to evidence fields through the app invalidate prior system verification. Direct edits in Google Sheets do not trigger that app-side invalidation; recheck those records manually.
+
+**Deployment:** publish the frontend build and update the existing Apps Script web-app deployment to a new version containing `apps-script/Code.gs`. The importer disables saving until the backend reports `bankStatementSchema: 1`. Monthly tabs require Bank Details in G and H/I/J/K as above; legacy layouts cannot receive bank-statement reconciliation. No statement or live Sheet was imported during development.

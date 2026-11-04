@@ -956,3 +956,32 @@ test('assistant schema upgrades six-column manager records without overwriting u
  const next=app.post({requestId:'hierarchy-legacy-save',revision:initial.revision,changes:[{kind:'saveManager',manager:{id:'helper',name:'Helper',email:'',notes:'',active:true,role:'assistant',parentManagerId:initial.managers[0].id}}]});
  assert.equal(next.ok,true,next.error?.message);assert.equal(table.data[0][6],'role');assert.equal(table.data[0][7],'parentManagerId');
 });
+
+test('bank reconciliation copies D to I, writes H date and J TRUE, preserves Daisy and rejects mismatches',()=>{
+ const app=harness();
+ app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ Object.assign(app.state.data[20],{3:1138.21,4:'2026-09-09',5:6824.51,6:'Checking 5864',10:true});
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);
+ const change={kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:682451,bankDate:'2026-09-09'};
+ const bad=app.post({requestId:'bank-mismatch-01',revision:before.snapshot.revision,changes:[{...change,bundleCents:10}]});assert.equal(bad.ok,false);assert.equal(app.state.writes,0);
+ const saved=app.post({requestId:'bank-reconcile-01',revision:before.snapshot.revision,changes:[change]});assert.equal(saved.ok,true,saved.error?.message);
+ assert.equal(app.state.data[20][8],1138.21);assert.equal(app.state.data[20][9],true);assert.equal(app.state.data[20][10],true);assert.equal(saved.snapshot.months[0].properties[2].payments[0].bankDate,'2026-09-09');
+ assert.equal(saved.snapshot.months[0].properties[2].payments[0].verifiedBySystem,true);
+ const stale=app.post({requestId:'bank-stale-01',revision:before.snapshot.revision,changes:[change]});assert.equal(stale.ok,false);
+});
+
+test('editing account after bank reconciliation invalidates J even for a single-row bundle',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ Object.assign(app.state.data[20],{3:100,4:'2026-09-09',5:100,6:'Checking 5864'});
+ const before=app.read().snapshot;
+ const saved=app.post({requestId:'bank-invalidate-init',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:10000,bankDate:'2026-09-09'}]});assert.equal(saved.ok,true);
+ const edited=app.post({requestId:'bank-invalidate-edit',revision:saved.snapshot.revision,changes:[{kind:'updatePayment',paymentId:'0:21',fields:{bankDetails:'Checking 7524'}}]});assert.equal(edited.ok,true,edited.error?.message);
+ assert.equal(app.state.data[20][9],false);assert.equal(app.state.formulas[20][9],'');
+});
+
+test('a no-op edit cannot suppress invalidation by another edit in the same save',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ Object.assign(app.state.data[20],{3:100,4:'2026-09-09',5:100,6:'Checking 5864',7:'2026-09-09',8:100,9:true});
+ const before=app.read().snapshot;
+ const edited=app.post({requestId:'bank-noop-batch',revision:before.revision,changes:[{kind:'updatePayment',paymentId:'0:21',fields:{amountCents:10000}},{kind:'updatePayment',paymentId:'0:21',fields:{bankDetails:'Checking 7524'}}]});assert.equal(edited.ok,true,edited.error?.message);assert.equal(app.state.data[20][9],false);
+});

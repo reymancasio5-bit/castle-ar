@@ -19,3 +19,7 @@ test('verification requires both known bundle and bank amounts',()=>{
  assert.equal(systemStatus({...p,bundleCents:0,bankCents:0}),'Matched');
  assert.equal(systemStatus({...p,bundleCents:100,bankCents:99}),'Mismatch');
 });
+
+test('explicit failed system verification cannot be overridden by equal bundle and bank values',()=>{
+ assert.equal(systemStatus({id:'p',type:'Airbnb',amountCents:100,bundleCents:100,bankCents:100,payoutDate:'2026-09-09',bankDate:'',verifiedByDaisy:false,verifiedBySystem:false}),'Pending');
+});
