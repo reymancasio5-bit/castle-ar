@@ -53,7 +53,6 @@ export function matchStatement(deposits: BankDeposit[], month: Month) {
   let status='Ready';
   if(deposits.filter(d=>d.account===deposit.account&&d.amountCents===deposit.amountCents).length>1)status='Ambiguous: repeated deposit amount';
   else if(!payments.length)status='No matching bundle in this month';
-  else if(new Set(payments.map(({payment:p})=>p.payoutDate)).size!==1 || payments.some(({payment:p})=>!p.payoutDate||p.payoutDate>deposit.date))status='Needs review: payout dates do not identify one bundle';
   else if(payments.reduce((sum,{payment:p})=>sum+(p.amountCents??0),0)>deposit.amountCents)status='Needs review: matched payments exceed the bundle';
   else if(payments.some(({payment:p})=>p.amountCents===null||p.amountCents<=0||(p.bankCents!==null&&p.bankCents!==p.amountCents)||(p.bankDate!==''&&p.bankDate!==deposit.date)))status='Needs review: existing bank values or missing payment amount';
   else {

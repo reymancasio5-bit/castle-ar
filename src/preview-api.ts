@@ -3,7 +3,7 @@ import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
 export function createPreviewApi() {
- let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bankStatementSchema=1;
+ let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bankStatementSchema=2;state.recordEditingSchema=1;
  // Fictional, editable examples belong only to the isolated preview.
  for(const [team,name,id] of [['Team A','Alex Chen','preview-assistant-alex'],['Team B','Maya Cruz','preview-assistant-maya']]){
   const parent=state.managers!.find(manager=>manager.name.replace(/\s/g,'').toLowerCase()===team.replace(/\s/g,'').toLowerCase());
@@ -11,9 +11,25 @@ export function createPreviewApi() {
  }
  return {read:async()=>structuredClone(state), save:async(revision:string, changes:Change[])=>{
   if(revision!==state.revision)throw new Error('Preview changed. Refresh and try again.');
+  if(changes.some(c=>c.kind==='deleteProperty'||c.kind==='deletePayment')&&changes.length!==1)throw new Error('Save edits before deleting a record.');
   const next=structuredClone(state);
   for(const c of changes) {
    if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
+   if(c.kind==='updateProperty'||c.kind==='deleteProperty'||c.kind==='deletePayment'){
+    if(c.kind==='deletePayment'){
+     const owner=next.months.flatMap(m=>m.properties).find(p=>p.payments.some(row=>row.id===c.paymentId));if(!owner)throw new Error('Payment not found.');owner.payments=owner.payments.filter(p=>p.id!==c.paymentId);continue;
+    }
+    const month=next.months.find(m=>m.properties.some(p=>p.id===c.propertyId)),p=month?.properties.find(p=>p.id===c.propertyId);if(!month||!p)throw new Error('Property not found.');
+    const oldKey=JSON.stringify([month.id,p.name.trim().toLowerCase()]);let newKey='';
+    if(c.kind==='deleteProperty')month.properties=month.properties.filter(row=>row.id!==p.id);
+    else{
+     const name=c.name.trim();if(!name||name.length>160||/^[=+@-]/.test(name)||/[\u0000-\u001f\u007f]/.test(name))throw new Error('Enter a valid property name.');
+     if(month.properties.some(row=>row.id!==p.id&&row.name.toLowerCase()===name.toLowerCase()))throw new Error('This property name already exists.');
+     const manager=resolveManager(next,c.manager,p.managerId);p.name=name;p.manager=manager?.name??'';p.managerId=manager?.id;newKey=JSON.stringify([month.id,name.toLowerCase()]);
+    }
+    for(const row of [...(next.tasks??[]),...(next.managerUpdates??[])])if(row.propertyKey===oldKey)row.propertyKey=newKey;
+    continue;
+   }
    if(c.kind==='addProperty') {
     const manager=resolveManager(next,c.manager);if(!manager)throw new Error('Choose a registered account manager.');
     const month=next.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');

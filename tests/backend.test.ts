@@ -203,6 +203,13 @@ function harness() {
           u.rows.forEach((entry:any,y:number)=>entry.values.forEach((cell:any,x:number)=>{status.data[r+y]??=row();status.formulas[r+y]??=row();status.data[r+y][c+x]=cell.userEnteredValue?.stringValue??cell.userEnteredValue?.numberValue??'';status.formulas[r+y][c+x]='';}));continue;
         }
         if (request.appendDimension) { if (request.appendDimension.dimension === 'COLUMNS') state.maxColumns += request.appendDimension.length; else state.maxRows += request.appendDimension.length; continue; }
+        if (request.deleteDimension) {
+          const {startIndex,endIndex,sheetId}=request.deleteDimension.range;
+          assert.equal(sheetId,0);const count=endIndex-startIndex;
+          data.splice(startIndex,count);formulas.splice(startIndex,count);formats.splice(startIndex,count);validations.splice(startIndex,count);state.maxRows-=count;
+          for(const cells of formulas)cells.forEach((value,c)=>{if(typeof value==='string')cells[c]=value.replace(/(\$?[A-Z]+\$?)(\d+)/g,(_,column,n)=>+n>endIndex?column+(+n-count):+n>startIndex?'#REF!':column+n);});
+          continue;
+        }
         if (request.insertDimension) {
           const { startIndex, endIndex } = request.insertDimension.range;
           const count = endIndex - startIndex;
@@ -470,7 +477,7 @@ test('all change validation completes before the first mutation', () => {
     { kind: 'updatePayment', paymentId: '0:5', fields: { payoutDate: '2026-02-30' } },
     { kind: 'updatePayment', paymentId: '0:5', fields: { bankCents: '10' } },
     { kind: 'updatePayment', paymentId: '0:5', fields: { verifiedByDaisy: 'true' } },
-    { kind: 'updatePayment', paymentId: '0:5', fields: { type: 'Owner' } },
+    { kind: 'updatePayment', paymentId: '0:5', fields: { type: 'Invalid' } },
     { kind: 'updatePayment', paymentId: '0:5', fields: { bankCents: 1000000000000 } },
     { kind: 'addProperty', monthId: '0', name: '=IMPORTXML("secret")', manager: 'TeamA', totalCents: 0 },
     { kind: 'addProperty', monthId: '9', name: 'House', manager: 'TeamA', totalCents: 0 },
@@ -984,4 +991,66 @@ test('a no-op edit cannot suppress invalidation by another edit in the same save
  Object.assign(app.state.data[20],{3:100,4:'2026-09-09',5:100,6:'Checking 5864',7:'2026-09-09',8:100,9:true});
  const before=app.read().snapshot;
  const edited=app.post({requestId:'bank-noop-batch',revision:before.revision,changes:[{kind:'updatePayment',paymentId:'0:21',fields:{amountCents:10000}},{kind:'updatePayment',paymentId:'0:21',fields:{bankDetails:'Checking 7524'}}]});assert.equal(edited.ok,true,edited.error?.message);assert.equal(app.state.data[20][9],false);
+});
+
+test('property metadata edits preserve follow-up and linked task identity',()=>{
+ const app=harness();const initial=app.read().snapshot;const p=initial.months[0].properties[0];
+ const saved=app.post({requestId:'rename-record-test',revision:initial.revision,changes:[{kind:'updateProperty',propertyId:p.id,name:'Renamed House',manager:'TeamA'},{kind:'setTotal',propertyId:p.id,amountCents:90000}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.months[0].properties[0].name,'Renamed House');assert.equal(saved.snapshot.months[0].properties[0].manager,'TeamA');assert.equal(saved.snapshot.months[0].properties[0].totalCents,90000);
+});
+test('deleting one payment removes its row and preserves neighboring properties',()=>{
+ const app=harness();const before=app.read().snapshot;
+ const result=app.post({requestId:'delete-payment-test',revision:before.revision,changes:[{kind:'deletePayment',paymentId:'0:21'}]});assert.equal(result.ok,true,result.error?.message);
+ assert.equal(result.snapshot.months[0].properties[2].payments.length,4);assert.equal(result.snapshot.months[0].properties[2].payments[0].amountCents,13081);assert.equal(result.snapshot.months[0].properties[0].name,before.months[0].properties[0].name);assert.equal(app.state.formulas[24][3],'=D20-SUM(D21:D24)');
+});
+test('deleting a property removes its entire block and rejects stale edits',()=>{
+ const app=harness();const before=app.read().snapshot;
+ const result=app.post({requestId:'delete-property-test',revision:before.revision,changes:[{kind:'deleteProperty',propertyId:'0:4'}]});assert.equal(result.ok,true,result.error?.message);
+ assert.equal(result.snapshot.months[0].properties.length,2);assert.equal(result.snapshot.months[0].properties[0].name,before.months[0].properties[1].name);
+ const stale=app.post({requestId:'delete-property-stale',revision:before.revision,changes:[{kind:'deleteProperty',propertyId:'0:4'}]});assert.equal(stale.error.code,'CONFLICT');
+});
+
+test('rename carries Status and task links; delete detaches history and removes Status',()=>{
+ const app=harness();let before=app.read().snapshot;const key=JSON.stringify(['0','mtl 404 le bijou']);
+ let saved=app.post({requestId:'record-links-setup',revision:before.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamB',status:'awaiting_response',note:'Keep this note',attachments:[]},{kind:'saveTask',task:{id:'linked-edit',managerId:before.managers[0].id,title:'Follow up',description:'',dueDate:'2026-11-10',status:'open',propertyKey:key}}]});assert.equal(saved.ok,true,saved.error?.message);
+ saved=app.post({requestId:'record-links-rename',revision:saved.snapshot.revision,changes:[{kind:'updateProperty',propertyId:'0:4',name:'New Name',manager:'TeamA'}]});assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.months[0].properties[0].followUp.note,'Keep this note');assert.equal(saved.snapshot.tasks[0].propertyKey,JSON.stringify(['0','new name']));
+ saved=app.post({requestId:'record-links-delete',revision:saved.snapshot.revision,changes:[{kind:'deleteProperty',propertyId:'0:4'}]});assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.tasks[0].propertyKey,'');assert.equal(saved.snapshot.tasks[0].title,'Follow up');assert.ok(!app.status.data.some((row:any[])=>row[2]==='New Name'));
+});
+test('last payment deletion leaves a valid total-only AR formula',()=>{
+ const app=harness();let before=app.read().snapshot;
+ for(let i=0;i<5;i++){const saved=app.post({requestId:'delete-last-payment-'+i,revision:before.revision,changes:[{kind:'deletePayment',paymentId:'0:5'}]});assert.equal(saved.ok,true,saved.error?.message);before=saved.snapshot;}
+ assert.equal(before.months[0].properties[0].payments.length,0);assert.equal(app.state.formulas[4][3],'=D4');assert.equal(before.months[0].properties[1].name,'Mtl 2429 Rue Allard Unit 1');
+});
+test('duplicate property names and mixed deletion requests are rejected before writes',()=>{
+ for(const changes of [[{kind:'updateProperty',propertyId:'0:4',name:'Mtl 2429 Rue Allard Unit 1',manager:'TeamA'}],[{kind:'deletePayment',paymentId:'0:5'},{kind:'setTotal',propertyId:'0:4',amountCents:1}],[{kind:'deleteProperty',propertyId:'missing'}]]){
+ const app=harness();const result=app.post({requestId:'invalid-record-action',revision:app.read().snapshot.revision,changes});assert.equal(result.ok,false);assert.equal(app.state.writes,0);
+ }
+});
+test('payment type and bank details can be edited without changing amounts',()=>{
+ const app=harness();const before=app.read().snapshot;
+ const saved=app.post({requestId:'payment-channel-edit',revision:before.revision,changes:[{kind:'updatePayment',paymentId:'0:21',fields:{type:'Owner'}}]});assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.months[0].properties[2].payments[0].type,'Owner');assert.equal(saved.snapshot.months[0].properties[2].payments[0].amountCents,11686);
+});
+
+test('rename refuses an orphan Status name collision without corrupting the sheet',()=>{
+ const app=harness();const setup=app.post({requestId:'orphan-status-setup',revision:app.read().snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:'0:4',manager:'TeamB',status:'not_contacted',note:'Original',attachments:[]}]});assert.equal(setup.ok,true);
+ app.status.data.push(['0','November 2026','Historical House','TeamB','not_contacted','History','','','','']);app.status.formulas.push(Array(10).fill(''));
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);const writes=app.state.writes;
+ const result=app.post({requestId:'orphan-status-rename',revision:before.snapshot.revision,changes:[{kind:'updateProperty',propertyId:'0:4',name:'Historical House',manager:'TeamB'}]});assert.equal(result.ok,false);assert.equal(app.state.writes,writes);
+});
+
+test('deleting the last property keeps an empty month available for a new import',()=>{
+ const app=harness();let before=app.read().snapshot;
+ for(let i=0;i<3;i++){const result=app.post({requestId:'delete-month-final-'+i,revision:before.revision,changes:[{kind:'deleteProperty',propertyId:before.months[0].properties[0].id}]});assert.equal(result.ok,true,result.error?.message);before=result.snapshot;}
+ assert.equal(before.months.length,1);assert.equal(before.months[0].properties.length,0);
+ const created=app.post({requestId:'recreate-empty-month',revision:before.revision,changes:[{kind:'addProperty',monthId:'0',name:'Replacement House',manager:'TeamA',totalCents:10000}]});assert.equal(created.ok,true,created.error?.message);assert.equal(created.snapshot.months[0].properties[0].name,'Replacement House');
+});
+
+test('bank reconciliation matches F and G, ignores later or blank E, copies D into I',()=>{
+ for(const payoutDate of ['2026-09-17','']){
+  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+  Object.assign(app.state.data[20],{3:594.20,4:payoutDate,5:944.03,6:'Checking 5864'});
+  const before=app.read().snapshot;
+  const saved=app.post({requestId:'bank-ignore-platform-date',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:94403,bankDate:'2026-09-10'}]});
+  assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.state.data[20][8],594.20);assert.equal(app.state.data[20][9],true);assert.equal(app.state.data[20][4],payoutDate);assert.equal(app.state.data[20][5],944.03);assert.equal(saved.snapshot.months[0].properties[2].payments[0].bankDate,'2026-09-10');
+ }
 });

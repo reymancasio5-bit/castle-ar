@@ -25,16 +25,16 @@ test('matches same-account bundle rows and copies each row amount, not the bundl
  assert.equal(result.rows[0].payments[0].payment.amountCents,113821);
  assert.deepEqual(result.changes[0],{kind:'reconcileBank',paymentId:'a',account:'5864',bundleCents:682451,bankDate:'2026-09-09'});
 });
-test('blocks repeated deposits, conflicting rows, and different payout dates for equal amounts',()=>{
+test('blocks repeated deposits and conflicting existing bank values',()=>{
  const s=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t6,824.51\t');
  assert.equal(matchStatement([...s.deposits,...s.deposits],month(payment('a'))).changes.length,0);
- assert.equal(matchStatement(s.deposits,month(payment('a'),payment('b',{payoutDate:'2026-09-08'}))).changes.length,0);
+
  assert.equal(matchStatement(s.deposits,month(payment('a',{bankCents:500}))).changes.length,0);
 });
-test('reimport is a no-op and a later statement does not match a future payout',()=>{
+test('reimport is a no-op',()=>{
  const s=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t6,824.51\t');
  assert.equal(matchStatement(s.deposits,month(payment('a',{bankCents:113821,bankDate:'2026-09-09',verifiedBySystem:true}))).changes.length,0);
- assert.equal(matchStatement(s.deposits,month(payment('a',{payoutDate:'2026-10-01'}))).changes.length,0);
+
 });
 
 test('rejects mixed statement accounts instead of assigning the first account to every deposit',()=>{
@@ -44,4 +44,11 @@ test('unpositioned numbers and split dates cannot become verified deposit eviden
  assert.equal(parseStatement(header+'09 Sep AIRBNB PAYMENTS 100.00 20,000.00').deposits.length,0);
  const parsed=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t10.00\t\n10\nSep AIRBNB PAYMENTS\t\t20.00\t');
  assert.equal(parsed.deposits.length,1);
+});
+
+
+test('944.03 bank deposit matches F regardless of E and previews D 594.20 for I',()=>{
+ const statement=parseStatement(header+'10 Sep AIRBNB PAYMENTS\t\t944.03\t');
+ const result=matchStatement(statement.deposits,month(payment('116',{amountCents:59420,bundleCents:94403,payoutDate:'2026-09-17'}),payment('other',{amountCents:34983,bundleCents:94403,payoutDate:''}),payment('wrong-F',{amountCents:94403,bundleCents:59420}),payment('wrong-bank',{bundleCents:94403,bankDetails:'Checking 7524'})));
+ assert.equal(result.rows[0].status,'Ready');assert.deepEqual(result.changes.map(c=>c.paymentId),['116','other']);assert.equal(result.rows[0].payments[0].payment.amountCents,59420);
 });

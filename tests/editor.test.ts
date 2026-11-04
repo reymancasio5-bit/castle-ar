@@ -40,3 +40,8 @@ test('unchanged values, including refunds and explicit zero, produce no payment 
 test('malformed draft amounts are rejected before preparing a mutation', () => {
   assert.throws(() => paymentDraftToFields(refund, { ...refundDraft, amount: '12oops' }), /amount/i);
 });
+
+test('bank details can be edited or cleared and payment channel can change',()=>{
+ assert.deepEqual(paymentDraftToFields({...refund,bankDetails:'Checking 5864'},{...refundDraft,bankDetails:'Checking 7524',type:'Vrbo'}),{bankDetails:'Checking 7524',type:'Vrbo'});
+ assert.deepEqual(paymentDraftToFields({...refund,bankDetails:'Checking 5864'},{...refundDraft,bankDetails:''}),{bankDetails:''});
+});
