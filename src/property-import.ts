@@ -101,7 +101,7 @@ function isReservationExport(sheet: ImportSheet, headerRow: number | null): bool
   const headers = (sheet.rows[headerRow ?? 0] ?? []).map(cell => text(cell.value).toLowerCase());
   const typeColumn = headers.indexOf('type');
   return ['date', ...reservationHeaders].every(header => headers.includes(header))
-    && sheet.rows.slice((headerRow ?? 0) + 1).some(row => text(row[typeColumn]?.value).toLowerCase() === 'reservation');
+    && sheet.rows.slice((headerRow ?? 0) + 1).some(row => ['reservation', 'resolution payout'].includes(text(row[typeColumn]?.value).toLowerCase()));
 }
 
 function airbnbReservationPreview(property: Property, sheet: ImportSheet, options: PropertyImportOptions): { rows: PropertyPreviewRow[]; changes: Change[] } {
@@ -129,12 +129,14 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
       row.reason = 'Bundle details apply to qualifying reservations below; bundle is not added to collected payments.';
       return;
     }
-    if (type !== 'reservation') {
+    const resolutionPayout = type === 'resolution payout';
+    if (type !== 'reservation' && !resolutionPayout) {
       row.reason = 'Not a reservation payment in this detailed export.';
       return;
     }
-    if (reservationHeaders.some(header => !text(cells[columns[header]]?.value) || cells[columns[header]]?.error)) {
-      row.reason = 'Incomplete reservation details (columns D–J); payment skipped.';
+    const requiredHeaders = resolutionPayout ? reservationHeaders.filter(header => header !== 'booking date') : reservationHeaders;
+    if (requiredHeaders.some(header => !text(cells[columns[header]]?.value) || cells[columns[header]]?.error)) {
+      row.reason = resolutionPayout ? 'Incomplete Resolution Payout details (columns D and F–J); payment skipped.' : 'Incomplete reservation details (columns D–J); payment skipped.';
       return;
     }
     if (!parent) throw new Error(`Row ${sourceRow}: payment has no preceding Payout row.`);

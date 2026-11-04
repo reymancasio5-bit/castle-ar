@@ -50,6 +50,26 @@ test('Excel date cells match CSV-style dates',()=>{
  assert.equal(imported(input).length,1);
 });
 
+test('Resolution Payout permits a blank booking date and retains its parent bundle details',()=>{
+ const resolution=reservation('claim',24.40);resolution[2]='Resolution Payout';resolution[4]='';
+ const parent=payout(2011.63);parent[0]='09/28/2026';parent[1]='10/06/2026';resolution[0]='09/28/2026';
+ for(const prefix of [[],[payout(),reservation()]]) {
+  const payments=imported(sheet(...prefix,payout(10),parent,resolution));
+  const payment=payments.at(-1)!;
+  assert.deepEqual([payment.amountCents,payment.bundleCents,payment.payoutDate,payment.bankDetails],[2440,201163,'2026-10-06','Checking 5864']);
+ }
+});
+
+test('Resolution Payout exemption does not bypass other details or matching dates',()=>{
+ const resolution=reservation('claim',24.40);resolution[2]='Resolution Payout';resolution[4]='';
+ for(const column of [3,5,6,7,8,9]) {
+  const incomplete=[...resolution];incomplete[column]='';
+  assert.equal(buildPropertyImportPreview(month,sheet(payout(),incomplete),options).changes.length,0);
+ }
+ resolution[0]='09/15/2026';
+ assert.equal(buildPropertyImportPreview(month,sheet(payout(),resolution),options).changes.length,0);
+});
+
 test('CSV and Excel uploads persist separate equal payments and repeat imports add nothing',async()=>{
  const xlsx=vm.runInThisContext(readFileSync('public/vendor/xlsx.full.min.js','utf8')+'\nXLSX;');
  const previous=(globalThis as any).window;
