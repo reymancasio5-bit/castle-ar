@@ -120,6 +120,7 @@ function doGet(e) {
     }
     var result;
     if (parameters.action === 'read') result = { ok: true, snapshot: castleRead().snapshot };
+    else if (parameters.action === 'assistantStatus') result = castleAiStatus(parameters.requestId);
     else if (parameters.action === 'status') {
       castleRequestId(parameters.requestId);
       result = castleStatus(parameters.requestId);
@@ -139,6 +140,7 @@ function doPost(e) {
     try { body = JSON.parse(payload); } catch (_) { castleThrow('BAD_REQUEST', 'The request is not valid JSON.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) castleThrow('BAD_REQUEST', 'A request object is required.');
     castleRequestId(body.requestId);
+    if (body.operation === 'assistant') return castleOutput(castleAiPost(body));
     fingerprint = castleHash(JSON.stringify(body));
     lock = LockService.getScriptLock();
     locked = lock.tryLock(10000);

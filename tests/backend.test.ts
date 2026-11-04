@@ -4,6 +4,17 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
+test('assistant partial property rename preserves manager through the real validator',()=>{
+ const app=harness();vm.runInContext(readFileSync('apps-script/Assistant.gs','utf8'),app.context);
+ const current=vm.runInContext('castleRead()',app.context),p=current.snapshot.months[0].properties[0];
+ const propose=(app.context as any).castleAiProposal;
+ const result=propose([{kind:'updateProperty',propertyId:p.id,name:'Assistant renamed house'}],current);
+ assert.equal(result.changes[0].manager,p.manager);
+ assert.equal(app.read().snapshot.months[0].properties[0].name,p.name,'proposal must not write');
+ const saved=app.post({requestId:'assistant-reviewed-rename',revision:result.revision,changes:result.changes});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.months[0].properties[0].manager,p.manager);
+});
+
 test('delete manager persists removal, rejects linked records and stale revisions',()=>{
  const app=harness();const before=app.read().snapshot;
  const linked=app.post({requestId:'delete-linked',revision:before.revision,changes:[{kind:'deleteManager',managerId:before.managers[0].id}]});

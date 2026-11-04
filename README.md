@@ -179,3 +179,7 @@ Open a property from Overview or Reconciliation to edit its name, manager, expec
 **Delete Payment** removes that payment row and repairs the property's AR formula. **Delete Property** removes that property's data and payments from the selected month, clears its Status/assignment metadata, and detaches its task/update links while retaining task history. Both actions require confirmation; unsaved drawer edits are discarded only after confirmation. The final property deletion leaves an empty month available for future imports. Renaming preserves existing notes and links and rejects duplicate names or collisions with older metadata.
 
 These controls use the existing revision checks and atomic Sheets batches. Update the Apps Script web-app deployment to expose `recordEditingSchema: 1` before using them live. The local preview supports editing and deletion with sample records and resets on reload.
+# Castle Assistant
+
+The app includes a direct-access AI panel for workspace questions, reports, and reviewed edits. See [setup and local preview instructions](docs/castle-assistant-setup.md). API credentials belong only in Apps Script settings.
+

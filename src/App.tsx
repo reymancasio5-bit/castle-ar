@@ -20,12 +20,14 @@ import { loadPreferences, savePreferences, formatPaymentDate, type Preferences, 
 import './styles.css';
 import './property-table.css';
 import CastleMark from './CastleMark';
+import CastleAssistant from './CastleAssistant';
+import type {AssistantRequest,AssistantReply} from './assistant-types';
 import CastleWordmark from './CastleWordmark';
 import './branding.css';
 import {createRecordSync} from './record-sync.ts';
 import {loadWorkspaceLocation,saveWorkspaceLocation} from './workspace-location.ts';
 
-type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot> };
+type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot>; assistant?:(request:AssistantRequest)=>Promise<AssistantReply> };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 const formatAmount = (amount: number | null) => amount === null ? '' : (amount / 100).toFixed(2);
 const hasPayment = (payment: Payment) => payment.amountCents !== null || payment.bundleCents !== null || payment.bankCents !== null;
@@ -201,6 +203,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
           <footer className="page-footer"><span><span className={`footer-dot ${configured ? 'live' : ''}`} />{configured ? 'Shared Google Sheets records' : 'Temporary preview · changes reset on reload'}</span><span>{snapshot.updatedAt ? `Records updated ${new Date(snapshot.updatedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Ready to review'}{snapshot.spreadsheetUrl && <a href={snapshot.spreadsheetUrl} target="_blank" rel="noreferrer">Open Spreadsheet<ExternalLink size={12} /></a>}</span></footer>
         </>}
       </main>
+      {snapshot && <CastleAssistant snapshot={snapshot} monthId={monthId} ask={configured?api.assistant:undefined} onApply={saveChanges}/>}
     </div>
     <Presence present={!!notice}>{exiting => <div className="toast" role="status" data-exiting={exiting} inert={exiting}><CheckCircle2 size={18} />{notice}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}</Presence>
     <Presence present={!!selected}>{selected && <PropertyDrawer managers={managerRecords} editingSupported={snapshot?.recordEditingSchema===1} key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}</Presence>

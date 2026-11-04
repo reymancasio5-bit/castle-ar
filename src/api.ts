@@ -1,6 +1,7 @@
 import type { Change, Snapshot } from './types.ts';
-type Reply = {ok:boolean; snapshot?:Snapshot; pending?:boolean; error?:{code:string;message:string}};
-type Payload = {requestId:string; revision:string; changes:Change[]};
+import type {AssistantRequest,AssistantReply} from './assistant-types.ts';
+type Reply = {ok:boolean; snapshot?:Snapshot; assistant?:AssistantReply; pending?:boolean; error?:{code:string;message:string}};
+type Payload = {requestId:string; revision:string; changes:Change[]} | (AssistantRequest & {requestId:string;operation:'assistant'});
 type Transport = {get:(params:Record<string,string>)=>Promise<Reply>;post:(payload:Payload)=>()=>void;pause:(ms:number)=>Promise<void>};
 export function validateEndpoint(input:string):string {
  const url=new URL(input.trim());
@@ -37,6 +38,20 @@ export function createApi(input:string, transport?:Transport) {
  const io=transport??{get:(p:Record<string,string>)=>jsonp(endpoint,p),post:(p:Payload)=>submitForm(endpoint,p),pause:(ms:number)=>new Promise<void>(r=>setTimeout(r,ms))};
  return {
   read:async()=>checked(await io.get({action:'read'})),
+  assistant:async(request:AssistantRequest):Promise<AssistantReply>=>{
+   const requestId=crypto.randomUUID();const cleanup=io.post({...request,requestId,operation:'assistant'});
+   try {
+    for(let attempt=0;attempt<90;attempt++) {
+     await io.pause(2000);
+     const reply=await io.get({action:'assistantStatus',requestId});
+     if(reply.pending)continue;
+     if(!reply.ok)throw new Error(reply.error?.message||'The assistant could not respond.');
+     if(!reply.assistant || typeof reply.assistant.text!=='string')throw new Error('Update your Apps Script deployment to enable Castle Assistant.');
+     return reply.assistant;
+    }
+    throw new Error('The assistant timed out. No record changes were applied. Check your Apps Script deployment before retrying.');
+   } finally {cleanup()}
+  },
   save:async(revision:string,changes:Change[])=>{
    const requestId=crypto.randomUUID();const cleanup=io.post({requestId,revision,changes});
    try {

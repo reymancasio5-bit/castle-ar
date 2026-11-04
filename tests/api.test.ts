@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi, validateEndpoint } from '../src/api.ts';
 import { sampleSnapshot } from '../src/sample.ts';
+
+test('assistant sends no credentials and polls an opaque receipt',async()=>{
+ let body:any,cleaned=false;const queries:Record<string,string>[]=[];
+ const api=createApi('https://script.google.com/macros/s/A/exec',{post:p=>{body=p;return ()=>{cleaned=true;}},get:async p=>{queries.push(p);return {ok:true,assistant:{text:'Report'}};},pause:async()=>{}});
+ assert.equal((await api.assistant({message:'Payment report',monthId:'0',history:[]})).text,'Report');
+ assert.equal(body.operation,'assistant');assert.equal('passcode' in body,false);assert.equal(JSON.stringify(queries).includes('private-passcode'),false);assert.equal(cleaned,true);
+});
 test('only deployed Google Apps Script endpoints are accepted',()=>{
  assert.equal(validateEndpoint('https://script.google.com/macros/s/ABC123/exec'),'https://script.google.com/macros/s/ABC123/exec');
  for(const u of ['javascript:alert(1)','https://example.com/exec','https://script.google.com/macros/s/A/dev']) assert.throws(()=>validateEndpoint(u));
