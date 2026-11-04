@@ -56,7 +56,9 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   let rows: PropertyPreviewRow[];
   let changes: Change[];
   if (isAirbnbSheet(sheet, options.headerRow)) {
-    ({ rows, changes } = airbnbPreview(property, sheet, options));
+    ({ rows, changes } = isReservationExport(sheet, options.headerRow)
+      ? airbnbReservationPreview(property, sheet, options)
+      : airbnbPreview(property, sheet, options));
   } else {
     const headers = airbnbColumns(sheet, options.headerRow);
     if (headers['paid out'] >= 0 || headers['arriving by date'] >= 0) throw new Error('Incomplete Airbnb headers. Keep Type, Amount, Paid out, Arriving by date and Currency in the export. Listing is optional.');
@@ -89,6 +91,93 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   return { rows, changes, newProperty: !existing, totalCents, propertyName: property.name,
     readyCount: rows.filter(row => row.status === 'ready').length, skippedCount: rows.filter(row => row.status === 'skipped').length,
     invalidCount: rows.filter(row => row.status === 'invalid').length, unmatchedCount: rows.filter(row => row.status === 'unmatched').length };
+}
+
+const reservationHeaders = ['confirmation code', 'booking date', 'start date', 'end date', 'nights', 'guest', 'listing'];
+
+// Detailed reservation exports use their own mapper; retain the existing mapper
+// for co-host exports and other previously supported Airbnb layouts.
+function isReservationExport(sheet: ImportSheet, headerRow: number | null): boolean {
+  const headers = (sheet.rows[headerRow ?? 0] ?? []).map(cell => text(cell.value).toLowerCase());
+  const typeColumn = headers.indexOf('type');
+  return ['date', ...reservationHeaders].every(header => headers.includes(header))
+    && sheet.rows.slice((headerRow ?? 0) + 1).some(row => text(row[typeColumn]?.value).toLowerCase() === 'reservation');
+}
+
+function airbnbReservationPreview(property: Property, sheet: ImportSheet, options: PropertyImportOptions): { rows: PropertyPreviewRow[]; changes: Change[] } {
+  const headers = sheet.rows[options.headerRow!].map(cell => text(cell.value).toLowerCase());
+  const columns = Object.fromEntries(headers.map((header, index) => [header, index]));
+  const rows: PropertyPreviewRow[] = [];
+  const changes: Change[] = [];
+  const payments = property.payments.filter(payment => payment.type === 'Airbnb').map(payment => ({ ...payment }));
+  const usedSlots = new Set<number>();
+  const listings = new Set<string>();
+  const currencies = new Set<string>();
+  let parent: ImportCell[] | undefined;
+  let explicitSlot = options.airbnbSlot === 'auto' ? null : Number(options.airbnbSlot) - 1;
+  if (explicitSlot !== null && ![0, 1, 2].includes(explicitSlot)) throw new Error('Choose a valid Airbnb payment slot.');
+  sheet.rows.slice(options.headerRow! + 1).forEach((cells, index) => {
+    const sourceRow = options.headerRow! + index + 2;
+    if (cells.every(cell => !text(cell.value))) return;
+    const type = text(cells[columns.type]?.value).toLowerCase();
+    const row: PropertyPreviewRow = { sourceRow, name: text(cells[columns.listing]?.value), originalAmount: text(cells[columns.amount]?.value), status: 'skipped', reason: '' };
+    rows.push(row);
+    if (type === 'payout') {
+      parent = cells;
+      row.name = 'Payout bundle';
+      row.originalAmount = text(cells[columns['paid out']]?.value);
+      row.reason = 'Bundle details apply to qualifying reservations below; bundle is not added to collected payments.';
+      return;
+    }
+    if (type !== 'reservation') {
+      row.reason = 'Not a reservation payment in this detailed export.';
+      return;
+    }
+    if (reservationHeaders.some(header => !text(cells[columns[header]]?.value) || cells[columns[header]]?.error)) {
+      row.reason = 'Incomplete reservation details (columns D–J); payment skipped.';
+      return;
+    }
+    if (!parent) throw new Error(`Row ${sourceRow}: payment has no preceding Payout row.`);
+    if (payoutDate(cells[columns.date]) !== payoutDate(parent[columns.date])) {
+      row.reason = 'Reservation date does not match its preceding payout date; payment skipped.';
+      return;
+    }
+    listings.add(normalizePropertyName(row.name));
+    if (listings.size > 1) throw new Error('This file contains multiple Airbnb listings. Export one listing at a time and select its database property.');
+    const currency = text(cells[columns.currency]?.value).toUpperCase();
+    if (!currency || currency !== text(parent[columns.currency]?.value).toUpperCase()) throw new Error(`Row ${sourceRow}: payout and payment currencies must match.`);
+    currencies.add(currency);
+    if (currencies.size > 1) throw new Error('Import one currency at a time.');
+    const bankDetails = extractBankDetails(parent[columns.details]?.value);
+    const fields = {
+      amountCents: amount(cells[columns.amount], `Row ${sourceRow} payment`),
+      payoutDate: payoutDate(parent[columns['arriving by date']]),
+      bundleCents: amount(parent[columns['paid out']], `Row ${sourceRow} payout bundle`),
+      ...(bankDetails ? { bankDetails } : {}),
+    };
+    // Consume each matching saved row once so equal-value reservations remain
+    // separate, while repeating the same upload remains idempotent.
+    const duplicate = payments.findIndex((payment, slot) => !usedSlots.has(slot) && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || !payment.bankDetails || payment.bankDetails === bankDetails));
+    let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
+    const append = slot < 0 || !payments[slot];
+    if (append) {
+      slot = payments.length;
+      payments.push({ id: `reservation-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
+    }
+    const payment = payments[slot];
+    const unchanged = payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || payment.bankDetails === bankDetails);
+    Object.assign(row, fields, { propertyId: property.id, propertyName: property.name, currentCents: payment.amountCents, proposedCents: fields.amountCents, slot: slot + 1, status: unchanged ? 'skipped' : 'ready', reason: unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}.` });
+    usedSlots.add(slot);
+    if (!unchanged) {
+      if (append) {
+        const pending = changes.find(change => change.kind === 'appendPayments');
+        if (pending?.kind === 'appendPayments') pending.payments.push(fields);
+        else changes.push({ kind: 'appendPayments', propertyId: property.id, payments: [fields] });
+      } else changes.push({ kind: 'updatePayment', paymentId: payment.id, fields });
+      Object.assign(payment, fields);
+    }
+  });
+  return { rows, changes };
 }
 
 function airbnbPreview(property: Property, sheet: ImportSheet, options: PropertyImportOptions): { rows: PropertyPreviewRow[]; changes: Change[] } {
