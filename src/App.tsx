@@ -20,6 +20,7 @@ import { loadPreferences, savePreferences, formatPaymentDate, type Preferences, 
 import './styles.css';
 import './property-table.css';
 import CastleMark from './CastleMark';
+import {useConfirmation} from './Confirmation';
 import CastleAssistant from './CastleAssistant';
 import type {AssistantRequest,AssistantReply} from './assistant-types';
 import CastleWordmark from './CastleWordmark';
@@ -263,6 +264,7 @@ export function Dialog({ title, onClose, children, className = '', busy = false,
 }
 
 function PropertyDrawer({ property, monthLabel, configured, managers, editingSupported, onClose, onSave }: { managers:AccountManager[]; editingSupported:boolean; property: Property; monthLabel: string; configured: boolean; onClose: () => void; onSave: (changes: Change[]) => Promise<void> }) {
+  const askConfirmation=useConfirmation();
   const [name,setName]=useState(property.name),[assignedManager,setAssignedManager]=useState(property.manager);
   const [total, setTotal] = useState(formatAmount(property.totalCents));
   const initialDrafts = useMemo(() => Object.fromEntries(property.payments.map(payment => [payment.id, { type:payment.type, bankDetails:payment.bankDetails??'', amount: formatAmount(payment.amountCents), payoutDate: payment.payoutDate, bundle: formatAmount(payment.bundleCents), bankDate: payment.bankDate, bank: formatAmount(payment.bankCents), verifiedByDaisy: payment.verifiedByDaisy }])), [property]);
@@ -274,7 +276,7 @@ function PropertyDrawer({ property, monthLabel, configured, managers, editingSup
   let previewTotal = property.totalCents;
   try { previewTotal = parseMoney(total) ?? 0; } catch { /* Keep last valid total in summary while editing. */ }
   function update(id: string, field: keyof PaymentDraft, value: string | boolean) { setDrafts(current => ({ ...current, [id]: { ...current[id], [field]: value } })); }
-  function close() { if (!dirty || window.confirm('Discard your unsaved changes to this property?')) onClose(); }
+  async function close() { if (!dirty || await askConfirmation({title:'Discard unsaved changes?',message:'Your changes to this property have not been saved.',confirmLabel:'Discard Changes',destructive:true})) onClose(); }
   async function save(event: FormEvent) {
     event.preventDefault(); setError('');
     try {
@@ -293,8 +295,8 @@ function PropertyDrawer({ property, monthLabel, configured, managers, editingSup
     } catch (e) { setError(errorText(e)); } finally { setSaving(false); }
   }
   async function remove(payment?:Payment){
-    const description=payment ? 'this '+payment.type+' payment row' : '�'+property.name+'� and all '+property.payments.length+' payment rows in '+monthLabel;
-    if(!window.confirm('Delete '+description+'? This removes the record from '+(configured?'Google Sheets':'the local preview')+'.'+(dirty?' Unsaved edits will be discarded.':'')))return;
+    const description=payment ? 'this '+payment.type+' payment row' : '"'+property.name+'" and all '+property.payments.length+' payment rows in '+monthLabel;
+    if(!await askConfirmation({title:payment?'Delete payment?':'Delete property?',message:'Delete '+description+'? This removes the record from '+(configured?'Google Sheets':'the local preview')+'.'+(dirty?' Unsaved edits will be discarded.':''),confirmLabel:payment?'Delete Payment':'Delete Property',destructive:true}))return;
     setSaving(true);setError('');try{await onSave([payment?{kind:'deletePayment',paymentId:payment.id}:{kind:'deleteProperty',propertyId:property.id}]);}catch(e){setError(errorText(e));}finally{setSaving(false);}
   }
   return <Dialog title={property.name} subtitle={`${property.manager || 'No manager'} · ${monthLabel}`} className="drawer" onClose={close} busy={saving}><form className="drawer-form" onSubmit={save}><div className="drawer-content">{!editingSupported&&<p className="field-help">Update the Apps Script deployment to enable property editing and record deletion.</p>}<div className="record-property-fields"><label>Property Name<input aria-label="Property name" value={name} onChange={e=>setName(e.target.value)} maxLength={160} disabled={saving||!editingSupported} required/></label><label>Account Manager<ManagerSelect managers={managers} value={assignedManager} currentValue={property.manager} onChange={setAssignedManager} disabled={saving||!editingSupported}/></label></div><div className="drawer-summary"><label>Expected Amount<input aria-label="Property expected amount" inputMode="decimal" value={total} onChange={event => setTotal(event.target.value)} required disabled={saving} /></label><div><span>Collected</span><strong className="collected-cell">{money(previewCollected)}</strong></div><div><span>Outstanding</span><strong>{money(previewTotal - previewCollected)}</strong></div></div><div className="drawer-section-heading"><h3>Payment Details</h3><span>{property.payments.length} payment rows</span></div><p className="field-help">Enter amounts using a decimal point. A blank amount clears that field; zero records a zero payment.</p><div className="payment-cards">{property.payments.map((payment, index) => {
@@ -306,6 +308,7 @@ function PropertyDrawer({ property, monthLabel, configured, managers, editingSup
 }
 
 function AddProperty({ month, managers, onManageManagers, onClose, onSave }: { managers: AccountManager[]; onManageManagers:()=>void; month: Month; onClose: () => void; onSave: (changes: Change[]) => Promise<void> }) {
+  const askConfirmation=useConfirmation();
   const [name, setName] = useState(''); const [manager, setManager] = useState(''); const [amount, setAmount] = useState(''); const [saving, setSaving] = useState(false); const [error, setError] = useState('');
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('');
@@ -317,5 +320,5 @@ function AddProperty({ month, managers, onManageManagers, onClose, onSave }: { m
       setSaving(true); await onSave([{ kind: 'addProperty', monthId: month.id, name: name.trim(), manager: manager.trim(), totalCents: total }]);
     } catch (e) { setError(errorText(e)); } finally { setSaving(false); }
   }
-  return <Dialog title="Add a Property" subtitle={`Create a monthly record for ${month.label}`} onClose={onClose} busy={saving}><form onSubmit={submit} className="add-form"><label>Property Name<input value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Castle Beach House" maxLength={120} required disabled={saving} /></label><label>Property Manager (Required)<ManagerSelect managers={managers} required value={manager} onChange={setManager} disabled={saving}/><small>Select a saved manager record.</small></label><button type="button" className="button quiet compact" disabled={saving} onClick={()=>{if(!(name||amount||manager)||window.confirm('Opening account managers will discard this unsaved property form. Continue?'))onManageManagers();}}>Manage Account Managers</button><label>Expected Amount<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} placeholder="0.00" required disabled={saving} /></label><p className="field-help">Your property starts with Total Payment and AR rows. Payment rows are added only when you import payment data.</p>{error && <div className="form-error" role="alert">{error}</div>}<div className="form-actions"><button type="button" className="button secondary" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}{saving ? 'Adding…' : "Add Property"}</button></div></form></Dialog>;
+  return <Dialog title="Add a Property" subtitle={`Create a monthly record for ${month.label}`} onClose={onClose} busy={saving}><form onSubmit={submit} className="add-form"><label>Property Name<input value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Castle Beach House" maxLength={120} required disabled={saving} /></label><label>Property Manager (Required)<ManagerSelect managers={managers} required value={manager} onChange={setManager} disabled={saving}/><small>Select a saved manager record.</small></label><button type="button" className="button quiet compact" disabled={saving} onClick={async()=>{if(!(name||amount||manager)||await askConfirmation({title:'Leave this form?',message:'Opening Account Managers will discard this unsaved property form.',confirmLabel:'Discard and Continue',destructive:true}))onManageManagers();}}>Manage Account Managers</button><label>Expected Amount<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} placeholder="0.00" required disabled={saving} /></label><p className="field-help">Your property starts with Total Payment and AR rows. Payment rows are added only when you import payment data.</p>{error && <div className="form-error" role="alert">{error}</div>}<div className="form-actions"><button type="button" className="button secondary" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}{saving ? 'Adding…' : "Add Property"}</button></div></form></Dialog>;
 }

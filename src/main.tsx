@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import {ConfirmationProvider} from './Confirmation';
 import { createApi, validateEndpoint } from './api.ts';
 import { createPreviewApi } from './preview-api.ts';
 import './styles.css';
@@ -19,6 +20,6 @@ function Root(){
  const [endpoint]=useState(storedEndpoint);
  const api=useMemo(()=>{try{return endpoint?createApi(endpoint):createPreviewApi()}catch{return createPreviewApi()}},[endpoint]);
  const valid=(()=>{try{return !!endpoint&&!!validateEndpoint(endpoint)}catch{return false}})();
- return <App api={api} configured={valid}/>;
+ return <ConfirmationProvider><App api={api} configured={valid}/></ConfirmationProvider>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><Root/></React.StrictMode>);

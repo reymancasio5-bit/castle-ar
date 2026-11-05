@@ -1,0 +1,6 @@
+.confirmation-dialog.import-modal{box-sizing:border-box;width:min(540px,calc(100vw - 48px))}
+.confirmation-dialog .import-header>div:nth-child(2){flex:1;min-width:0}
+.confirmation-content.import-content{padding-top:6px;padding-bottom:28px}
+.confirmation-content p{margin:0;line-height:1.7;font-size:15px;color:#65736c;overflow-wrap:anywhere;white-space:pre-line}
+.confirmation-dialog .confirmation-danger{color:white;background:#a83434;border:1px solid #a83434}.confirmation-dialog .confirmation-danger:hover{background:#8e2929;border-color:#8e2929}
+@media(max-width:640px){.confirmation-dialog.import-modal{width:calc(100vw - 20px)}.confirmation-content.import-content{padding-top:6px;padding-bottom:24px}.confirmation-dialog .import-footer{flex-wrap:wrap}.confirmation-dialog .import-footer .import-button{flex:1}}

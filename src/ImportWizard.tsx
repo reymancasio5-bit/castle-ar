@@ -10,6 +10,7 @@ import { buildBulkImportPreview } from './bulk-import.ts';
 import { useExiting } from './Presence';
 import './import.css';
 import ManagerSelect from './ManagerSelect';
+import {useConfirmation} from './Confirmation';
 
 const PAGE_SIZE = 30;
 const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto' };
@@ -22,6 +23,7 @@ function columnLetter(index: number) {
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
 export function ImportWizard({ initialFile, month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+  const askConfirmation=useConfirmation();
   const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -178,7 +180,7 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
           <div className="import-field-grid" style={{ marginTop: 18 }}>
             <label className="import-field">Property Name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
             <label className="import-field">Total Payment (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>Enter the expected total. This amount does not come from the file.</small></label>
-            {!selectedProperty && <label className="import-field import-field-full">Property Manager (Required for a New Property)<ManagerSelect managers={managers} required value={options.manager} onChange={manager=>setDestination(current=>({...current,manager}))}/>{!managers.some(m=>m.active)&&<button type="button" className="button quiet compact" onClick={()=>{if(window.confirm('Opening account managers will discard this import, including loaded files and mapping choices. Continue?'))onManageManagers?.();}}>Add an account manager first</button>}</label>}
+            {!selectedProperty && <label className="import-field import-field-full">Property Manager (Required for a New Property)<ManagerSelect managers={managers} required value={options.manager} onChange={manager=>setDestination(current=>({...current,manager}))}/>{!managers.some(m=>m.active)&&<button type="button" className="button quiet compact" onClick={async()=>{if(await askConfirmation({title:'Leave this import?',message:'Opening Account Managers will discard this import, including loaded files and mapping choices.',confirmLabel:'Discard and Continue',destructive:true}))onManageManagers?.();}}>Add an account manager first</button>}</label>}
           </div>
           <div className="import-file-queue" aria-label="Files to Import">
             {files.map((file, index) => <div key={`${file.name}-${index}`} className="import-file-item">
