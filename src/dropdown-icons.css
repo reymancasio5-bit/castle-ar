@@ -1,0 +1,35 @@
+/* One Lucide-style chevron for form fields, filters, month and team menus. */
+.month-select > svg:last-child,
+.select-field > svg,
+.team-profile-chevron {
+  width:14px;
+  height:14px;
+  stroke-width:2;
+  flex-shrink:0;
+}
+.team-profile-chevron { transition:transform var(--dropdown-duration) var(--dropdown-easing); }
+@supports (appearance:base-select) {
+  body :is(.app-shell,.import-modal,.dialog) select::picker-icon {
+    content:"";
+    display:block;
+    width:14px;
+    height:14px;
+    flex:0 0 14px;
+    margin-inline-start:auto;
+    background-color:#6b7280;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
+  body :is(.app-shell,.import-modal,.dialog) :is(.month-select,.select-field) select::picker-icon { display:none; }
+}
+@supports not (appearance:base-select) {
+  body :is(.app-shell,.import-modal,.dialog) select {
+    appearance:none!important;
+    padding-right:36px!important;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position:right 14px center;
+    background-size:14px 14px;
+    background-repeat:no-repeat;
+  }
+  body :is(.app-shell,.import-modal,.dialog) :is(.month-select,.select-field) select {background-image:none;}
+}
+@media(prefers-reduced-motion:reduce){.team-profile-chevron{transition:none;}}

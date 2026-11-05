@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronUp, CircleHelp, Settings2 } from 'lucide-react';
+import { ChevronDown, CircleHelp, Settings2 } from 'lucide-react';
 import { Presence } from './Presence';
 import './TeamMenu.css';
 import CastleMark from './CastleMark';
@@ -100,7 +100,7 @@ export default function TeamMenu({ onSettings, onHelp }: {
       }}>
       <span className="team-profile-avatar" aria-hidden="true"><CastleMark/><span /></span>
       <span className="team-profile-name"><strong>Castle Team</strong><small>Shared Workspace</small></span>
-      <ChevronUp size={16} className="team-profile-chevron" aria-hidden="true" />
+      <ChevronDown size={14} className="team-profile-chevron" aria-hidden="true" />
     </button>
     <Presence present={open}>{exiting => createPortal(<div ref={panel} id={menuId} role="menu" aria-labelledby={triggerId} data-exiting={exiting} inert={exiting}
       className="team-menu" style={position} onKeyDown={handleKeys}
