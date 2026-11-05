@@ -7,7 +7,7 @@ import {buildFollowUpChange, followUpDirty, followUpDraft, followUpStatuses, isS
 import type {FollowUpDraft} from './follow-ups.ts';
 import './follow-ups.css';
 import ManagerSelect from './ManagerSelect';
-export interface FollowUpsProps {properties:Property[];managers:AccountManager[];onManageManagers?:()=>void;revision:string;onSave:(revision:string,change:Change)=>Promise<void>;onOpen:(property:Property)=>void;onDirtyChange?:(dirty:boolean)=>void}
+export interface FollowUpsProps {properties:Property[];managers:AccountManager[];revision:string;onSave:(revision:string,change:Change)=>Promise<void>;onOpen:(property:Property)=>void;onDirtyChange?:(dirty:boolean)=>void}
 interface Edit {id:string;revision:string;initial:FollowUpDraft;draft:FollowUpDraft}
 function ScreenshotViewer({attachment,onClose}:{attachment:FollowUpAttachment;onClose:()=>void}) {
  const dialog=useRef<HTMLDialogElement>(null);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -31,8 +31,7 @@ function Screenshots({attachments,onRemove,disabled}:{attachments:FollowUpAttach
   {onRemove && <button type="button" className="icon-button" disabled={disabled} aria-label={`Remove screenshot ${attachment.name}`} onClick={()=>onRemove(index)}><X size={16}/></button>}
  </div>)}{viewing && <ScreenshotViewer attachment={viewing} onClose={()=>setViewing(null)}/>}</div>;
 }
-export default function FollowUps({properties,managers,onManageManagers,revision,onSave,onOpen,onDirtyChange}:FollowUpsProps) {
- const [filter,setFilter]=useState<FollowUpStatus|'all'>('all');
+export default function FollowUps({properties,managers,revision,onSave,onOpen,onDirtyChange}:FollowUpsProps) {
  const [edit,setEdit]=useState<Edit|null>(null);
  const [saving,setSaving]=useState(false);const [processing,setProcessing]=useState(false);
  const [error,setError]=useState('');const [success,setSuccess]=useState('');
@@ -66,11 +65,9 @@ export default function FollowUps({properties,managers,onManageManagers,revision
   catch(cause){setError(cause instanceof Error ? cause.message : 'Could not save. Your draft is still here.');}
   finally {setSaving(false);}
  }
- const visible=properties.filter(p=>p.id===edit?.id||filter==='all'||(p.followUp?.status??'not_contacted')===filter);
+ const visible=properties;
  return <section className="follow-ups" aria-label="Property Follow-Ups">
-  <div className="fu-heading"><p>Save or cancel your update before switching views. {onManageManagers&&<button type="button" className="button quiet compact" disabled={locked} onClick={onManageManagers}>Manage Account Managers</button>}</p>
-   <label className="fu-filter">Follow-Up Status<select value={filter} disabled={locked} onChange={event=>{setFilter(event.target.value as typeof filter);setEdit(null);setError('');}}><option value="all">All Statuses</option>{followUpStatuses.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}</select></label>
-  </div>
+  {locked&&<p className="fu-editing-note" role="status">Save or cancel your update before switching views.</p>}
   {success && <p className="fu-success" role="status"><Check size={16}/>{success}</p>}
   <div className="fu-column-labels" aria-hidden="true"><span>Property & Balance</span><span>Status & Account Manager</span><span>Conversation Notes</span><span/></div>
   <div className="fu-list">{visible.map(property=>{

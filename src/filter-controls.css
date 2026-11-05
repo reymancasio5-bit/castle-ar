@@ -71,6 +71,9 @@ body .app-shell .filter-row {
 body .app-shell .filter-row.reconciliation-filter-row {
   grid-template-columns: minmax(200px, 1fr) repeat(4, minmax(140px, 170px));
 }
+body .app-shell .filter-row.follow-up-filter-row {
+  grid-template-columns:minmax(200px,1fr) repeat(2,minmax(140px,180px)) minmax(180px,220px);
+}
 body .app-shell .filter-row .search-field { width: 100%; min-width: 0; grid-column: auto; }
 body .app-shell .fu-heading { flex-wrap: wrap; align-items: flex-end; gap: 16px; }
 body .app-shell .fu-filter { flex: 0 1 260px; min-width: 0; }
@@ -82,15 +85,19 @@ body .import-modal .import-section-heading { flex-wrap: wrap; gap: 12px; }
 body .import-modal .import-filter-label { min-width: 0; }
 body .import-modal .import-filter-label select { width: 170px; max-width: 100%; }
 @container record-filters (max-width: 950px) {
+  body .app-shell .filter-row.follow-up-filter-row { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  body .app-shell .filter-row.follow-up-filter-row .search-field { grid-column:1 / -1; }
   body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   body .app-shell .filter-row.reconciliation-filter-row .search-field { grid-column: 1 / -1; }
 }
 @container record-filters (max-width: 650px) {
+  body .app-shell .filter-row.follow-up-filter-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
   body .app-shell .filter-row,
   body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   body .app-shell .filter-row .search-field { grid-column: 1 / -1; }
 }
 @container record-filters (max-width: 480px) {
+  body .app-shell .filter-row.follow-up-filter-row { grid-template-columns:minmax(0,1fr); }
   body .app-shell .filter-row,
   body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: minmax(0, 1fr); }
 }
@@ -103,6 +110,8 @@ body .import-modal .import-filter-label select { width: 170px; max-width: 100%; 
 /* Fallback for older browsers without container queries. */
 @supports not (container-type: inline-size) {
   @media (max-width: 1250px) {
+    body .app-shell .filter-row.follow-up-filter-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    body .app-shell .filter-row.follow-up-filter-row .search-field { grid-column:1 / -1; }
     body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     body .app-shell .filter-row.reconciliation-filter-row .search-field { grid-column: 1 / -1; }
   }
@@ -111,6 +120,7 @@ body .import-modal .import-filter-label select { width: 170px; max-width: 100%; 
     body .app-shell .filter-row .search-field { grid-column: 1 / -1; }
   }
   @media (max-width: 580px) {
+    body .app-shell .filter-row.follow-up-filter-row { grid-template-columns:minmax(0,1fr); }
     body .app-shell .filter-row,
     body .app-shell .filter-row.reconciliation-filter-row { grid-template-columns: minmax(0, 1fr); }
   }
