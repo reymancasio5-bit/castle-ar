@@ -78,7 +78,7 @@
   background: #fff;
   box-shadow: 0 16px 48px #0b2b2830, 0 2px 8px #0b2b2812;
   color: #244c3a;
-  animation: team-menu-enter .16s ease-out;
+  /* Opening and closing motion is shared with selects in motion.css. */
 }
 
 @keyframes team-menu-enter {
@@ -105,7 +105,7 @@
   text-align: left;
   font-size: 12px;
   font-weight: 500;
-  transition: background-color .15s ease, color .15s ease;
+  transition: background-color var(--dropdown-option-duration) ease, color var(--dropdown-option-duration) ease;
 }
 .team-menu > button svg { color: #799783; transition: color .15s ease; }
 .team-menu > button:hover,

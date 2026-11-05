@@ -17,7 +17,7 @@
 }
 
 .team-menu {
-  animation: surface-menu-in 180ms cubic-bezier(.2, .8, .2, 1) backwards;
+  animation: surface-menu-in var(--dropdown-duration) var(--dropdown-easing) backwards;
 }
 
 .toast {
@@ -48,7 +48,7 @@
 }
 
 .team-menu[data-exiting="true"] {
-  animation: surface-menu-out 180ms ease-in both;
+  animation: surface-menu-out var(--dropdown-duration) var(--dropdown-easing) both;
   pointer-events: none;
 }
 
