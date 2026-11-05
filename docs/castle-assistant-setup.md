@@ -38,7 +38,7 @@ If the project is standalone, use the [PropertiesService](https://developers.goo
 
 ## Usage and access boundaries
 
-The team shares 6 questions/minute and the configured daily limit, resetting at UTC midnight. Each question is reserved before network calls; failed requests also count. Each question allows at most 3 model calls, 1,200 output tokens per call, 50,000 characters of conversation/tool input, and a short history. These are request/context limits, **not a dollar billing cap**. Configure provider project usage controls separately. `CASTLE_AI_USAGE` is managed automatically; do not edit it during active use.
+The team shares 6 questions/minute and the configured daily limit, resetting at UTC midnight. Each question is reserved before network calls; failed requests also count. Each question allows at most 3 model calls, 2,400 output tokens per call, 100,000 characters of conversation/tool input, and a short history. These are request/context limits, **not a dollar billing cap**. Configure provider project usage controls separately. `CASTLE_AI_USAGE` is managed automatically; do not edit it during active use.
 
 Obvious unrelated prompts are rejected without an OpenAI call. Ambiguous or mixed requests may consume tokens before the model refuses them. Scope instructions are a guardrail, not a guarantee that every unrelated phrase will cost zero tokens.
 
@@ -49,3 +49,15 @@ No model fine-tuning is required. Maintain the application guide in `Assistant.g
 ## Verification before live use
 
 Automated tests cover access without a passcode, refusal without a paid request, exact-cent summaries, quotas, transport credential handling, real backend proposal validation, and revision-controlled saves. A real model request requires your configured deployment/key and has not been run by the local build. Check a report against the sheet and review a small proposed edit before wider team use.
+
+## Rich responses, reports, and attachments
+
+The assistant renders headings, lists and tables, and displays a progress indicator during model calls. This Apps Script transport polls for completed responses; it does not stream individual tokens.
+
+Reports are written by the model and downloaded as actual PDF, Excel (.xlsx), or plain text (.txt) files. If no file type is specified, the assistant asks and recommends PDF. PDFs include paginated tables and page numbers. Excel exports contain the model?s report text and tables, not an automatic full database dump. Report content is included in follow-up context for revisions. No downloadable HTML is generated.
+
+Use the paperclip or paste a screenshot into the message box. Supported attachments: PDF, XLSX, XLS, CSV, TXT, MD, PNG, JPG and WebP, one file at a time up to 10 MB. Text extraction is local; the message sends up to 18,000 characters to OpenAI. Larger text files send an explicitly labeled excerpt; original files are retained locally for full import review. Screenshots are scaled to a maximum of 2,000 pixels on the longest side and sent as images to the model (maximum 2.5 MB encoded). Scanned PDFs should be supplied as screenshots of the relevant pages. PDFs over 100 pages are rejected.
+
+Ask to import an attached original bank PDF or Excel/CSV file. The model supplies a Review import button that opens the existing importer with that file already loaded. Users still review matching/mapping and apply explicitly. Screenshots support analysis and reviewed field-edit proposals, not bank verification or bulk import. Attachments remain selected for follow-up questions until removed. Attached content is untrusted evidence; the model is instructed not to follow instructions inside files or images.
+
+Deploy the rebuilt public/Code.gs (already includes Assistant.gs) and the rebuilt frontend to enable these additions. The API key remains in Script Properties.

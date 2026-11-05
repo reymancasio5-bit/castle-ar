@@ -136,11 +136,12 @@ function doPost(e) {
   try {
     var payload = e && e.parameter && e.parameter.payload;
     if (payload === undefined) payload = e && e.postData && e.postData.contents;
-    if (typeof payload !== 'string' || payload.length > 200000) castleThrow('BAD_REQUEST', 'A JSON payload of at most 200 KB is required.');
+    if (typeof payload !== 'string' || payload.length > 3000000) castleThrow('BAD_REQUEST', 'The request exceeds the allowed size.');
     try { body = JSON.parse(payload); } catch (_) { castleThrow('BAD_REQUEST', 'The request is not valid JSON.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) castleThrow('BAD_REQUEST', 'A request object is required.');
     castleRequestId(body.requestId);
     if (body.operation === 'assistant') return castleOutput(castleAiPost(body));
+    if (payload.length > 200000) castleThrow('BAD_REQUEST', 'A JSON payload of at most 200 KB is required.');
     fingerprint = castleHash(JSON.stringify(body));
     lock = LockService.getScriptLock();
     locked = lock.tryLock(10000);

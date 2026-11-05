@@ -27,7 +27,7 @@ import './branding.css';
 import {createRecordSync} from './record-sync.ts';
 import {loadWorkspaceLocation,saveWorkspaceLocation} from './workspace-location.ts';
 
-type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot>; assistant?:(request:AssistantRequest)=>Promise<AssistantReply> };
+type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot>; assistant?:(request:AssistantRequest,onProgress?:(label:string)=>void)=>Promise<AssistantReply> };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 const formatAmount = (amount: number | null) => amount === null ? '' : (amount / 100).toFixed(2);
 const hasPayment = (payment: Payment) => payment.amountCents !== null || payment.bundleCents !== null || payment.bankCents !== null;
@@ -54,6 +54,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bankImportOpen,setBankImportOpen]=useState(false);
+  const [assistantImportFile,setAssistantImportFile]=useState<File|undefined>();
   const [mobileNav, setMobileNav] = useState(false);
   const [bankReportOpen,setBankReportOpen]=useState(false);
   const [exporting, setExporting] = useState(false);
@@ -134,8 +135,8 @@ export default function App({ api, configured }: { api: Api; configured: boolean
     } finally { savePending.current = false; setSavingRecords(false); }
   }
   function openProperty(property: Property) { pauseRefresh(); setEditRevision(snapshot?.revision ?? ''); setSelected(property); }
-  function openBankImport() { pauseRefresh(); setEditRevision(snapshot?.revision ?? ''); setBankImportOpen(true); }
-  function openImport() { pauseRefresh(); setEditRevision(snapshot?.revision ?? ''); setImportOpen(true); }
+  function openBankImport() { setAssistantImportFile(undefined);pauseRefresh(); setEditRevision(snapshot?.revision ?? ''); setBankImportOpen(true); }
+  function openImport() { setAssistantImportFile(undefined);pauseRefresh(); setEditRevision(snapshot?.revision ?? ''); setImportOpen(true); }
   function navigate(next: View) { if (followUpDirty || savingRecords) return; setView(next); setSystemFilter('all'); setDaisyFilter('all'); setMobileNav(false); setStatus(preferences.defaultStatus); setSearch(''); }
   function updatePreferences(next: Preferences) {
     const persisted = savePreferences(next);
@@ -203,13 +204,13 @@ export default function App({ api, configured }: { api: Api; configured: boolean
           <footer className="page-footer"><span><span className={`footer-dot ${configured ? 'live' : ''}`} />{configured ? 'Shared Google Sheets records' : 'Temporary preview · changes reset on reload'}</span><span>{snapshot.updatedAt ? `Records updated ${new Date(snapshot.updatedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Ready to review'}{snapshot.spreadsheetUrl && <a href={snapshot.spreadsheetUrl} target="_blank" rel="noreferrer">Open Spreadsheet<ExternalLink size={12} /></a>}</span></footer>
         </>}
       </main>
-      {snapshot && <CastleAssistant snapshot={snapshot} monthId={monthId} ask={configured?api.assistant:undefined} onApply={saveChanges}/>}
+      {snapshot && <CastleAssistant snapshot={snapshot} monthId={monthId} ask={configured?api.assistant:undefined} onApply={saveChanges} onImport={(kind,file,targetMonth)=>{setMonthId(targetMonth);if(kind==='bank')openBankImport();else openImport();setAssistantImportFile(file);}}/>}
     </div>
     <Presence present={!!notice}>{exiting => <div className="toast" role="status" data-exiting={exiting} inert={exiting}><CheckCircle2 size={18} />{notice}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}</Presence>
     <Presence present={!!selected}>{selected && <PropertyDrawer managers={managerRecords} editingSupported={snapshot?.recordEditingSchema===1} key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}</Presence>
     <Presence present={adding && !!month}>{adding && month && <AddProperty managers={managerRecords} onManageManagers={()=>{setAdding(false);navigate('managers');}} month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}</Presence>
-    {bankImportOpen && month && <BankStatementImport month={month} supported={(snapshot?.bankStatementSchema??0)>=2} onClose={()=>setBankImportOpen(false)} onApply={async changes=>{await applyChanges(changes);setBankImportOpen(false);}}/>}
-    <Presence present={importOpen && !!month}>{importOpen && month && <ImportWizard managers={managerRecords} onManageManagers={()=>{setImportOpen(false);navigate('managers');}} month={month} propertyCatalog={snapshot?.months.flatMap(item => item.properties)} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}</Presence>
+    {bankImportOpen && month && <BankStatementImport initialFile={assistantImportFile} month={month} supported={(snapshot?.bankStatementSchema??0)>=2} onClose={()=>setBankImportOpen(false)} onApply={async changes=>{await applyChanges(changes);setBankImportOpen(false);}}/>}
+    <Presence present={importOpen && !!month}>{importOpen && month && <ImportWizard initialFile={assistantImportFile} managers={managerRecords} onManageManagers={()=>{setImportOpen(false);navigate('managers');}} month={month} propertyCatalog={snapshot?.months.flatMap(item => item.properties)} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); }} />}</Presence>
     <Presence present={bankReportOpen}>{bankReportOpen&&snapshot&&month&&<BankReport snapshot={snapshot} monthId={month.id} onClose={()=>setBankReportOpen(false)}/>}</Presence>
     <Presence present={helpOpen}>{helpOpen && <Dialog title="Your Monthly AR Workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}</Presence>
     <Presence present={settingsOpen}>{settingsOpen && <Dialog title="User Settings" className="settings-dialog" onClose={() => setSettingsOpen(false)}><UserSettings preferences={preferences} managers={allManagers} onSave={updatePreferences} onCancel={() => setSettingsOpen(false)} /></Dialog>}</Presence>

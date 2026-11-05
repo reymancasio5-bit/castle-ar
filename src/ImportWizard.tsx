@@ -21,7 +21,7 @@ function columnLetter(index: number) {
 }
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
-export function ImportWizard({ month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+export function ImportWizard({ initialFile, month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
   const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -82,7 +82,7 @@ export function ImportWizard({ month, propertyCatalog = month.properties, manage
   const activePage = Math.min(page, pageCount - 1);
   const pageRows = visibleRows.slice(activePage * PAGE_SIZE, (activePage + 1) * PAGE_SIZE);
 
-  async function chooseFiles(selected: FileList | null) {
+  async function chooseFiles(selected: FileList | File[] | null) {
     if (!selected?.length) return;
     const uploads = Array.from(selected);
     if (uploads.length > 50 || uploads.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) {
@@ -114,6 +114,8 @@ export function ImportWizard({ month, propertyCatalog = month.properties, manage
       if (fileRef.current) fileRef.current.value = '';
     }
   }
+
+  useEffect(()=>{if(initialFile)void chooseFiles([initialFile]);},[initialFile]);
 
   function changeSheet(index: number) {
     setFiles(current => current.map((file, i) => i === fileIndex ? { ...file, sheetIndex: index, options: { ...file.options, ...inferColumns(file.sheets[index]) } } : file));

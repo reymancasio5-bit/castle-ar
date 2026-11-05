@@ -46,3 +46,27 @@ test('repeated tool calls are capped and provider errors do not expose credentia
  const b={message:'Report on properties',monthId:'m',history:[]};assert.match(e.ctx.castleAiRun(b).text,/limit/);assert.equal(calls,3);
  e.ctx.UrlFetchApp.fetch=()=>{throw Error('test-secret');};assert.throws(()=>e.ctx.castleAiRun(b),err=>!/test-secret/.test(String(err)));
 });
+test('AI report tool returns a downloadable model-authored artifact',()=>{
+ const e=engine();e.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'function_call',name:'create_report',call_id:'r',arguments:JSON.stringify({title:'November report',markdown:'# Findings\nReceived: $35.00'})}]})});
+ const result=e.ctx.castleAiRun({message:'Generate a downloadable PDF report',monthId:'m',history:[]});assert.equal(result.report.title,'November report');assert.match(result.report.markdown,/Received/);
+});
+test('screenshot input reaches the vision model without being treated as instructions',()=>{
+ const e=engine();let body:any;e.ctx.UrlFetchApp.fetch=(_url:string,options:any)=>{body=JSON.parse(options.payload);return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'message',content:[{text:'Screenshot analysis'}]}]})};};
+ e.ctx.castleAiRun({message:'Read this screenshot',monthId:'m',history:[],attachment:{id:'a',name:'screen.png',kind:'image',dataUrl:'data:image/png;base64,aGVsbG8='}});
+ assert.ok(body.input.some((m:any)=>Array.isArray(m.content)&&m.content.some((c:any)=>c.type==='input_image')));assert.match(body.instructions,/untrusted/i);
+});
+test('import tool validates original file type and cannot import screenshots',()=>{
+ const e=engine();e.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'function_call',name:'prepare_import',call_id:'i',arguments:'{"kind":"bank","attachmentId":"a"}'}]})});
+ const b={message:'Import bank file',monthId:'m',history:[],attachment:{id:'a',name:'statement.pdf',kind:'document',text:'AIRBNB PAYMENTS 10.00'}};
+ assert.equal(e.ctx.castleAiRun(b).importAction.kind,'bank');
+ assert.equal(e.ctx.castleAiRun({...b,attachment:{id:'a',name:'screen.png',kind:'image',dataUrl:'data:image/png;base64,aGVsbG8='}}).importAction,undefined);
+});
+test('attachment limits are checked before paid API calls',()=>{
+ const e=engine();assert.throws(()=>e.ctx.castleAiRun({message:'Read file',history:[],attachment:{id:'a',name:'notes.txt',kind:'document',text:'x'.repeat(18001)}}),/attachment|18,000/i);assert.equal(e.calls(),0);
+});
+
+test('report format is requested before spending tokens when unspecified',()=>{const e=engine();const r=e.ctx.castleAiRun({message:'Give me a downloadable report',history:[],monthId:'m'});assert.equal(r.chooseReportFormat,true);assert.equal(e.calls(),0);});
+test('report output format is distinct from attached source file format',()=>{
+ const e=engine();assert.equal(e.ctx.castleAiReportFormat('Create an Excel report from the attached PDF',[]),'xlsx');assert.equal(e.ctx.castleAiReportFormat('Create a report from this PDF',[]),null);
+ const history=[{role:'assistant',content:'Which file type would you like?'}];assert.equal(e.ctx.castleAiReportFormat('PDF please',history),'pdf');assert.equal(e.ctx.castleAiReportFormat('Excel',history),'xlsx');assert.equal(e.ctx.castleAiRun({message:'PDF please',history,monthId:'m'}).text,'Castle report');
+});

@@ -20,6 +20,12 @@ interface SheetJS {
 }
 declare global { interface Window { XLSX?: SheetJS } }
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+export function downloadAssistantWorkbook(rows:string[][],filename:string){
+ const xlsx=getSheetJS(),workbook=xlsx.utils.book_new();
+ // Values remain string cells; model text is never installed as spreadsheet formulas.
+ xlsx.utils.book_append_sheet(workbook,xlsx.utils.aoa_to_sheet(rows),'AI Report');
+ xlsx.writeFile(workbook,filename+'.xlsx');
+}
 
 function getSheetJS(): SheetJS {
   if (typeof window === 'undefined' || !window.XLSX) throw new Error('Excel support is still loading. Please try again in a moment.');

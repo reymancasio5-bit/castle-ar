@@ -5,13 +5,13 @@ import { matchStatement, parseStatement, type BankDeposit } from './bank-stateme
 import { money } from './domain';
 import './import.css';
 import './bank-statement.css';
-export default function BankStatementImport({month,onClose,onApply,supported}:{month:Month;onClose:()=>void;onApply:(changes:Change[])=>Promise<void>;supported:boolean}){
+export default function BankStatementImport({month,onClose,onApply,supported,initialFile}:{initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[])=>Promise<void>;supported:boolean}){
  const dialog=useRef<HTMLDialogElement>(null),input=useRef<HTMLInputElement>(null);
  const [deposits,setDeposits]=useState<BankDeposit[]>([]),[warnings,setWarnings]=useState<string[]>([]);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[reviewed,setReviewed]=useState(false);
  const result=useMemo(()=>matchStatement(deposits,month),[deposits,month]);
  useEffect(()=>{const el=dialog.current;el?.showModal();return()=>el?.close();},[]);
- async function files(files:FileList|null){
+ async function files(files:FileList|File[]|null){
   if(!files?.length||busy||saving)return;
   setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);
   try{
@@ -26,6 +26,7 @@ export default function BankStatementImport({month,onClose,onApply,supported}:{m
    setDeposits(all);setWarnings(notes);setReviewed(true);
   }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');}finally{setBusy(false);if(input.current)input.current.value='';}
  }
+ useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
  async function save(){setSaving(true);setError('');try{await onApply(result.changes);}catch(e){setError((e as Error).message);}finally{setSaving(false);}}
  return <dialog ref={dialog} className="import-modal bank-statement-modal" aria-labelledby="bank-import-title" onCancel={e=>{e.preventDefault();if(!busy&&!saving)onClose();}}>
   <header className="import-header"><div className="import-header-icon"><FileText size={23}/></div><div><p className="import-eyebrow">BANK RECONCILIATION</p><h2 id="bank-import-title">Import bank statement</h2><p>Match Airbnb deposits to {month.label} records.</p></div><button className="import-icon-button" onClick={onClose} disabled={busy||saving} aria-label="Close bank statement import"><X size={21}/></button></header>
