@@ -1,6 +1,6 @@
 import BundleMatching from './BundleMatching';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Users, ArrowDownLeft, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, CalendarDays, Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, ExternalLink, FileSpreadsheet, LayoutDashboard, Loader2, Menu, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, Wallet, X } from 'lucide-react';
+import { UserRound, Users, ArrowDownLeft, ArrowDownToLine, ArrowRight, ArrowUpRight, Building2, CalendarDays, Check, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Clock3, ExternalLink, FileSpreadsheet, LayoutDashboard, Loader2, Menu, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, Wallet, X } from 'lucide-react';
 import type { AccountManager, Change, Month, Payment, Property, Snapshot } from './types';
 import { balance, collected, money, parseMoney, systemStatus } from './domain';
 import { paymentDraftToFields, type PaymentDraft } from './editor';
@@ -178,7 +178,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
         <button className={view === 'properties' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('properties')}><Building2 size={19} /><span>Follow-Ups</span><span className="nav-count">{properties.length}</span></button>
         <button className={view === 'reconciliation' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('reconciliation')}><ClipboardCheck size={19} /><span>Reconciliation</span>{unverified > 0 && <span className="nav-count">{unverified}</span>}</button>
         <button className={view === 'managers' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('managers')}><Users size={19}/><span>Account Managers</span></button>
-        <button className={view === 'owners' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('owners')}><Users size={19}/><span>Property Owners</span></button>
+        <button className={view === 'owners' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('owners')}><UserRound size={19}/><span>Property Owners</span></button>
       </nav>
       <div style={{ marginTop: 'auto' }} inert={followUpDirty || savingRecords}><TeamMenu onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} /></div>
     </aside>
