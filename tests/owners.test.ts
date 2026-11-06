@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {applyOwnerChange,matchOwnerDeposits,ownerKey,transferKey} from '../src/owners.ts';
+import {createPreviewApi} from '../src/preview-api.ts';
+import type {Snapshot,OwnerChange,PropertyOwner} from '../src/types.ts';
+const owner:PropertyOwner={id:'o',name:'Jane',bankName:'Jane Smith',email:'',notes:'',active:true,propertyNames:[' House ','Other']};
+const snapshot=():Snapshot=>({revision:'1',updatedAt:'',spreadsheetUrl:'',owners:[structuredClone(owner)],ownerTransfers:[],months:[{id:'m',label:'Month',month:'2026-09',properties:[{id:'p',name:'House',manager:'',totalCents:10000,payments:[]},{id:'q',name:'Other',manager:'',totalCents:20000,payments:[]}]}]});
+const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
+const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
+test('owner keys normalize whitespace and transfer identity excludes date and amount',()=>{assert.equal(ownerKey(' Jane  Smith '),'jane smith');assert.equal(transferKey('58-64',' ca123456 '),transferKey('5864','CA123456'));});
+test('conflicting repeated reference blocks both entries and multiline notes survive profile saves',()=>{const s=snapshot();const rows=matchOwnerDeposits([deposit(),{...deposit(),amountCents:20000}],s.months[0],s.owners!,[]);assert.ok(rows.every(r=>r.duplicate&&r.allocations.length===0));applyOwnerChange(s,{kind:'saveOwner',owner:{...owner,notes:'First line\nSecond line'}});assert.equal(s.owners![0].notes,'First line\nSecond line');});
+test('unique exact outstanding matches once; inactive, ambiguous, missing refs and duplicate refs do not auto allocate',()=>{
+ const s=snapshot();const rows=matchOwnerDeposits([deposit(),deposit('ZZ987654')],s.months[0],s.owners!,[]);assert.equal(rows[0].allocations.length,1);assert.equal(rows[1].allocations.length,0);
+ assert.equal(matchOwnerDeposits([deposit()],s.months[0],[{...owner,active:false}],[])[0].allocations.length,0);
+ s.months[0].properties[1].totalCents=10000;assert.equal(matchOwnerDeposits([deposit()],s.months[0],s.owners!,[])[0].allocations.length,0);
+ assert.equal(matchOwnerDeposits([deposit('')],s.months[0],s.owners!,[])[0].allocations.length,0);
+ assert.equal(matchOwnerDeposits([deposit(),deposit()],s.months[0],s.owners!,[])[1].duplicate,true);
+});
+test('safe splits create verified Owner rows with no bundle and a persistent dedup ledger',()=>{const s=snapshot(),c=change();c.allocations=[{propertyId:'p',amountCents:4000},{propertyId:'q',amountCents:6000}];applyOwnerChange(s,c);assert.equal(s.ownerTransfers!.length,1);assert.deepEqual(s.months[0].properties.map(p=>[p.payments[0].amountCents,p.payments[0].bankCents,p.payments[0].bundleCents,p.payments[0].type,p.payments[0].verifiedBySystem,p.payments[0].verifiedByDaisy]),[[4000,4000,null,'Owner',true,false],[6000,6000,null,'Owner',true,false]]);assert.throws(()=>applyOwnerChange(s,{...c,amountCents:20000}),/already|duplicate/i);});
+test('invalid allocations and malformed profiles never mutate a snapshot',()=>{for(const mutate of [(c:ReturnType<typeof change>)=>c.allocations[0].amountCents=1,(c:ReturnType<typeof change>)=>c.allocations[0].propertyId='missing',(c:ReturnType<typeof change>)=>c.reference='',(c:ReturnType<typeof change>)=>c.date='2026-02-30']){const s=snapshot(),before=structuredClone(s),c=change();mutate(c);assert.throws(()=>applyOwnerChange(s,c));assert.deepEqual(s,before);}const s=snapshot();assert.throws(()=>applyOwnerChange(s,{kind:'saveOwner',owner:{...owner,bankName:'=bad'}}));});
+test('preview supports owner schema and rolls back whole failed saves',async()=>{const api=createPreviewApi(),s=await api.read();assert.equal(s.ownerSchema,1);assert.deepEqual(s.owners,[]);await assert.rejects(api.save(s.revision,[{kind:'saveOwner',owner},{...change(),monthId:'missing'}]));assert.deepEqual(await api.read(),s);const saved=await api.save(s.revision,[{kind:'saveOwner',owner}]);assert.deepEqual(saved.owners![0].propertyNames,['House','Other']);});

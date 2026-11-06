@@ -2,8 +2,10 @@ import {bootstrapManagers, applyManagerChange, resolveManager} from './managers.
 import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
+import {applyOwnerChange} from './owners.ts';
 export function createPreviewApi() {
  let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.recordEditingSchema=1;
+ state.ownerSchema=1;state.owners=[];state.ownerTransfers=[];
  // Fictional, editable examples belong only to the isolated preview.
  for(const [team,name,id] of [['Team A','Alex Chen','preview-assistant-alex'],['Team B','Maya Cruz','preview-assistant-maya']]){
   const parent=state.managers!.find(manager=>manager.name.replace(/\s/g,'').toLowerCase()===team.replace(/\s/g,'').toLowerCase());
@@ -14,6 +16,7 @@ export function createPreviewApi() {
   if(changes.some(c=>c.kind==='deleteProperty'||c.kind==='deletePayment')&&changes.length!==1)throw new Error('Save edits before deleting a record.');
   const next=structuredClone(state);
   for(const c of changes) {
+   if(c.kind==='saveOwner'||c.kind==='importOwnerTransfer'){applyOwnerChange(next,c);continue;}
    if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
    if(c.kind==='updateProperty'||c.kind==='deleteProperty'||c.kind==='deletePayment'){
     if(c.kind==='deletePayment'){

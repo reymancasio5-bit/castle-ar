@@ -1,5 +1,5 @@
 import type { Change, Month } from './types.ts';
-export interface BankDeposit { account: string; date: string; amountCents: number; reference: string; source: string }
+export interface BankDeposit { kind?: 'owner'; ownerName?: string; account: string; date: string; amountCents: number; reference: string; source: string }
 const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 const cents = (s: string) => Math.round(Number(s.replace(/,/g,''))*100);
 export function bankAccount(value: string): string {
@@ -20,8 +20,8 @@ export function parseStatement(text: string, source = 'Pasted statement'): { dep
  const account=accountMatch[1].replace(/\D/g,'').slice(-4);
  if(account.length!==4)throw new Error('Cannot identify the bank account.');
  const deposits:BankDeposit[]=[],warnings:string[]=[];
- let date='',pending:{date:string;reference:string;amount:number|null}|null=null;
- const flush=()=>{if(pending){if(pending.date&&pending.amount!==null&&pending.amount>0)deposits.push({account,date:pending.date,amountCents:pending.amount,reference:pending.reference,source});else warnings.push('An Airbnb entry had no readable deposit amount or date and was skipped.');pending=null;}};
+ let date='',pending:{date:string;reference:string;amount:number|null;ownerName?:string}|null=null;
+ const flush=()=>{if(pending){if(pending.date&&pending.amount!==null&&pending.amount>0)deposits.push({account,date:pending.date,amountCents:pending.amount,reference:pending.reference,source,...(pending.ownerName!==undefined?{kind:'owner' as const,ownerName:pending.ownerName}:{})});else warnings.push('A bank entry had no readable deposit amount or date and was skipped.');pending=null;}};
  for(const raw of text.split(/\r?\n/)){
   const line=raw.trim();
   if(!line)continue;
@@ -33,19 +33,28 @@ export function parseStatement(text: string, source = 'Pasted statement'): { dep
    date=possibilities.length===1?possibilities[0]:'';
   }
   const airbnb=/\bAIRBNB\s+PAYMENTS\b/i.test(line);
-  if(airbnb){flush();pending={date,reference:'',amount:null};}
-  else if(pending && /[A-Za-z]/.test(line) && !/^(?:\d{1,2}\s+[A-Za-z]{3}\s*)?\d[\d,.\s]*$/.test(line)){flush();}
+  const owner=raw.split('\t')[0].match(/e-Transfer\s*[-–]\s*Autodeposit\b\s*(.*)/i);
+  const ownerRef=raw.split('\t')[0].trim().match(/(?:^|\s)(?:Ref(?:erence)?[:#]?\s*)?([A-Za-z0-9]{6,})\s*$/i);
+  const validOwnerRef=ownerRef&&/\d/.test(ownerRef[1])?ownerRef[1]:'';
+  const description=raw.split('\t')[0].trim();
+  const referenceOnly=!!validOwnerRef&&/^(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]+$/i.test(description);
+  const ownerNameContinuation=!day&&!airbnb&&!owner&&pending?.ownerName===''&&!/\b(?:fee|withdrawal|payment|balance|transfer|purchase)\b/i.test(description);
+  if(airbnb||owner){flush();pending={date,reference:'',amount:null,...(owner?{ownerName:owner[1].replace(/(?:\s+|^)(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]*\d[A-Za-z0-9]*\s*$/i,'').trim()}:{} )};}
+  else if(pending&&ownerNameContinuation)pending.ownerName=description.replace(/(?:\s+|^)(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]*\d[A-Za-z0-9]*\s*$/i,'').trim();
+  else if(pending && /[A-Za-z]/.test(line) && !(pending.ownerName!==undefined&&referenceOnly) && !/^(?:\d{1,2}\s+[A-Za-z]{3}\s*)?\d[\d,.\s]*$/.test(line)){flush();}
   if(!pending)continue;
   const ref=line.match(/\b\d{10,}\b/);if(ref)pending.reference=ref[0];
+  if(pending.ownerName!==undefined&&validOwnerRef)pending.reference=validOwnerRef;
   // PDF extraction emits description, debit, credit and balance as tab-separated cells.
   const columns=raw.split('\t');
   const amountText=columns.length>=3?columns[2] : (line.match(/\bCredit:\s*([\d,.]+)/i)?.[1]??'');
-  const amount=amountText.match(/(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}\b/);
+  const amount=amountText.trim().match(/^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$/);
   if(amount)pending.amount=cents(amount[0]);
  }
  flush();return {deposits,warnings};
 }
 export function matchStatement(deposits: BankDeposit[], month: Month) {
+ deposits=deposits.filter(d=>d.kind!=='owner');
  const changes: Change[]=[];
  const all=month.properties.flatMap(property=>property.payments.map(payment=>({property:property.name,payment})));
  const rows=deposits.map(deposit=>{

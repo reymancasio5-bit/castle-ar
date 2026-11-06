@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { parseStatement, matchStatement } from '../src/bank-statement.ts';
 import type { Month, Payment } from '../src/types.ts';
 const header = 'September 4, 2026 to October 5, 2026\nAccount number: 00409 103-586-4\n';
+test('extracts repeated owner Autodeposit credits with names and alphanumeric references only',()=>{
+ const result=parseStatement(header+'09 Sep e-Transfer - Autodeposit Jane Smith CA123456\t\t100.00\t900.00\ne-Transfer - Autodeposit Jane Smith\nCA987654\t\t200.00\t1,100.00\n10 Sep e-Transfer - Autodeposit Debit Person ZZ123456\t50.00\t\t1,050.00');
+ assert.deepEqual(result.deposits.map(d=>[d.kind,d.ownerName,d.reference,d.amountCents]),[['owner','Jane Smith','CA123456',10000],['owner','Jane Smith','CA987654',20000]]);
+ assert.equal(matchStatement(result.deposits,month(payment('a'))).rows.length,0);
+});
+test('owner name and reference can follow the Autodeposit label without absorbing other transactions',()=>{
+ const result=parseStatement(header+'09 Sep e-Transfer - Autodeposit\nJane Smith CA123456\t\t100.00\t900.00\n10 Sep e-Transfer - Autodeposit Jane Smith\t\t100.00\t1,000.00\nService Fee ZZ987654\t5.00\t\t995.00');
+ assert.equal(result.deposits[0].ownerName,'Jane Smith');assert.equal(result.deposits[0].reference,'CA123456');assert.equal(result.deposits[1].reference,'');
+});
+test('negative or malformed owner credits cannot become positive payments',()=>{for(const value of ['-100.00','100.00 CR 500.00','1,00.00'])assert.equal(parseStatement(header+'09 Sep e-Transfer - Autodeposit Jane Smith CA123456\t\t'+value+'\t900.00').deposits.length,0);});
 const payment = (id: string, extra: Partial<Payment> = {}): Payment => ({id,type:'Airbnb',amountCents:113821,bundleCents:682451,payoutDate:'2026-09-09',bankDetails:'Checking 5864',bankCents:null,bankDate:'',verifiedByDaisy:false,...extra});
 const month = (...payments: Payment[]): Month => ({id:'1',label:'November 2026',month:'2026-11',properties:[{id:'p',name:'House',manager:'A',totalCents:0,payments}]});
 test('extracts only Airbnb deposits with inherited dates, references, and account suffix', () => {

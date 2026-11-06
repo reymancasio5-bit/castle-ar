@@ -1129,3 +1129,81 @@ test('bundle properties get enclosing borders on create, append and subsequent i
  check(snapshot.months[0].properties.find((p:any)=>p.name==='Border second'));
  assert.equal(snapshot.months[0].properties.find((p:any)=>p.name==='Border first').payments.length,3);
 });
+
+test('owner profiles and split transfers persist atomically with global duplicate protection',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ const before=app.read().snapshot;assert.equal(before.ownerSchema,1);
+ const owner={id:'owner-1',name:'John Owner',bankName:'JOHN OWNER',email:'',notes:'',active:false,propertyNames:before.months[0].properties.slice(0,2).map((p:any)=>p.name)};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:30000,allocations:[{propertyId:'0:4',amountCents:10000},{propertyId:'0:12',amountCents:20000}]};
+ const saved=app.post({requestId:'owners-split-first',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(saved.ok,true,saved.error?.message);
+ assert.equal(saved.snapshot.owners[0].active,false);assert.equal(saved.snapshot.ownerTransfers.length,1);assert.equal(saved.snapshot.ownerTransfers[0].allocations[0].propertyName,owner.propertyNames[0]);
+ const paid=saved.snapshot.months[0].properties[0].payments.at(-1);assert.equal(paid.type,'Owner');assert.equal(paid.amountCents,10000);assert.equal(paid.bankCents,10000);assert.equal(paid.bankDate,'2026-11-04');assert.equal(paid.bankDetails,'Checking 1234');assert.equal(paid.bundleCents,null);assert.equal(paid.verifiedBySystem,true);assert.equal(paid.verifiedByDaisy,false);
+ assert.match(String(app.state.formulas[10][3]),/SUM/);
+ const duplicate=app.post({requestId:'owners-duplicate',revision:saved.snapshot.revision,changes:[{...transfer,date:'2026-11-05',account:' 1234 ',reference:'ref123'}]});assert.equal(duplicate.ok,false);assert.match(duplicate.error.message,/already|duplicate/i);assert.equal(app.batches.length,1);
+});
+
+test('owner validations reject ambiguous bank names, unsafe fields and invalid allocations without writes',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ const before=app.read().snapshot;
+ const owner={id:'owner-1',name:'John Owner',bankName:'JOHN OWNER',email:'',notes:'',active:true,propertyNames:before.months[0].properties.slice(0,2).map((p:any)=>p.name)};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const invalid=[{...transfer,account:'12345'},{...transfer,reference:'REF-123'},{...transfer,reference:''},{...transfer,date:'2026-02-30'},{...transfer,amountCents:10001},{...transfer,allocations:[{propertyId:'0:20',amountCents:10000}]},{...transfer,allocations:[{propertyId:'0:4',amountCents:0}]},{...transfer,account:'=SUM(A1)'},{...transfer,monthId:'999'},{...transfer,bankName:'Other Person'}];
+ invalid.forEach((change,i)=>{const result=app.post({requestId:'owners-invalid-'+i,revision:before.revision,changes:[{kind:'saveOwner',owner},change]});assert.equal(result.ok,false,JSON.stringify(change));});
+ const duplicate=app.post({requestId:'owners-ambiguous',revision:before.revision,changes:[{kind:'saveOwner',owner},{kind:'saveOwner',owner:{...owner,id:'other',active:false,bankName:' john   owner '}}]});assert.equal(duplicate.ok,false);
+ const sameBatch=app.post({requestId:'owners-same-batch',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer,transfer]});assert.equal(sameBatch.ok,false);assert.equal(app.batches.length,0);
+});
+
+test('owner ledger deduplicates across months and revisions include owner tables',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ const initial=app.read().snapshot, name=initial.months[0].properties[0].name;
+ const owner={id:'owner-global',name:'Global Owner',bankName:'Global Owner',email:'',notes:'',active:true,propertyNames:['  '+name.toUpperCase().replaceAll(' ','   ')+'  ']};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'GLOBALREF',source:'statement.pdf',bankName:'Global Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const saved=app.post({requestId:'owner-global-init',revision:initial.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(saved.ok,true,saved.error?.message);
+ const ledger=[...app.tables.values()].find(t=>t.name==='Owner Transfers')!;
+ ledger.data[1][9]='previous-month-id';
+ const changed=app.read().snapshot;assert.notEqual(changed.revision,saved.snapshot.revision);
+ const duplicate=app.post({requestId:'owner-global-retry',revision:changed.revision,changes:[{...transfer,account:' 1234 ',reference:' globalref '}]});assert.equal(duplicate.ok,false);assert.match(duplicate.error.message,/duplicate/i);
+ const catalog=[...app.tables.values()].find(t=>t.name==='Property Owners')!;catalog.data[1][4]='Edited directly';
+ const edited=app.read().snapshot;assert.notEqual(edited.revision,changed.revision);
+ assert.equal(app.post({requestId:'owner-stale-save',revision:changed.revision,changes:[{kind:'saveOwner',owner}]}).error.code,'CONFLICT');
+ ledger.data[1][10]='not json';assert.equal(app.read().error.code,'SOURCE_DATA');
+});
+
+test('owner imports coexist with Airbnb insertion and reject legacy layout and bundle allocations',()=>{
+ const app=harness();let before=app.read().snapshot;
+ const owner={id:'owner-mixed',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:before.months[0].properties.map((p:any)=>p.name)};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'MIXEDREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const legacy=app.post({requestId:'owner-legacy-reject',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(legacy.ok,false);assert.match(legacy.error.message,/Bank Details/);assert.equal(app.batches.length,0);
+ app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;before=app.read().snapshot;
+ const saved=app.post({requestId:'owner-mixed-import',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer,{kind:'appendPayments',propertyId:'0:4',payments:[{type:'Airbnb',amountCents:2345}]}]});assert.equal(saved.ok,true,saved.error?.message);
+ const payments=saved.snapshot.months[0].properties[0].payments;assert.equal(payments.at(-2).verifiedBySystem,true);assert.equal(payments.at(-1).type,'Airbnb');assert.equal(payments.at(-1).amountCents,2345);assert.equal(payments.at(-1).bundleCents,null);
+ const bundle=app.post({requestId:'owner-bundle-setup',revision:saved.snapshot.revision,changes:[{kind:'addProperty',monthId:'0',name:owner.propertyNames[0],manager:'TeamB',totalCents:0,bundleOnly:true}]});assert.equal(bundle.ok,true,bundle.error?.message);
+ const property=bundle.snapshot.months[0].properties.find((p:any)=>p.bundleOnly);
+ const rejected=app.post({requestId:'owner-bundle-reject',revision:bundle.snapshot.revision,changes:[{...transfer,reference:'NEWREF',allocations:[{propertyId:property.id,amountCents:10000}]}]});assert.equal(rejected.ok,false);assert.match(rejected.error.message,/mapped AR/);
+});
+
+test('owner profile validation rejects malformed identifiers mappings and unsafe text',()=>{
+ const app=harness(),before=app.read().snapshot;
+ const owner={id:'owner-safe',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:['Property']};
+ const invalid=[{...owner,id:'bad:id'},{...owner,name:'=FORMULA()'},{...owner,notes:'bad\u0000text'},{...owner,active:'TRUE'},{...owner,email:'not email'},{...owner,propertyNames:['Property',' property ']},{...owner,propertyNames:['@formula']}];
+ invalid.forEach((value,i)=>{const result=app.post({requestId:'owner-profile-invalid-'+i,revision:before.revision,changes:[{kind:'saveOwner',owner:value}]});assert.equal(result.ok,false);assert.equal(result.error.code,'VALIDATION');});assert.equal(app.batches.length,0);
+});
+
+test('owner notes preserve multiline text',()=>{
+ const app=harness(),before=app.read().snapshot;
+ const owner={id:'owner-notes',name:'Owner',bankName:'Owner',email:'',notes:'First line\nSecond line\tDetail',active:true,propertyNames:[]};
+ const result=app.post({requestId:'owner-multiline-notes',revision:before.revision,changes:[{kind:'saveOwner',owner}]});assert.equal(result.ok,true,result.error?.message);assert.equal(result.snapshot.owners[0].notes,owner.notes);
+});
+
+test('owner allocations reject normalized property-name collisions before writing the ledger',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ app.state.data[3][1]='House A';app.state.data[11][1]='House  A';
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);
+ const owner={id:'owner-ambiguous',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:['House A']};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'AMBIGUOUSREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:4000},{propertyId:'0:12',amountCents:6000}]};
+ const rejected=app.post({requestId:'owner-ambiguous-allocation',revision:before.snapshot.revision,changes:[{kind:'saveOwner',owner},transfer]});
+ assert.equal(rejected.ok,false);assert.equal(rejected.error.code,'VALIDATION');assert.match(rejected.error.message,/ambiguous.*property names/i);assert.equal(app.batches.length,0);
+ const after=app.read();assert.equal(after.ok,true,after.error?.message);assert.equal(after.snapshot.revision,before.snapshot.revision);assert.equal(after.snapshot.ownerTransfers.length,0);
+ const saved=app.post({requestId:'owner-unambiguous-allocation',revision:after.snapshot.revision,changes:[{kind:'saveOwner',owner},{...transfer,allocations:[{propertyId:'0:4',amountCents:10000}]}]});
+ assert.equal(saved.ok,true,saved.error?.message);const reread=app.read();assert.equal(reread.ok,true,reread.error?.message);assert.equal(reread.snapshot.ownerTransfers.length,1);assert.equal(reread.snapshot.ownerTransfers[0].allocations[0].propertyName,'House A');
+});
