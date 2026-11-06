@@ -134,6 +134,7 @@ type Cell = string | number | boolean | Date;
 const header: Cell[] = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 const row = (...values: Cell[]) => Array.from({ length: 10 }, (_, i) => values[i] ?? '');
 function harness() {
+  const batches:any[][]=[];
   const tables = new Map<number, {name:string;data:any[][];maxRows:number;maxColumns:number}>();
   const tableSheet=(id:number,t:any)=>({getName:()=>t.name,getSheetId:()=>id,getLastRow:()=>t.data.length,getMaxRows:()=>t.maxRows,getMaxColumns:()=>t.maxColumns,getRange:(r:number,c:number,n:number,w:number)=>({getValues:()=>Array.from({length:n},(_,y)=>Array.from({length:w},(_,x)=>t.data[r-1+y]?.[c-1+x]??'')),getFormulas:()=>Array.from({length:n},()=>Array(w).fill(''))})});
   const status = {exists:false, id:1, data:[] as Cell[][], formulas:[] as Cell[][], maxRows:100, maxColumns:10};
@@ -202,9 +203,10 @@ function harness() {
       assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY');
       assert.equal(state.locked, true, 'write must hold a script lock');
       if (state.failWrite) throw new Error('Backend rejected batch');
+      batches.push(structuredClone(body.requests));
       for (const request of body.requests) {
         if(request.addSheet && request.addSheet.properties.title!=='Status'){const p=request.addSheet.properties;tables.set(p.sheetId,{name:p.title,data:[],maxRows:p.gridProperties.rowCount,maxColumns:p.gridProperties.columnCount});continue;}
-        const auxiliaryRange=request.copyPaste?.destination??request.repeatCell?.range??request.setDataValidation?.range??request.updateDimensionProperties?.range;
+        const auxiliaryRange=request.copyPaste?.destination??request.repeatCell?.range??request.setDataValidation?.range??request.updateDimensionProperties?.range??request.updateBorders?.range;
         if(auxiliaryRange&&tables.has(auxiliaryRange.sheetId))continue;
         const dimension=request.insertDimension??request.deleteDimension;
         if(dimension&&tables.has(dimension.range.sheetId)){const t=tables.get(dimension.range.sheetId)!,r=dimension.range,count=r.endIndex-r.startIndex;if(request.insertDimension){t.data.splice(r.startIndex,0,...Array.from({length:count},()=>[]));t.maxRows+=count;}else{t.data.splice(r.startIndex,count);t.maxRows-=count;}continue;}
@@ -300,7 +302,7 @@ function harness() {
     assert.equal(typeof context.doPost, 'function', 'Apps Script must expose doPost');
     return JSON.parse(context.doPost(form ? { parameter: { payload: JSON.stringify(body) } } : { postData: { contents: JSON.stringify(body), type: 'text/plain' } }).value);
   };
-  return { tables, status, state, context, get, read, post, cache, properties, sheet, spreadsheet };
+  return { batches, tables, status, state, context, get, read, post, cache, properties, sheet, spreadsheet };
 }
 
 test('A2 edits filter entire manager blocks and switching teams restores prior hidden rows', () => {
@@ -1104,4 +1106,26 @@ test('bundle tabs support bulk first import, manager rename, full deletion and r
  assert.equal(snapshot.months[0].properties.filter((p:any)=>p.bundleOnly).length,1);
  assert.equal([...app.tables.values()].filter(t=>t.name.endsWith(' - Bundle Matching')).length,1);
  assert.equal(app.state.data[3][1],original[3][1]);assert.deepEqual(app.state.formulas[9],['','','','=D4-D5-D6-D7-D8-D9','','','','','','']);
+});
+
+
+test('bundle properties get enclosing borders on create, append and subsequent imports',()=>{
+ const app=harness();let snapshot=app.read().snapshot;
+ const save=(id:string,changes:any[])=>{const result=app.post({requestId:id,revision:snapshot.revision,changes});assert.equal(result.ok,true,result.error?.message);snapshot=result.snapshot;};
+ const check=(property:any)=>{
+  const [sheetId,totalRow]=property.id.split(':').map(Number);
+  const endRow=totalRow+property.payments.length+1;
+  const borders=app.batches.at(-1)!.flatMap(r=>r.updateBorders?[r.updateBorders]:[]);
+  const outer=borders.find(b=>b.range.sheetId===sheetId&&b.range.startRowIndex===totalRow-2&&b.range.endRowIndex===endRow&&b.range.startColumnIndex===0&&b.range.endColumnIndex===11&&b.top&&b.bottom);
+  assert.ok(outer,'border encloses header, property, every payment and end row across A:K');
+  for(const side of ['top','bottom','left','right'])assert.equal(outer[side].style,'SOLID');
+  assert.ok(borders.some(b=>b.range.sheetId===sheetId&&b.range.startRowIndex===totalRow-2&&b.range.endRowIndex===endRow&&b.range.endColumnIndex===1&&b.right?.style==='SOLID'),'account-manager column separator');
+  assert.ok(borders.every(b=>b.range.sheetId!==0),'AR formatting is untouched');
+ };
+ save('border-first-create',[{kind:'addProperty',bundleOnly:true,monthId:'0',name:'Border first',manager:'TeamA',totalCents:0,additionalPayments:[{amountCents:100},{amountCents:200}]}]);
+ let property=snapshot.months[0].properties.find((p:any)=>p.bundleOnly);check(property);
+ save('border-append-payment',[{kind:'appendPayments',propertyId:property.id,payments:[{amountCents:300}]}]);property=snapshot.months[0].properties.find((p:any)=>p.bundleOnly);check(property);
+ save('border-second-create',[{kind:'addProperty',bundleOnly:true,monthId:'0',name:'Border second',manager:'TeamA',totalCents:0,initialPayments:[{index:0,amountCents:400}]}]);
+ check(snapshot.months[0].properties.find((p:any)=>p.name==='Border second'));
+ assert.equal(snapshot.months[0].properties.find((p:any)=>p.name==='Border first').payments.length,3);
 });

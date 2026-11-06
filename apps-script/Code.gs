@@ -749,6 +749,7 @@ function castleFinancialRequests(changes, current) {
       if (payment.payoutDate) requests.push(castleCell(sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
     });
     requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10+bankOffset }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
+    if(current.months[String(sheetId)].bundleOnly)requests=requests.concat(castleBundleBorderRequests(sheetId,insertion.row-1,first+count,bankOffset));
     if(!current.months[String(sheetId)].bundleOnly)requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
   });
   return requests;
@@ -757,13 +758,14 @@ function castleFinancialRequests(changes, current) {
 function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
   var bankOffset=month.bankOffset||0;
   var template = month.formatTemplate, used = {};
+  var borders=month.bundleOnly?castleBundleBorderRequests(month.sheetId,firstRow,firstRow+paymentTypes.length+2,bankOffset):[];
   if(!template){
     if(!month.bundleOnly)return [];
     return [
       {repeatCell:{range:{sheetId:month.sheetId,startRowIndex:firstRow-1,endRowIndex:firstRow+paymentTypes.length+2,startColumnIndex:0,endColumnIndex:11},cell:{userEnteredFormat:{textFormat:{fontFamily:'Calibri',fontSize:11},numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}},fields:'userEnteredFormat'}},
       {repeatCell:{range:{sheetId:month.sheetId,startRowIndex:firstRow-1,endRowIndex:firstRow,startColumnIndex:0,endColumnIndex:11},cell:{userEnteredFormat:{backgroundColor:{red:0.08,green:0.25,blue:0.20},textFormat:{bold:true,foregroundColor:{red:1,green:1,blue:1}},wrapStrategy:'WRAP'}},fields:'userEnteredFormat'}},
       {updateDimensionProperties:{range:{sheetId:month.sheetId,dimension:'COLUMNS',startIndex:0,endIndex:11},properties:{pixelSize:160},fields:'pixelSize'}}
-    ];
+    ].concat(borders);
   }
   var sourceRows = [template.headerRow, template.totalRow];
   paymentTypes.forEach(function (type) {
@@ -783,7 +785,7 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
       destination: { sheetId: month.sheetId, startRowIndex: firstRow + offset - 1, endRowIndex: firstRow + offset, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
       pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
     } };
-  });
+  }).concat(borders);
 }
 
 function castleValidateFollowUp(value) {
@@ -1026,3 +1028,12 @@ function castlePrepareBundleImports(changes,current){
   return {requests:requests,changes:prepared};
 }
 
+
+// Keep each property visually enclosed, even when the source template has no borders.
+function castleBundleBorderRequests(sheetId,firstRow,lastRow,bankOffset){
+  var border={style:'SOLID',color:{red:0,green:0,blue:0}};
+  return [
+    {updateBorders:{range:{sheetId:sheetId,startRowIndex:firstRow-1,endRowIndex:lastRow,startColumnIndex:0,endColumnIndex:10+(bankOffset||0)},top:border,bottom:border,left:border,right:border,innerHorizontal:{style:'NONE'}}},
+    {updateBorders:{range:{sheetId:sheetId,startRowIndex:firstRow-1,endRowIndex:lastRow,startColumnIndex:0,endColumnIndex:1},right:border}}
+  ];
+}
