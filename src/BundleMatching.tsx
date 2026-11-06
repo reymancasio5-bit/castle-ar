@@ -18,7 +18,7 @@ export default function BundleMatching({month,onImport,onBankImport,onOpen,onExp
   `${property.name} ${property.manager}`.toLowerCase().includes(search.trim().toLowerCase()))).slice().sort((a,b)=>a.name.localeCompare(b.name));
  return <div className="bundle-report">
   {selectedProperty&&<div className="bundle-property-navigation"><button className="button secondary compact" onClick={()=>setSelectedId(null)}><ArrowLeft size={16}/>Back to properties</button><span>{selectedProperty.name}</span></div>}
-  <section className="bundle-intro"><span className="bundle-intro-icon"><ClipboardCheck size={25}/></span><div><strong>Confirm every Airbnb deposit</strong><p>Match payout bundles to your bank statement using the amount and bank account. These payments are tracked separately from accounts receivable.</p></div><span className="bundle-mode">Bundle matching only</span></section>
+  <aside className="bundle-intro" aria-label="Bundle matching information"><span className="bundle-intro-icon"><ClipboardCheck size={18} aria-hidden="true"/></span><p><strong>Bundle matching only</strong><span>Match Airbnb bundles by amount and bank account. Tracked separately from AR.</span></p></aside>
   <section className="bundle-metrics" aria-label="Bundle matching totals">
    <article><span>Airbnb payments</span><strong>{money(rows.reduce((sum,r)=>sum+(r.payment.amountCents??0),0))}</strong><small>{properties.length} {properties.length===1?'property':'properties'} · {rows.length} payment rows</small></article>
    <article><span>Matched payment rows</span><strong>{matched}<small> / {rows.length}</small></strong><small>Confirmed against bank deposits</small></article>
