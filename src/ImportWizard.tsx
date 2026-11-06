@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, FileSpreadsheet, Upload, X } from 'lucide-react';
 import type { ImportProps } from './types.ts';
-import { money } from './domain.ts';
+import { money, parseMoney } from './domain.ts';
 import { destinations, inferColumns, normalizePropertyName, type ImportDestination, type ImportSheet } from './import.ts';
 import { isAirbnbSheet, type PropertyImportOptions } from './property-import.ts';
 import { readSpreadsheet } from './excel.ts';
@@ -47,14 +47,15 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
   const requestRef = useRef(0);
   const sheet = sheets[sheetIndex];
   const airbnb = !!sheet && isAirbnbSheet(sheet, options.headerRow);
-  const selectedProperty = month.properties.find(property => normalizePropertyName(property.name) === normalizePropertyName(options.propertyName));
+  let bundleOnly=false;try{bundleOnly=airbnb&&(parseMoney(options.total)??0)===0;}catch{/* Preview displays validation errors. */}
+  const selectedProperty = month.properties.find(property => !!property.bundleOnly===bundleOnly && normalizePropertyName(property.name) === normalizePropertyName(options.propertyName));
   const propertySuggestions = [...new Map([...month.properties, ...propertyCatalog].map(property => [normalizePropertyName(property.name), property])).values()].sort((a, b) => a.name.localeCompare(b.name));
   function chooseProperty(name: string) {
-    const existing = month.properties.find(property => normalizePropertyName(property.name) === normalizePropertyName(name));
+    const existing = month.properties.find(property => !!property.bundleOnly===bundleOnly && normalizePropertyName(property.name) === normalizePropertyName(name));
     const catalog = propertySuggestions.find(property => normalizePropertyName(property.name) === normalizePropertyName(name));
     setDestination(current => {
       const leavingExisting = month.properties.some(property => normalizePropertyName(property.name) === normalizePropertyName(current.propertyName));
-      return { ...current, propertyName: name, manager: existing?.manager ?? catalog?.manager ?? (leavingExisting ? '' : current.manager), total: existing ? (existing.totalCents / 100).toFixed(2) : leavingExisting ? '' : current.total };
+      return { ...current, propertyName: name, manager: existing?.manager ?? catalog?.manager ?? (leavingExisting ? '' : current.manager), total: airbnb ? current.total : existing ? (existing.totalCents / 100).toFixed(2) : leavingExisting ? '' : current.total };
     });
   }
   useEffect(() => {
@@ -179,9 +180,10 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
           <div className="import-guidance"><FileSpreadsheet size={19} aria-hidden="true" /><div><strong>One property for this import</strong><p>All selected files will be imported into the property below. Airbnb columns are detected automatically; file settings only need attention if a worksheet or header differs.</p></div></div>
           <div className="import-field-grid" style={{ marginTop: 18 }}>
             <label className="import-field">Property Name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
-            <label className="import-field">Total Payment (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>Enter the expected total. This amount does not come from the file.</small></label>
+            <label className="import-field">Expected Amount (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>For Airbnb files, leave blank or enter 0 for bundle matching only. Enter a positive expected amount for accounts receivable.</small></label>
             {!selectedProperty && <label className="import-field import-field-full">Property Manager (Required for a New Property)<ManagerSelect managers={managers} required value={options.manager} onChange={manager=>setDestination(current=>({...current,manager}))}/>{!managers.some(m=>m.active)&&<button type="button" className="button quiet compact" onClick={async()=>{if(await askConfirmation({title:'Leave this import?',message:'Opening Account Managers will discard this import, including loaded files and mapping choices.',confirmLabel:'Discard and Continue',destructive:true}))onManageManagers?.();}}>Add an account manager first</button>}</label>}
           </div>
+          {airbnb&&<p className="bundle-import-notice" role="status"><strong>{bundleOnly?'Bundle matching only':'Accounts receivable'}</strong> ? {bundleOnly?'Saved to the separate Bundle Matching report and monthly Google Sheets tab. No expected amount or AR balance.':'Saved to the existing accounts receivable report.'}</p>}
           <div className="import-file-queue" aria-label="Files to Import">
             {files.map((file, index) => <div key={`${file.name}-${index}`} className="import-file-item">
               <button className="import-button import-button-secondary" aria-pressed={fileIndex === index} onClick={() => { setFileIndex(index); setPage(0); setError(''); }}>
@@ -194,7 +196,7 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
           <div className="import-field-grid">
             <label className="import-field">Worksheet<select value={sheetIndex} onChange={event => changeSheet(Number(event.target.value))}>{sheets.map((candidate, index) => <option value={index} key={`${candidate.name}-${index}`}>{candidate.name}</option>)}</select></label>
             <div className="import-field"><label htmlFor="import-header-row">Header Row</label><div className="import-header-controls"><input id="import-header-row" type="number" min={1} max={sheet.rows.length || 1} disabled={options.headerRow === null} value={options.headerRow === null ? '' : options.headerRow + 1} onChange={event => setOptions(current => ({ ...current, headerRow: Number(event.target.value) - 1 }))} /><label className="import-checkbox"><input type="checkbox" checked={options.headerRow === null} onChange={event => setOptions(current => ({ ...current, headerRow: event.target.checked ? null : 0 }))} />No headers</label></div></div>
-            {airbnb ? <label className="import-field import-field-full">Save Airbnb payments to<select disabled={files.length > 1} value={files.length > 1 ? 'auto' : options.airbnbSlot} onChange={event => setOptions(current => ({ ...current, airbnbSlot: event.target.value as PropertyImportOptions['airbnbSlot'] }))}><option value="auto">Fill empty slots, then append rows (skip identical imports)</option>{[1, 2, 3].map(slot => <option key={slot} value={String(slot)}>Replace starting at Airbnb payment {slot}</option>)}</select><small>Airbnb export detected. Amount → payment; Arriving by date → platform payout date; Paid out → payout bundle; Details ? bank account. Each payout group uses one payment slot. Full listings get new rows above AR automatically.</small></label> : <>
+            {airbnb ? <label className="import-field import-field-full">Save Airbnb payments to<select disabled={files.length > 1} value={files.length > 1 ? 'auto' : options.airbnbSlot} onChange={event => setOptions(current => ({ ...current, airbnbSlot: event.target.value as PropertyImportOptions['airbnbSlot'] }))}><option value="auto">Fill empty slots, then append rows (skip identical imports)</option>{[1, 2, 3].map(slot => <option key={slot} value={String(slot)}>Replace starting at Airbnb payment {slot}</option>)}</select><small>Airbnb export detected. Amount → payment; Arriving by date → platform payout date; Paid out → payout bundle; Details ? bank account. Each payout group uses one payment slot. Additional payouts create new payment rows automatically.</small></label> : <>
               <label className="import-field">Amount Column<select value={options.amountColumn} onChange={event => setOptions(current => ({ ...current, amountColumn: Number(event.target.value) }))}>{columns.map(column => <option value={column.index} key={column.index}>{column.label}</option>)}</select></label>
               <label className="import-field">Save Amounts to<select value={options.destination} onChange={event => setOptions(current => ({ ...current, destination: event.target.value as ImportDestination }))}>{destinations.filter(destination => destination.value !== 'total').map(destination => <option value={destination.value} key={destination.value}>{destination.label}</option>)}</select><small>This updates the selected payment, or adds a row if missing, for {options.propertyName || 'your property'} in {month.label}.</small></label>
             </>}

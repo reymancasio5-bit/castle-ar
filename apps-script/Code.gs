@@ -199,7 +199,7 @@ function castleRead() {
   var timezone = book.getSpreadsheetTimeZone();
   var months = [], source = [], monthIndex = Object.create(null), propertyIndex = Object.create(null), paymentIndex = Object.create(null);
   book.getSheets().forEach(function (sheet) {
-    var label = sheet.getName(), monthKey = castleMonth(label);
+    var label = sheet.getName(), bundleOnly = / - Bundle Matching$/.test(label), monthKey = castleMonth(label.replace(/ - Bundle Matching$/, ''));
     if (!monthKey) return; // Never read unrelated tabs.
     var lastRow = sheet.getLastRow();
     if (!lastRow) return;
@@ -211,16 +211,17 @@ function castleRead() {
     if(values.filter(castleHeader).some(function(row){return (castleText(row[6])==='bank details'?1:0)!==bankOffset;}))castleThrow('SOURCE_DATA',label+': use the same Bank Details column layout for every property header.');
     var id = String(sheet.getSheetId());
     var month = { id: id, label: label, month: monthKey, properties: [] };
-    var meta = { bankOffset:bankOffset, sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
+    var meta = { bundleOnly:bundleOnly, bankOffset:bankOffset, sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
     monthIndex[id] = meta;
     source.push({ id: id, label: label, values: values, formulas: formulas });
     for (var index = 0; index < values.length; index++) {
       if (!castleHeader(values[index])) continue;
       var totalIndex = index + 1, total = values[totalIndex];
       if(totalIndex===values.length){meta.emptyHeaderRow=index+1;continue;} // Keep an emptied month importable.
-      if (!total || castleText(total[2]) !== 'total payment' || !String(total[1] || '').trim()) castleThrow('SOURCE_DATA', label + ': expected a named Total Payment row after header row ' + (index + 1) + '.');
+      if (!total || castleText(total[2]) !== (bundleOnly ? 'bundle matching only' : 'total payment') || !String(total[1] || '').trim()) castleThrow('SOURCE_DATA', label + ': expected a named Total Payment row after header row ' + (index + 1) + '.');
       var propertyId = id + ':' + (totalIndex + 1);
-      var property = { id: propertyId, name: String(total[1]).trim(), manager: String(total[0] || '').trim(), totalCents: castleSourceCents(total[3], false, label + '!D' + (totalIndex + 1)), payments: [] };
+      var property = { id: propertyId, name: String(total[1]).trim(), manager: String(total[0] || '').trim(), totalCents: bundleOnly ? 0 : castleSourceCents(total[3], false, label + '!D' + (totalIndex + 1)), payments: [] };
+      if(bundleOnly)property.bundleOnly=true;
       var followupHeaders = values[index].slice(10+bankOffset, 16+bankOffset), followupValues = total.slice(10+bankOffset, 16+bankOffset);
       if (CASTLE_FOLLOWUP_HEADERS.every(function (header, offset) { return followupHeaders[offset] === header; })) {
         var followup = { status: followupValues[0] || 'not_contacted', note: followupValues[1] || '', updatedAt: followupValues[2] || '', attachments: [] };
@@ -236,10 +237,10 @@ function castleRead() {
       for (var paymentIndexRow = totalIndex + 1; paymentIndexRow < values.length; paymentIndexRow++) {
         var paymentRow = values[paymentIndexRow], rowNumber = paymentIndexRow + 1;
         var rowType = castleText(paymentRow[2]).replace(/\s+/g, ' ');
-        if (rowType === 'ar') {
+        if (rowType === (bundleOnly ? 'end bundle matching' : 'ar')) {
           propertyIndex[propertyId].arRow = rowNumber;
           var ar = castleSourceCents(paymentRow[3], true, label + '!D' + rowNumber);
-          if (ar !== null) property.sourceArCents = ar;
+          if (!bundleOnly && ar !== null) property.sourceArCents = ar;
           foundAr = true;
           index = paymentIndexRow;
           break;
@@ -307,10 +308,15 @@ function castleRead() {
     if (status.rows[key]) target.property.followUp = status.rows[key].followUp;
   });
   var managerData = castleReadManagers(book, months, source);
+  // Keep physical indexes for writes; combine companion tabs only in the public snapshot.
+  var logicalMonths = [];
+  months.forEach(function(m){if(!monthIndex[m.id].bundleOnly)logicalMonths.push({id:m.id,label:m.label,month:m.month,properties:m.properties.slice()});});
+  months.forEach(function(m){if(!monthIndex[m.id].bundleOnly)return;var base=logicalMonths.filter(function(b){return b.month===m.month;})[0];if(base)base.properties=base.properties.concat(m.properties);else logicalMonths.push({id:m.id,label:m.label.replace(/ - Bundle Matching$/,''),month:m.month,properties:m.properties.slice()});});
+  months=logicalMonths;
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData,
-    snapshot: { recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -421,9 +427,15 @@ function castleManagerTableRequests(current,tables) {
   return requests;
 }
 function castleBuildRequests(changes,current) {
+  var bundlePreparation=castlePrepareBundleImports(changes,current);
+  changes=bundlePreparation.changes;
+  return bundlePreparation.requests.concat(castleBuildPreparedRequests(changes,current));
+}
+
+function castleBuildPreparedRequests(changes,current) {
   if(changes.some(function(c){return ['updateProperty','deleteProperty','deletePayment'].indexOf(c.kind)>=0;}))return castleRecordRequests(changes,current);
   var tables=JSON.parse(JSON.stringify(current.managerData)),managers=tables.managers.records,financial=[],seen={},now=new Date().toISOString();
-  var properties=current.snapshot.months.reduce(function(all,m){m.properties.forEach(function(p){all[castleStatusKey(m.id,p.name)]=p;});return all;},{});
+  var properties=current.snapshot.months.reduce(function(all,m){m.properties.forEach(function(p){all[castleStatusKey(p.id.split(':')[0],p.name)]=p;});return all;},{});
   changes.forEach(function(c){
     if(!c||typeof c!=='object')castleThrow('VALIDATION','Every change must be an object.');
     if(c.kind==='deleteManager'){
@@ -480,10 +492,12 @@ function castleBuildRequests(changes,current) {
     if(c.kind==='addProperty'&&!manager)castleThrow('VALIDATION','Choose a registered account manager.');
     c.manager=manager?manager.name:'';
   });
+  var bundleManagerRenames=[];
   // Rename monthly and Status display names through the existing atomic path.
   Object.keys(current.properties).forEach(function(id){
     var p=current.properties[id].property,m=managers.filter(function(m){return m.id===p.managerId;})[0];
     if(m&&m.name!==p.manager&&!financial.some(function(c){return c.kind==='updateFollowUp'&&c.propertyId===id;})){
+      if(p.bundleOnly){bundleManagerRenames.push(castleCell(current.properties[id].sheetId,current.properties[id].row,1,m.name));return;}
       var f=p.followUp||{status:'not_contacted',note:'',attachments:[]};
       financial.push({kind:'updateFollowUp',propertyId:id,manager:m.name,status:f.status,note:f.note,attachments:f.attachments});
     }
@@ -497,7 +511,7 @@ function castleBuildRequests(changes,current) {
     var key=target?castleStatusKey(target.sheetId,target.property.name):castleStatusKey(c.monthId,c.name);
     var m=managers.filter(function(m){return m.name===c.manager;})[0];assign(key,m?m.id:'');
   }});
-  var requests=castleFinancialRequests(financial,current);
+  var requests=castleFinancialRequests(financial,current).concat(bundleManagerRenames);
   // Avoid migrating on unrelated financial writes; first manager/assignment write
   // persists the read-only bootstrap in the same transaction as the user's change.
   if(changes.some(function(c){return ['deleteManager','saveManager','saveTask','addManagerUpdate','addProperty','updateFollowUp'].indexOf(c.kind)>=0;}))requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},tables));
@@ -566,6 +580,7 @@ function castleFinancialRequests(changes, current) {
       target = current.properties[change.propertyId];
       if (!target) castleThrow('VALIDATION', 'Unknown property ID. Refresh the sheet.');
       castleUnique(targets, 'followup:' + change.propertyId);
+      if(target.property.bundleOnly)castleThrow('VALIDATION','Bundle-only records do not have owner follow-ups.');
       var manager = change.manager === '' ? '' : castleName(change.manager, 'Account manager');
       castleValidateFollowUp(change);
       requests.push(castleCell(target.sheetId, target.row, 1, manager));
@@ -574,6 +589,7 @@ function castleFinancialRequests(changes, current) {
       castleKeys(change, ['kind', 'propertyId', 'amountCents']);
       target = current.properties[change.propertyId];
       if (!target) castleThrow('VALIDATION', 'Unknown property ID. Refresh the sheet.');
+      if(target.property.bundleOnly)castleThrow('VALIDATION','Bundle-only records have no expected amount.');
       castleCents(change.amountCents, false, true);
       castleUnique(targets, 'total:' + change.propertyId);
       requests.push(castleCell(target.sheetId, target.row, 4, change.amountCents / 100));
@@ -666,9 +682,9 @@ function castleFinancialRequests(changes, current) {
       [0, 1, 2, 3].forEach(function (index) { if (initialSlots[index]) orderedPayments.push(initialSlots[index]); });
       var paymentTypes = orderedPayments.map(function (payment) { return payment.index === 4 ? 'Owner' : payment.index === 3 ? 'Vrbo' : 'Airbnb'; });
       var newHeaders=CASTLE_HEADERS.slice();if(target.bankOffset)newHeaders.splice(6,0,'Bank Details');
-      var rows = [newHeaders, [manager, name, 'Total Payment', change.totalCents / 100]];
+      var rows = [newHeaders, [manager, name, target.bundleOnly ? 'Bundle Matching Only' : 'Total Payment', target.bundleOnly ? '' : change.totalCents / 100]];
       orderedPayments.forEach(function (payment, index) { rows.push(['', '', paymentTypes[index] + ' Payment', payment.amountCents / 100]); });
-      rows.push(['', '', 'AR']);
+      rows.push(['', '', target.bundleOnly ? 'End Bundle Matching' : 'AR']);
       appendRows[change.monthId] = firstRow + rows.length;
       var arRow = firstRow + rows.length - 1;
       if (change.additionalPayments !== undefined) {
@@ -678,7 +694,7 @@ function castleFinancialRequests(changes, current) {
       rows.forEach(function (values, offset) {
         var cells = [];
         for (var column = 0; column < 10+(target.bankOffset||0); column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
-        if (offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + (orderedPayments.length ? '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' : '') } };
+        if (!target.bundleOnly && offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + (orderedPayments.length ? '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' : '') } };
         if (offset >= 2 && offset < rows.length - 1) {
           var row = firstRow + offset;
           cells[9+(target.bankOffset||0)] = castleValue(false);
@@ -687,6 +703,7 @@ function castleFinancialRequests(changes, current) {
         requests.push({ updateCells: { start: { sheetId: target.sheetId, rowIndex: firstRow + offset - 1, columnIndex: 0 }, rows: [{ values: cells }], fields: 'userEnteredValue' } });
       });
       requests = requests.concat(castlePropertyFormatRequests(target, firstRow, paymentTypes));
+      if(target.bundleOnly&&!target.formatTemplate)target.formatTemplate={headerRow:firstRow,totalRow:totalRow,arRow:arRow,payments:orderedPayments.map(function(p,i){return {row:totalRow+1+i,type:'Airbnb'};})};
       orderedPayments.forEach(function (payment, index) {
         var row = firstRow + 2 + index;
         requests.push(castleCell(target.sheetId, row, 4, payment.amountCents / 100));
@@ -732,7 +749,7 @@ function castleFinancialRequests(changes, current) {
       if (payment.payoutDate) requests.push(castleCell(sheetId, row, 5, (Date.parse(payment.payoutDate + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86400000, 'date'));
     });
     requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10+bankOffset }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
-    requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
+    if(!current.months[String(sheetId)].bundleOnly)requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
   });
   return requests;
 }
@@ -740,7 +757,14 @@ function castleFinancialRequests(changes, current) {
 function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
   var bankOffset=month.bankOffset||0;
   var template = month.formatTemplate, used = {};
-  if(!template)return [];
+  if(!template){
+    if(!month.bundleOnly)return [];
+    return [
+      {repeatCell:{range:{sheetId:month.sheetId,startRowIndex:firstRow-1,endRowIndex:firstRow+paymentTypes.length+2,startColumnIndex:0,endColumnIndex:11},cell:{userEnteredFormat:{textFormat:{fontFamily:'Calibri',fontSize:11},numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}},fields:'userEnteredFormat'}},
+      {repeatCell:{range:{sheetId:month.sheetId,startRowIndex:firstRow-1,endRowIndex:firstRow,startColumnIndex:0,endColumnIndex:11},cell:{userEnteredFormat:{backgroundColor:{red:0.08,green:0.25,blue:0.20},textFormat:{bold:true,foregroundColor:{red:1,green:1,blue:1}},wrapStrategy:'WRAP'}},fields:'userEnteredFormat'}},
+      {updateDimensionProperties:{range:{sheetId:month.sheetId,dimension:'COLUMNS',startIndex:0,endIndex:11},properties:{pixelSize:160},fields:'pixelSize'}}
+    ];
+  }
   var sourceRows = [template.headerRow, template.totalRow];
   paymentTypes.forEach(function (type) {
     var matching = template.payments.filter(function (payment) { return payment.type === type; });
@@ -934,6 +958,7 @@ function castleRecordRequests(changes,current){
     if(!payment)castleThrow('VALIDATION','Payment not found. Refresh records.');
     target=Object.keys(current.properties).map(function(id){return current.properties[id];}).filter(function(p){return p.property.payments.some(function(row){return row.id===action.paymentId;});})[0];
     var arRow=target.arRow-1;
+    if(target.property.bundleOnly)return [{deleteDimension:{range:{sheetId:payment.sheetId,dimension:'ROWS',startIndex:payment.row-1,endIndex:payment.row}}}];
     return [{deleteDimension:{range:{sheetId:payment.sheetId,dimension:'ROWS',startIndex:payment.row-1,endIndex:payment.row}}},castleCell(payment.sheetId,arRow,4,'=D'+target.row+(arRow>target.row+1?'-SUM(D'+(target.row+1)+':D'+(arRow-1)+')':''),'formula')];
   }
   castleKeys(action,action.kind==='deleteProperty'?['kind','propertyId']:['kind','propertyId','name','manager']);
@@ -960,3 +985,44 @@ function castleRecordRequests(changes,current){
   if(deleting)requests.push({deleteDimension:{range:{sheetId:target.sheetId,dimension:'ROWS',startIndex:target.row-(current.months[String(target.sheetId)].month.properties.length===1?1:2),endIndex:target.arRow}}});
   return requests;
 }
+
+
+// Routing is explicit on NEW imports; historical zero totals never trigger migration.
+function castlePrepareBundleImports(changes,current){
+  var requests=[],used=current.sheetIds.slice();
+  var prepared=changes.map(function(original){
+    if(!original||original.kind!=='addProperty'||original.bundleOnly===undefined)return original;
+    if(original.bundleOnly!==true||original.totalCents!==0)castleThrow('VALIDATION','Bundle-only imports require a zero expected amount.');
+    var change=JSON.parse(JSON.stringify(original));delete change.bundleOnly;
+    var base=current.months[change.monthId];if(!base)castleThrow('VALIDATION','Unknown month ID.');
+    var companion=Object.keys(current.months).map(function(id){return current.months[id];}).filter(function(m){return m.bundleOnly&&m.month.month===base.month.month;})[0];
+    if(!companion){
+      var title=base.month.label.replace(/ - Bundle Matching$/,'')+' - Bundle Matching';
+      var existing=SpreadsheetApp.openById(CASTLE_SPREADSHEET_ID).getSheetByName(title);
+      if(existing&&existing.getLastRow())castleThrow('SOURCE_DATA','The Bundle Matching tab has an unrecognized layout.');
+      var id=existing?existing.getSheetId():1000;while(!existing&&used.indexOf(id)>=0)id++;
+      used.push(id);current.sheetIds.push(id);
+      var count=existing?existing.getMaxRows():1000,cols=existing?existing.getMaxColumns():17;
+      if(!existing)requests.push({addSheet:{properties:{sheetId:id,title:title,gridProperties:{rowCount:count,columnCount:cols,frozenRowCount:1}}}});
+      else if(cols<11){requests.push({appendDimension:{sheetId:id,dimension:'COLUMNS',length:11-cols}});cols=11;}
+      companion={bundleOnly:true,bankOffset:1,sheetId:id,lastRow:0,maxRows:count,maxColumns:cols,month:{id:String(id),label:title,month:base.month.month,properties:[]}};
+      current.months[String(id)]=companion;
+    }
+    change.monthId=String(companion.sheetId);
+    return change;
+  });
+  prepared.forEach(function(c){
+    if(!c)return;
+    var p=c.propertyId&&current.properties[c.propertyId];var payment=c.paymentId&&current.payments[c.paymentId];
+    var target=c.kind==='addProperty'?current.months[c.monthId]:p?current.months[String(p.sheetId)]:payment?current.months[String(payment.sheetId)]:null;
+    if(!target||!target.bundleOnly)return;
+    if(c.kind==='addProperty'){
+      if(c.totalCents!==0)castleThrow('VALIDATION','Bundle-only records have no expected amount.');
+      (c.initialPayments||[]).forEach(function(row){if(row.index>2)castleThrow('VALIDATION','Bundle-only imports support Airbnb payments only.');});
+    }
+    var rows=c.kind==='appendPayments'?c.payments:c.kind==='addProperty'?(c.additionalPayments||[]):c.kind==='updatePayment'?[c.fields]:[];
+    if(Array.isArray(rows))rows.forEach(function(row){if(row&&row.type!==undefined&&row.type!=='Airbnb')castleThrow('VALIDATION','Bundle-only records support Airbnb payments only.');});
+  });
+  return {requests:requests,changes:prepared};
+}
+

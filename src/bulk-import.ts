@@ -23,7 +23,7 @@ export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[])
    const airbnb = isAirbnbSheet(sheet,options.headerRow);
    if(entries.length>1 && !airbnb) throw new Error('Multi-file import requires recognized Airbnb payout exports. Provide a sample for Vrbo, Booking, or unknown formats; use manual mapping for a single file.');
    const key = normalizePropertyName(options.propertyName);
-   const selection = {total:parseMoney(options.total),manager:options.manager.trim()};
+   const selection = {total:airbnb ? (parseMoney(options.total) ?? 0) : parseMoney(options.total),manager:options.manager.trim()};
    const previous = selections.get(key);
    if(previous && previous.total !== selection.total) throw new Error('Conflicting manual Total Payment for the same property.');
    if(previous && previous.manager !== selection.manager) throw new Error('Conflicting manager for the same property.');
@@ -42,7 +42,7 @@ export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[])
    for(const change of preview.changes) {
     if(change.kind==='addProperty') {
      const id=`bulk-new-${fileIndex}`;
-     const property: Property = {id,name:change.name,manager:change.manager,totalCents:change.totalCents,payments:(['Airbnb','Airbnb','Airbnb','Vrbo','Owner'] as const).map((type,i)=>blank(`${id}-${i}`,type))};
+     const property: Property = {id,name:change.name,manager:change.manager,totalCents:change.totalCents,...(change.bundleOnly?{bundleOnly:true}:{}),payments:(['Airbnb','Airbnb','Airbnb','Vrbo','Owner'] as const).map((type,i)=>blank(`${id}-${i}`,type))};
      for(const {index,...fields} of change.initialPayments??[]) Object.assign(property.payments[index],fields);
      for(const fields of change.additionalPayments??[]) property.payments.push({...blank(`${id}-${property.payments.length}`),...fields});
      simulated.properties.push(property);
@@ -60,7 +60,7 @@ export function buildBulkImportPreview(month: Month, entries: BulkImportEntry[])
   const original=month.properties.find(p=>p.id===property.id);
   if(!original) {
    const additionalPayments=property.payments.slice(5).map(paymentFields);
-   changes.push({kind:'addProperty',monthId:month.id,name:property.name,manager:property.manager,totalCents:property.totalCents,initialPayments:property.payments.slice(0,5).flatMap((p,index)=>p.amountCents===null ? [] : [{index,...paymentFields(p)}]),...(additionalPayments.length ? {additionalPayments} : {})});
+   changes.push({kind:'addProperty',monthId:month.id,name:property.name,manager:property.manager,totalCents:property.totalCents,...(property.bundleOnly?{bundleOnly:true}:{}),initialPayments:property.payments.slice(0,5).flatMap((p,index)=>p.amountCents===null ? [] : [{index,...paymentFields(p)}]),...(additionalPayments.length ? {additionalPayments} : {})});
   } else {
    if(original.totalCents!==property.totalCents) changes.push({kind:'setTotal',propertyId:property.id,amountCents:property.totalCents});
    const appended: ImportedPayment[]=[];

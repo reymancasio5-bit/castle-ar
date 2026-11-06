@@ -9,7 +9,7 @@ const text=(value:unknown,fallback:string)=>typeof value==='string'&&value.lengt
 const choice=<T extends string>(value:unknown,choices:readonly T[],fallback:T):T=>typeof value==='string'&&choices.includes(value as T)?value as T:fallback;
 export function loadWorkspaceLocation(defaults:WorkspaceLocation,query='',target=storage()):WorkspaceLocation{
  const saved=read('castle-workspace-location-v1',target);
- const views:View[]=['overview','properties','reconciliation','managers'];
+ const views:View[]=['overview','properties','reconciliation','bundles','managers'];
  return {view:choice(new URLSearchParams(query).get('view'),views,choice(saved.view,views,defaults.view)),monthId:text(saved.monthId,defaults.monthId),search:text(saved.search,defaults.search),manager:text(saved.manager,defaults.manager),status:choice(saved.status,['all','outstanding','paid','unverified'],defaults.status)};
 }
 export const saveWorkspaceLocation=(value:WorkspaceLocation,target=storage())=>write('castle-workspace-location-v1',value,target);

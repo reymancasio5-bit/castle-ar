@@ -204,8 +204,12 @@ function harness() {
       if (state.failWrite) throw new Error('Backend rejected batch');
       for (const request of body.requests) {
         if(request.addSheet && request.addSheet.properties.title!=='Status'){const p=request.addSheet.properties;tables.set(p.sheetId,{name:p.title,data:[],maxRows:p.gridProperties.rowCount,maxColumns:p.gridProperties.columnCount});continue;}
+        const auxiliaryRange=request.copyPaste?.destination??request.repeatCell?.range??request.setDataValidation?.range??request.updateDimensionProperties?.range;
+        if(auxiliaryRange&&tables.has(auxiliaryRange.sheetId))continue;
+        const dimension=request.insertDimension??request.deleteDimension;
+        if(dimension&&tables.has(dimension.range.sheetId)){const t=tables.get(dimension.range.sheetId)!,r=dimension.range,count=r.endIndex-r.startIndex;if(request.insertDimension){t.data.splice(r.startIndex,0,...Array.from({length:count},()=>[]));t.maxRows+=count;}else{t.data.splice(r.startIndex,count);t.maxRows-=count;}continue;}
         const tableId=request.appendDimension?.sheetId??request.updateCells?.start?.sheetId??request.updateCells?.range?.sheetId;
-        if(tables.has(tableId)){const t=tables.get(tableId)!;if(request.appendDimension){if(request.appendDimension.dimension==='ROWS')t.maxRows+=request.appendDimension.length;else t.maxColumns+=request.appendDimension.length;}else{const u=request.updateCells,r=u.start?.rowIndex??u.range?.startRowIndex,c=u.start?.columnIndex??u.range?.startColumnIndex;u.rows.forEach((row:any,y:number)=>row.values.forEach((cell:any,x:number)=>{assert.ok(r+y<t.maxRows&&c+x<t.maxColumns);t.data[r+y]??=[];t.data[r+y][c+x]=cell.userEnteredValue?.stringValue??cell.userEnteredValue?.boolValue??cell.userEnteredValue?.numberValue??'';}));}continue;}
+        if(tables.has(tableId)){const t=tables.get(tableId)!;if(request.appendDimension){if(request.appendDimension.dimension==='ROWS')t.maxRows+=request.appendDimension.length;else t.maxColumns+=request.appendDimension.length;}else{const u=request.updateCells,r=u.start?.rowIndex??u.range?.startRowIndex,c=u.start?.columnIndex??u.range?.startColumnIndex;u.rows.forEach((row:any,y:number)=>row.values.forEach((cell:any,x:number)=>{assert.ok(r+y<t.maxRows&&c+x<t.maxColumns);t.data[r+y]??=[];t.data[r+y][c+x]=cell.userEnteredFormat?.numberFormat?.type==='DATE'&&cell.userEnteredValue?.numberValue!==undefined?new Date(Date.UTC(1899,11,30+cell.userEnteredValue.numberValue,12)):cell.userEnteredValue?.stringValue??cell.userEnteredValue?.boolValue??cell.userEnteredValue?.numberValue??'';}));}continue;}
         if(request.addSheet){assert.equal(status.exists,false);status.exists=true;status.id=request.addSheet.properties.sheetId;status.maxRows=request.addSheet.properties.gridProperties.rowCount;continue;}
         if(request.appendDimension?.sheetId===status.id){if(request.appendDimension.dimension==='ROWS')status.maxRows+=request.appendDimension.length;else status.maxColumns+=request.appendDimension.length;continue;}
         if((request.updateCells?.range?.sheetId??request.updateCells?.start?.sheetId)===status.id){
@@ -1064,4 +1068,40 @@ test('bank reconciliation matches F and G, ignores later or blank E, copies D in
   const saved=app.post({requestId:'bank-ignore-platform-date',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:94403,bankDate:'2026-09-10'}]});
   assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.state.data[20][8],594.20);assert.equal(app.state.data[20][9],true);assert.equal(app.state.data[20][4],payoutDate);assert.equal(app.state.data[20][5],944.03);assert.equal(saved.snapshot.months[0].properties[2].payments[0].bankDate,'2026-09-10');
  }
+});
+
+
+test('bundle-only import creates a companion sheet without AR and round-trips bank matching',()=>{
+ const app=harness();const initial=app.read().snapshot;const original=structuredClone(app.state.data);
+ const saved=app.post({requestId:'bundle-create-001',revision:initial.revision,changes:[{kind:'addProperty',bundleOnly:true,monthId:'0',name:'Castle direct',manager:'TeamA',totalCents:0,initialPayments:[{index:0,amountCents:20000,bundleCents:50000,bankDetails:'Checking 5864',payoutDate:'2026-11-05'}]}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.bundleMatchingSchema,1);
+ assert.equal(saved.snapshot.months.length,1);
+ const property=saved.snapshot.months[0].properties.find((p:any)=>p.bundleOnly);assert.ok(property);assert.equal(property.sourceArCents,undefined);
+ assert.deepEqual(app.state.data,original);
+ const table=[...app.tables.values()].find(t=>t.name==='Nov, 2026 - Bundle Matching')!;assert.ok(table);
+ assert.ok(!table.data.some(row=>row[2]==='AR'||row[2]==='Total Payment'));
+ const matched=app.post({requestId:'bundle-match-001',revision:saved.snapshot.revision,changes:[{kind:'reconcileBank',paymentId:property.payments[0].id,account:'5864',bundleCents:50000,bankDate:'2026-11-06'}]});
+ assert.equal(matched.ok,true,matched.error?.message);
+ assert.equal(matched.snapshot.months[0].properties.find((p:any)=>p.bundleOnly).payments[0].verifiedBySystem,true);
+ const rejected=app.post({requestId:'bundle-total-001',revision:matched.snapshot.revision,changes:[{kind:'setTotal',propertyId:property.id,amountCents:10}]});assert.equal(rejected.ok,false);
+ const appended=app.post({requestId:'bundle-append-001',revision:matched.snapshot.revision,changes:[{kind:'appendPayments',propertyId:property.id,payments:[{amountCents:5000,bundleCents:5000,bankDetails:'Checking 5864'}]}]});assert.equal(appended.ok,true,appended.error?.message);
+ const rows=appended.snapshot.months[0].properties.find((p:any)=>p.bundleOnly).payments;assert.equal(rows.length,2);
+ const deleted=app.post({requestId:'bundle-delete-001',revision:appended.snapshot.revision,changes:[{kind:'deletePayment',paymentId:rows[1].id}]});assert.equal(deleted.ok,true,deleted.error?.message);
+ assert.deepEqual(app.state.data,original);
+});
+
+
+test('bundle tabs support bulk first import, manager rename, full deletion and reimport',()=>{
+ const app=harness();let snapshot=app.read().snapshot;const original=structuredClone(app.state.data);
+ const save=(requestId:string,changes:any[])=>{const result=app.post({requestId,revision:snapshot.revision,changes});assert.equal(result.ok,true,result.error?.message);snapshot=result.snapshot;};
+ save('bundle-many-create',[{kind:'addProperty',bundleOnly:true,monthId:'0',name:'Mtl 404 Le Bijou',manager:'TeamA',totalCents:0,additionalPayments:Array.from({length:5},(_,i)=>({amountCents:10000+i,bundleCents:20000+i,bankDetails:'Checking 5864'}))}]);
+ let bundle=snapshot.months[0].properties.find((p:any)=>p.bundleOnly);assert.equal(bundle.payments.length,5);assert.equal(snapshot.months[0].properties.filter((p:any)=>p.name===bundle.name).length,2);
+ const manager=snapshot.managers.find((m:any)=>m.name==='TeamA');
+ save('bundle-manager-rename',[{kind:'saveManager',manager:{...manager,name:'Renamed Team'}}]);
+ bundle=snapshot.months[0].properties.find((p:any)=>p.bundleOnly);assert.equal(bundle.manager,'Renamed Team');assert.equal(bundle.followUp,undefined);
+ save('bundle-remove-property',[{kind:'deleteProperty',propertyId:bundle.id}]);assert.ok(!snapshot.months[0].properties.some((p:any)=>p.bundleOnly));
+ save('bundle-reimport-property',[{kind:'addProperty',bundleOnly:true,monthId:'0',name:'Another direct payout',manager:'Renamed Team',totalCents:0,initialPayments:[{index:0,amountCents:5000}]}]);
+ assert.equal(snapshot.months[0].properties.filter((p:any)=>p.bundleOnly).length,1);
+ assert.equal([...app.tables.values()].filter(t=>t.name.endsWith(' - Bundle Matching')).length,1);
+ assert.equal(app.state.data[3][1],original[3][1]);assert.deepEqual(app.state.formulas[9],['','','','=D4-D5-D6-D7-D8-D9','','','','','','']);
 });

@@ -3,7 +3,7 @@ import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
 export function createPreviewApi() {
- let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bankStatementSchema=2;state.recordEditingSchema=1;
+ let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.recordEditingSchema=1;
  // Fictional, editable examples belong only to the isolated preview.
  for(const [team,name,id] of [['Team A','Alex Chen','preview-assistant-alex'],['Team B','Maya Cruz','preview-assistant-maya']]){
   const parent=state.managers!.find(manager=>manager.name.replace(/\s/g,'').toLowerCase()===team.replace(/\s/g,'').toLowerCase());
@@ -24,10 +24,10 @@ export function createPreviewApi() {
     if(c.kind==='deleteProperty')month.properties=month.properties.filter(row=>row.id!==p.id);
     else{
      const name=c.name.trim();if(!name||name.length>160||/^[=+@-]/.test(name)||/[\u0000-\u001f\u007f]/.test(name))throw new Error('Enter a valid property name.');
-     if(month.properties.some(row=>row.id!==p.id&&row.name.toLowerCase()===name.toLowerCase()))throw new Error('This property name already exists.');
+     if(month.properties.some(row=>row.id!==p.id&&!!row.bundleOnly===!!p.bundleOnly&&row.name.toLowerCase()===name.toLowerCase()))throw new Error('This property name already exists.');
      const manager=resolveManager(next,c.manager,p.managerId);p.name=name;p.manager=manager?.name??'';p.managerId=manager?.id;newKey=JSON.stringify([month.id,name.toLowerCase()]);
     }
-    for(const row of [...(next.tasks??[]),...(next.managerUpdates??[])])if(row.propertyKey===oldKey)row.propertyKey=newKey;
+    for(const row of [...(next.tasks??[]),...(next.managerUpdates??[])])if(!p.bundleOnly&&row.propertyKey===oldKey)row.propertyKey=newKey;
     continue;
    }
    if(c.kind==='addProperty') {
@@ -38,7 +38,7 @@ export function createPreviewApi() {
     for (const { index, ...fields } of [...(c.initialPayments ?? [])].sort((a,b)=>(a.index===4?-1:a.index)-(b.index===4?-1:b.index))) {
      payments.push({id:id+':'+index,type:index===4?'Owner':index===3?'Vrbo':'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});
     }
-    month.properties.push({id,name:c.name,manager:manager.name,managerId:manager.id,totalCents:c.totalCents,payments});
+    month.properties.push({id,name:c.name,manager:manager.name,managerId:manager.id,totalCents:c.totalCents,...(c.bundleOnly?{bundleOnly:true}:{}),payments});
     for (const fields of c.additionalPayments ?? []) month.properties[month.properties.length - 1].payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});
    } else {
     const properties=next.months.flatMap(m=>m.properties);

@@ -23,3 +23,13 @@ test('verification requires both known bundle and bank amounts',()=>{
 test('explicit failed system verification cannot be overridden by equal bundle and bank values',()=>{
  assert.equal(systemStatus({id:'p',type:'Airbnb',amountCents:100,bundleCents:100,bankCents:100,payoutDate:'2026-09-09',bankDate:'',verifiedByDaisy:false,verifiedBySystem:false}),'Pending');
 });
+
+
+test('Daisy verification does not change recorded collections or outstanding',()=>{
+ const property=structuredClone(sampleSnapshot.months[0].properties[2]);
+ assert.equal(collected(property),32486);assert.equal(balance(property),4562);
+ property.payments.forEach(p=>p.verifiedByDaisy=true);
+ assert.equal(collected(property),32486);assert.equal(balance(property),4562);
+ property.payments.forEach(p=>p.verifiedByDaisy=false);
+ assert.equal(balance(property),4562);
+});

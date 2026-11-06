@@ -70,3 +70,12 @@ test('report output format is distinct from attached source file format',()=>{
  const e=engine();assert.equal(e.ctx.castleAiReportFormat('Create an Excel report from the attached PDF',[]),'xlsx');assert.equal(e.ctx.castleAiReportFormat('Create a report from this PDF',[]),null);
  const history=[{role:'assistant',content:'Which file type would you like?'}];assert.equal(e.ctx.castleAiReportFormat('PDF please',history),'pdf');assert.equal(e.ctx.castleAiReportFormat('Excel',history),'xlsx');assert.equal(e.ctx.castleAiRun({message:'PDF please',history,monthId:'m'}).text,'Castle report');
 });
+
+
+test('assistant separates bundle payments from AR totals and balances',()=>{
+ const e=engine(),snapshot=e.ctx.castleRead().snapshot;
+ snapshot.months[0].properties.push({id:'bundle',name:'Direct Airbnb',manager:'Team A',bundleOnly:true,totalCents:0,payments:[{id:'bpay',amountCents:50000,bankCents:50000,verifiedBySystem:true}]});
+ const result=e.ctx.castleAiQuery(snapshot,{scope:'payments',monthId:'m'});
+ assert.equal(result.summary.outstandingCents,6500);
+ const property=result.records.find((r:any)=>r.id==='bundle');assert.equal(property.outstandingCents,null);assert.equal(property.bundleOnly,true);
+});

@@ -182,4 +182,3 @@ These controls use the existing revision checks and atomic Sheets batches. Updat
 # Castle Assistant
 
 The app includes a direct-access AI panel for workspace questions, reports, and reviewed edits. See [setup and local preview instructions](docs/castle-assistant-setup.md). API credentials belong only in Apps Script settings.
-

@@ -4,7 +4,7 @@ import type {Change,Snapshot} from './types';
 import type {AssistantAttachment,AssistantMessage,AssistantReply,AssistantRequest,AssistantImport} from './assistant-types';
 import {downloadReport} from './assistant-content';
 import {readAssistantFile} from './assistant-files';
-import {money} from './domain';
+import {money,collected} from './domain';
 import CastleMark from './CastleMark';
 import AssistantReplyText from './AssistantReplyText';
 type ChatMessage=AssistantMessage&{id:string};
@@ -30,8 +30,8 @@ export default function CastleAssistant({snapshot,monthId,ask,onApply,onImport}:
    let answer:AssistantReply;
    if(ask)answer=await ask({message:text,monthId,history,attachment:attached?.data,reportFormat},setProgress);
    else {
-    const month=snapshot.months.find(m=>m.id===monthId),properties=month?.properties??[];
-    const expected=properties.reduce((s,p)=>s+p.totalCents,0),received=properties.reduce((s,p)=>s+p.payments.reduce((n,r)=>n+(r.amountCents??0),0),0);
+    const month=snapshot.months.find(m=>m.id===monthId),properties=(month?.properties??[]).filter(p=>!p.bundleOnly);
+    const expected=properties.reduce((s,p)=>s+p.totalCents,0),received=properties.reduce((s,p)=>s+collected(p),0);
     answer={text:`LOCAL DEMO — no AI request was made.\n\n${month?.label??'Selected month'}: ${properties.length} properties.\nExpected: ${money(expected)}\nReceived (column D): ${money(received)}\nOutstanding: ${money(expected-received)}\n\nLive answers, analysis, and edit proposals become available after your administrator configures the Apps Script assistant. This demo always shows the selected month summary.`};
    }
    if(!ask && /report/i.test(text)){

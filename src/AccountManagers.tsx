@@ -29,7 +29,7 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
  const editorRef=useRef<HTMLFormElement>(null);const profileInput=useRef<HTMLInputElement>(null);
  const [processingProfile,setProcessingProfile]=useState(false);const profileSupported=snapshot.managerProfiles===1;
  const selected=managers.find(m=>m.id===selectedId)??managers[0];
- const allListings=snapshot.months.flatMap(month=>month.properties.map(property=>({month,property,key:listingKey(month.id,property.name)})));
+ const allListings=snapshot.months.flatMap(month=>month.properties.filter(property=>!property.bundleOnly).map(property=>({month,property,key:listingKey(month.id,property.name)})));
  const listings=allListings.filter(x=>x.property.managerId===selected?.id&&(allMonths||x.month.id===monthId));
  const tasks=(snapshot.tasks??[]).filter(t=>t.managerId===selected?.id).sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
  const overdue=tasks.filter(t=>t.status!=='completed'&&t.dueDate<today()).length;

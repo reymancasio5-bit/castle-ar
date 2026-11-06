@@ -46,10 +46,12 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   if (sheet.rows.length > MAX_IMPORT_ROWS) throw new Error('This worksheet exceeds 10,000 rows. Split it into smaller files.');
   if (options.headerRow !== null && (!Number.isInteger(options.headerRow) || options.headerRow < 0 || options.headerRow >= sheet.rows.length)) throw new Error('Choose a valid header row.');
   const name = validName(options.propertyName, 'property name');
-  const matches = month.properties.filter(property => normalizePropertyName(property.name) === normalizePropertyName(name));
+  const enteredTotal = parseMoney(options.total);
+  const bundleOnly = isAirbnbSheet(sheet, options.headerRow) && (enteredTotal === null || enteredTotal === 0);
+  const matches = month.properties.filter(property => !!property.bundleOnly === bundleOnly && normalizePropertyName(property.name) === normalizePropertyName(name));
   if (matches.length > 1) throw new Error('More than one database property has this name. Rename it before importing.');
   const existing = matches[0];
-  const totalCents = parseMoney(options.total);
+  const totalCents = bundleOnly ? 0 : enteredTotal;
   if (totalCents === null || totalCents < 0) throw new Error('Enter a manual Total Payment of zero or more.');
   const manager = existing?.manager ?? validName(options.manager, 'property manager');
   const property: Property = existing ?? { id: 'new-import-property', name, manager, totalCents, payments: (['Airbnb', 'Airbnb', 'Airbnb', 'Vrbo', 'Owner'] as const).map((type, index) => ({ id: `new-import-payment-${index}`, type, amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false })) };
@@ -86,7 +88,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   if (usable && !existing) {
     const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ ...(change.fields.bankDetails ? {bankDetails:change.fields.bankDetails} : {}), index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
     const additionalPayments = changes.flatMap(change => change.kind === 'appendPayments' ? change.payments : []);
-    changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, initialPayments, ...(additionalPayments.length ? { additionalPayments } : {}) }];
+    changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, ...(bundleOnly ? {bundleOnly:true} : {}), initialPayments, ...(additionalPayments.length ? { additionalPayments } : {}) }];
   } else if (usable && existing && existing.totalCents !== totalCents) changes.unshift({ kind: 'setTotal', propertyId: property.id, amountCents: totalCents });
   return { rows, changes, newProperty: !existing, totalCents, propertyName: property.name,
     readyCount: rows.filter(row => row.status === 'ready').length, skippedCount: rows.filter(row => row.status === 'skipped').length,

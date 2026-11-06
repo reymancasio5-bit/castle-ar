@@ -1,3 +1,4 @@
+import {systemStatus, collected} from './domain.ts';
 import {bankReport} from './bank-details.ts';
 import type { Snapshot } from './types.ts';
 import type { ImportCell, ImportSheet } from './import.ts';
@@ -74,8 +75,10 @@ export function createExportSheets(snapshot: Snapshot, monthId: string) {
   const records: Record<string, unknown>[] = [];
   let totalCents = 0;
   let paidCents = 0;
-  month.properties.forEach(property => {
-    const paid = property.payments.reduce((sum, payment) => sum + (payment.amountCents ?? 0), 0);
+  const arProperties = month.properties.filter(property => !property.bundleOnly);
+  const bundleRecords = month.properties.filter(property => property.bundleOnly).flatMap(property => property.payments.map(payment => ({Month:month.label,Property:property.name,Manager:property.manager,'Airbnb payment':payment.amountCents === null ? null : payment.amountCents / 100,'Payout date':payment.payoutDate,'Bundle amount':payment.bundleCents === null ? null : payment.bundleCents / 100,'Bank Details':payment.bankDetails ?? '', 'Bank date':payment.bankDate,'Bank amount':payment.bankCents === null ? null : payment.bankCents / 100,'System check':systemStatus(payment),'Verified by Daisy':payment.verifiedByDaisy})));
+  arProperties.forEach(property => {
+    const paid = collected(property);
     totalCents += property.totalCents;
     paidCents += paid;
     const base = { Month: month.label, Property: property.name, Manager: property.manager, Total: property.totalCents / 100, 'Accounts receivable': (property.totalCents - paid) / 100 };
@@ -87,19 +90,22 @@ export function createExportSheets(snapshot: Snapshot, monthId: string) {
     });
   });
   const summary: unknown[][] = [
-    ['Castle Monthly AR', month.label], ['Properties', month.properties.length],
+    ['Castle Monthly AR', month.label], ['Properties', arProperties.length],
     ['Total expected', totalCents / 100], ['Payments recorded', paidCents / 100],
     ['Accounts receivable', (totalCents - paidCents) / 100], ['Snapshot updated', snapshot.updatedAt],
     ['Source spreadsheet', snapshot.spreadsheetUrl],
     ['Note', 'Amounts use the source spreadsheet’s currency. Property totals repeat in the detail rows; use this summary for portfolio totals.'],
   ];
-  return { month, records, summary };
+  return { month, records, summary, bundleRecords };
 }
 
 export function exportWorkbook(snapshot: Snapshot, monthId: string): void {
   const xlsx = getSheetJS();
-  const { month, records, summary } = createExportSheets(snapshot, monthId);
+  const { month, records, summary, bundleRecords } = createExportSheets(snapshot, monthId);
   const workbook = xlsx.utils.book_new();
+  const bundles = xlsx.utils.json_to_sheet(bundleRecords);
+  bundles['!cols'] = Array.from({length:11}, () => ({wch:22}));
+  xlsx.utils.book_append_sheet(workbook, bundles, 'Bundle Matching');
   const details = xlsx.utils.json_to_sheet(records);
   const summarySheet = xlsx.utils.aoa_to_sheet(summary);
   details['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, {wch:20}];

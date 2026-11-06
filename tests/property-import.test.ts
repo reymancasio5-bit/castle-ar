@@ -33,7 +33,7 @@ test('creates a new property with manual total and initial payment in one mutati
   const result = importer.buildPropertyImportPreview(month, data, { ...options, propertyName: 'New house', manager: 'Team C' });
   assert.deepEqual(result.changes, [{ kind: 'addProperty', monthId: 'm', name: 'New house', manager: 'Team C', totalCents: 37048, initialPayments: [{ index: 0, amountCents: 11686, payoutDate: '2026-10-09', bundleCents: 38140 }] }]);
   assert.throws(() => importer.buildPropertyImportPreview(month, data, { ...options, propertyName: 'New house' }), /manager/i);
-  assert.throws(() => importer.buildPropertyImportPreview(month, data, { ...options, total: '' }), /total/i);
+  assert.equal((importer.buildPropertyImportPreview(month, data, { ...options, manager:'Team B', total: '' }).changes[0] as any).bundleOnly, true);
 });
 
 test('successive imports fill separate slots and repeat imports do not double count', () => {
