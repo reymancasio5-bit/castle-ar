@@ -40,13 +40,20 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
   if(!files?.length||busy||saving)return;
   setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});
   try{
-   if(files.length>10||Array.from(files).reduce((n,f)=>n+f.size,0)>50*1024*1024)throw new Error('Choose up to 10 PDFs, totaling no more than 50 MB.');
-   const {extractStatementText}=await import('./bank-pdf');
+   if(files.length>10||Array.from(files).reduce((n,f)=>n+f.size,0)>50*1024*1024)throw new Error('Choose up to 10 bank files, totaling no more than 50 MB.');
    const all:BankDeposit[]=[],notes:string[]=[];
    for(const file of Array.from(files)){
-    if(!/\.pdf$/i.test(file.name))throw new Error('Choose PDF bank statements.');
-    const extracted=await extractStatementText(file);const parsed=parseStatement(extracted,file.name);
-    all.push(...parsed.deposits);notes.push(...parsed.warnings);
+    try{
+     let parsed:{deposits:BankDeposit[];warnings:string[]};
+     if(/\.pdf$/i.test(file.name)){
+      const {extractStatementText}=await import('./bank-pdf');
+      parsed=parseStatement(await extractStatementText(file),file.name);
+     }else if(/\.(xlsx|xls|csv)$/i.test(file.name)){
+      const [{readSpreadsheet},{parseBankSpreadsheet}]=await Promise.all([import('./excel'),import('./bank-spreadsheet')]);
+      parsed=parseBankSpreadsheet(await readSpreadsheet(file),file.name);
+     }else throw new Error('Choose a PDF bank statement or an RBC Excel/CSV transaction export.');
+     all.push(...parsed.deposits);notes.push(...parsed.warnings);
+    }catch(error){throw new Error(`${file.name}: ${error instanceof Error?error.message:'Could not read this bank file.'}`);}
    }
    setDeposits(all);setWarnings(notes);setReviewed(true);
   }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');}finally{setBusy(false);if(input.current)input.current.value='';}
@@ -58,10 +65,10 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
   <div className="import-content" aria-busy={busy||saving}>
    {error&&<div className="import-alert" role="alert">{error}</div>}
    {!supported&&<div className="import-warning">Update the Google Apps Script deployment with the supplied Code.gs to enable bank statement verification.</div>}
-   <div className="import-dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void files(e.dataTransfer.files);}}><div className="import-upload-icon"><Upload size={28}/></div><h3>Bring Your Bank Deposits In</h3><p>Choose RBC chequing statements. Match AIRBNB PAYMENTS bundles and owner e-Transfer - Autodeposit credits.</p><input ref={input} className="import-hidden-input" type="file" accept=".pdf,application/pdf" multiple onChange={e=>void files(e.target.files)}/><button className="import-button import-button-primary" disabled={busy||saving} onClick={()=>input.current?.click()}>{busy?'Reading statements…':'Choose Bank PDFs'}</button><small>Up to 10 PDFs · 20 MB per file · Read locally in your browser</small></div>
+   <div className="import-dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void files(e.dataTransfer.files);}}><div className="import-upload-icon"><Upload size={28}/></div><h3>Bring Your Bank Deposits In</h3><p>Choose RBC chequing PDF statements or Excel/CSV transaction exports. Match AIRBNB PAYMENTS bundles and owner e-Transfer - Autodeposit credits.</p><input ref={input} className="import-hidden-input" type="file" accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" aria-label="Choose Bank Files" multiple onChange={e=>void files(e.target.files)}/><button className="import-button import-button-primary" disabled={busy||saving} onClick={()=>input.current?.click()}>{busy?'Reading Bank Files…':'Choose Bank Files'}</button><small>PDF, XLSX, XLS or CSV · Up to 10 files / 50 MB total · PDF: 20 MB each · Excel/CSV: 10 MB each · Read locally in your browser</small></div>
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Bank Deposits Before Saving</strong><p>Airbnb deposits match payout bundles and bank accounts. Owner deposits are applied directly to their properties, with exact amounts and the bank transaction date.</p></div></div>
-   {warnings.length>0&&<div className="import-warning">{warnings.length} entries could not be read completely and were skipped. Check the original bank statement.</div>}
-   {reviewed&&<><div className="import-section-heading"><h3>Review Matches</h3><span>{deposits.length} deposits · {rowCount} rows to update</span></div>{!deposits.length?<p>No readable Airbnb or owner deposits found. Check the bank statement PDF.</p>:result.rows.length>0?<div className="import-table-scroll import-review-scroll"><table className="import-table"><thead><tr><th>Statement / Bank</th><th>Bank Date</th><th>Statement Bundle / F Match</th><th>Matched Rows / D To I</th><th>Result</th></tr></thead><tbody>{result.rows.map((row,i)=><tr key={i}><td>{row.deposit.source}<small>Checking {row.deposit.account} {row.deposit.reference&&`· ${row.deposit.reference}`}</small></td><td>{row.deposit.date}</td><td>{money(row.deposit.amountCents)}</td><td>{row.payments.map(({property,payment})=><div key={payment.id}>{property}<small>Row {payment.id.split(':').at(-1)} · {money(payment.amountCents)}</small></div>)}</td><td><span className={`import-status import-status-${row.status==='Ready'?'ready':'skipped'}`}>{row.status}</span></td></tr>)}</tbody></table></div>:null}</>}
+   {warnings.length>0&&<div className="import-warning"><p>{warnings.length} entries could not be read completely and were skipped. Check the original bank files.</p><details><summary>View Skipped Entries</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details></div>}
+   {reviewed&&<><div className="import-section-heading"><h3>Review Matches</h3><span>{deposits.length} deposits · {rowCount} rows to update</span></div>{!deposits.length?<p>No readable Airbnb or owner deposits found. Check the PDF statement or Excel/CSV transaction export.</p>:result.rows.length>0?<div className="import-table-scroll import-review-scroll"><table className="import-table"><thead><tr><th>Statement / Bank</th><th>Bank Date</th><th>Statement Bundle / F Match</th><th>Matched Rows / D To I</th><th>Result</th></tr></thead><tbody>{result.rows.map((row,i)=><tr key={i}><td>{row.deposit.source}<small>Checking {row.deposit.account} {row.deposit.reference&&`· ${row.deposit.reference}`}</small></td><td>{row.deposit.date}</td><td>{money(row.deposit.amountCents)}</td><td>{row.payments.map(({property,payment})=><div key={payment.id}>{property}<small>Row {payment.id.split(':').at(-1)} · {money(payment.amountCents)}</small></div>)}</td><td><span className={`import-status import-status-${row.status==='Ready'?'ready':'skipped'}`}>{row.status}</span></td></tr>)}</tbody></table></div>:null}</>}
    {reviewed&&ownerRows.length>0&&<><div className="import-section-heading"><h3>Owner Payments</h3><span>{ownerRows.length} deposits · {ownerReview.changes.length} ready</span></div><p className="owner-help">A unique exact balance match is preselected. Review other deposits and split them as needed. These direct payments have no bundle amount; each allocation reduces the property’s outstanding balance when saved.</p>{ownerRows.map((row,index)=><OwnerPaymentReview key={index} row={row} values={allocations[index]??allocationDraft(row)} skipped={!!skipped[index]} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>)}</>}
    {rowCount>500&&<div className="import-warning">More than 500 rows match. Import fewer statement files at a time.</div>}
   </div>

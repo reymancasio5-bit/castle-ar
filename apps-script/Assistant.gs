@@ -161,7 +161,7 @@ function castleAiRun(body) {
   var proposal=null;
   tools.push({type:'function',name:'create_report',description:'Create a downloadable PDF, XLSX or TXT report from your complete Markdown analysis using the user-selected format. Finish the task with this tool.',strict:true,parameters:{type:'object',properties:{title:{type:'string'},markdown:{type:'string'}},required:['title','markdown'],additionalProperties:false}});
   tools.push({type:'function',name:'request_report_format',description:'Ask the user which report file type they prefer. Recommend PDF; also offer Excel and plain text.',strict:true,parameters:{type:'object',properties:{},required:[],additionalProperties:false}});
-  tools.push({type:'function',name:'prepare_import',description:'Prepare the user-attached original file for the existing import review. Does not save any data.',strict:true,parameters:{type:'object',properties:{kind:{type:'string',enum:['bank','excel']},attachmentId:{type:'string'}},required:['kind','attachmentId'],additionalProperties:false}});
+  tools.push({type:'function',name:'prepare_import',description:'Prepare the user-attached original file for the existing import review. Use bank for PDF bank statements or RBC bank transaction exports in Excel/CSV. Use excel for property/payment spreadsheets and Airbnb payout exports. Does not save any data.',strict:true,parameters:{type:'object',properties:{kind:{type:'string',enum:['bank','excel']},attachmentId:{type:'string'}},required:['kind','attachmentId'],additionalProperties:false}});
   for(var round=0;round<3;round++) {
     var contextLength=JSON.stringify(input).length-(attachment&&attachment.kind==='image'?attachment.dataUrl.length:0);
     if(contextLength>100000)throw new Error('This request needs too much context. Narrow it to a property or team.');
@@ -191,7 +191,7 @@ function castleAiRun(body) {
       }
       else if(call.name==='prepare_import') {
         if(!attachment||args.attachmentId!==attachment.id)throw new Error('Attach the original file first.');
-        if(attachment.kind!=='document'|| !(args.kind==='bank'?/\.pdf$/i.test(attachment.name):args.kind==='excel'&&/\.(xlsx|xls|csv)$/i.test(attachment.name)))throw new Error('Use the original PDF bank statement or an Excel/CSV file. Screenshots cannot be imported.');
+        if(attachment.kind!=='document'|| !(args.kind==='bank'?/\.(pdf|xlsx|xls|csv)$/i.test(attachment.name):args.kind==='excel'&&/\.(xlsx|xls|csv)$/i.test(attachment.name)))throw new Error('Use the original PDF bank statement or an Excel/CSV file. Screenshots cannot be imported.');
         return {text:'Your file is ready for import review. Check the matched rows and mapping before applying any changes.',importAction:{kind:args.kind,attachmentId:attachment.id,monthId:body.monthId}};
       }
       else if(call.name==='propose_changes') {proposal=castleAiProposal(JSON.parse(args.changesJson),current);result={readyForReview:true,message:'Not saved. User must review and apply.'};}

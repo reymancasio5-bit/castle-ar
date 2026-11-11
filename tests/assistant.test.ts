@@ -61,6 +61,13 @@ test('import tool validates original file type and cannot import screenshots',()
  assert.equal(e.ctx.castleAiRun(b).importAction.kind,'bank');
  assert.equal(e.ctx.castleAiRun({...b,attachment:{id:'a',name:'screen.png',kind:'image',dataUrl:'data:image/png;base64,aGVsbG8='}}).importAction,undefined);
 });
+test('assistant sends bank spreadsheets to bank review and retains ordinary Excel imports',()=>{
+ for(const [kind,name] of [['bank','transactions.xlsx'],['bank','transactions.xls'],['bank','transactions.csv'],['excel','payments.xlsx']]) {
+  const e=engine();e.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'function_call',name:'prepare_import',call_id:'i',arguments:JSON.stringify({kind,attachmentId:'a'})}]})});
+  const result=e.ctx.castleAiRun({message:'Import bank file',monthId:'m',history:[],attachment:{id:'a',name,kind:'document',text:'Account Number\tTransaction Date\tDescription 1\tDescription 2\tCAD$'}});
+  assert.equal(result.importAction?.kind,kind,name);assert.equal(result.importAction?.attachmentId,'a');
+ }
+});
 test('attachment limits are checked before paid API calls',()=>{
  const e=engine();assert.throws(()=>e.ctx.castleAiRun({message:'Read file',history:[],attachment:{id:'a',name:'notes.txt',kind:'document',text:'x'.repeat(18001)}}),/attachment|18,000/i);assert.equal(e.calls(),0);
 });
