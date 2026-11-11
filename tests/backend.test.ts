@@ -114,7 +114,7 @@ test('tasks survive without monthly tabs, normalize Sheet dates, and reject stal
  const app=harness();const initial=app.read().snapshot;const task={id:'due',managerId:initial.managers[0].id,title:'Review',description:'',dueDate:'2026-11-10',status:'open',propertyKey:''};
  const saved=app.post({requestId:'task-no-month-init',revision:initial.revision,changes:[{kind:'saveTask',task}]});assert.equal(saved.ok,true);
  const table=[...app.tables.values()].find(t=>t.name==='Manager Tasks')!;table.data[1][4]=new Date('2026-11-10T05:00:00Z');
- app.state.data.splice(0);app.state.formulas.splice(0);
+ app.state.data.splice(0);app.state.formulas.splice(0);app.sheet.getName=()=> 'Archive';
  const next=app.read();assert.equal(next.ok,true,next.error?.message);assert.equal(next.snapshot.months.length,0);assert.equal(next.snapshot.tasks[0].dueDate,'2026-11-10');
  const stale=app.post({requestId:'task-stale-revision',revision:saved.snapshot.revision,changes:[{kind:'saveTask',task:{...task,status:'completed'}}]});assert.equal(stale.error.code,'CONFLICT');
  const complete=app.post({requestId:'task-no-month-save',revision:next.snapshot.revision,changes:[{kind:'saveTask',task:{...task,status:'completed'}}]});assert.equal(complete.ok,true,complete.error?.message);assert.equal(complete.snapshot.tasks[0].status,'completed');
@@ -129,7 +129,53 @@ test('blank rows in managed tabs do not duplicate records on subsequent saves',(
 });
 
 // Execute the production Apps Script with only its remote Google boundaries replaced.
+test('discovers blank monthly tabs on refresh, including future years, without writing',()=>{
+ const app=harness();app.sheet.getName=()=> 'September 2026';
+ const before=app.read().snapshot;
+ app.tables.set(42,{name:'October 2026',data:[],maxRows:100,maxColumns:26});
+ app.tables.set(43,{name:'January 2027',data:[],maxRows:100,maxColumns:26});
+ const next=app.read();assert.equal(next.ok,true,next.error?.message);
+ assert.deepEqual(next.snapshot.months.map((m:any)=>m.label),['January 2027','October 2026','September 2026']);
+ assert.equal(next.snapshot.months[1].properties.length,0);
+ assert.notEqual(next.snapshot.revision,before.revision);assert.equal(app.batches.length,0);
+});
+
+for(const withFilter of [false,true]) test(`imports and appends payments into an October tab ${withFilter?'with AM FILTER setup':'that is blank'} while preserving September`,()=>{
+ const app=harness();const september=structuredClone(app.state.data);
+ app.tables.set(42,{name:'September 2026',data:structuredClone(september),maxRows:100,maxColumns:26});
+ app.sheet.getName=()=> 'October 2026';app.state.data.splice(0);app.state.formulas.splice(0);
+ if(withFilter){app.state.data.push(row('AM FILTER','October, 2026'),row('Team A'));app.state.formulas.push(row(),row());}
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);
+ assert.equal(before.snapshot.months.find((m:any)=>m.id==='0').label,'October 2026');assert.equal(app.batches.length,0);
+ const imported=app.post({requestId:'october-first-import',revision:before.snapshot.revision,changes:[{kind:'addProperty',monthId:'0',name:'October House',manager:'TeamB',totalCents:10000,initialPayments:[{index:0,amountCents:2500,payoutDate:'2026-10-05',bundleCents:2500}]}]});
+ assert.equal(imported.ok,true,imported.error?.message);
+ const october=imported.snapshot.months.find((m:any)=>m.id==='0');
+ assert.equal(october.properties[0].payments[0].amountCents,2500);
+ const appended=app.post({requestId:'october-next-import',revision:imported.snapshot.revision,changes:[{kind:'appendPayments',propertyId:october.properties[0].id,payments:[{type:'Airbnb',amountCents:1500}]}]});
+ assert.equal(appended.ok,true,appended.error?.message);
+ assert.equal(appended.snapshot.months.find((m:any)=>m.id==='0').properties[0].payments.length,2);
+ const payment=appended.snapshot.months.find((m:any)=>m.id==='0').properties[0].payments[0];
+ const updated=app.post({requestId:'october-followup-save',revision:appended.snapshot.revision,changes:[{kind:'updateFollowUp',propertyId:october.properties[0].id,manager:'TeamB',status:'contact_attempted',note:'October follow-up',attachments:[]},{kind:'updatePayment',paymentId:payment.id,fields:{bankCents:2500,bankDate:'2026-10-06',verifiedByDaisy:true}}]});
+ assert.equal(updated.ok,true,updated.error?.message);
+ const property=updated.snapshot.months.find((m:any)=>m.id==='0').properties[0];
+ assert.equal(property.followUp.note,'October follow-up');assert.equal(property.payments[0].verifiedByDaisy,true);
+ assert.deepEqual(app.tables.get(42)!.data,september);
+ if(withFilter){assert.deepEqual(app.state.data.slice(0,2),[row('AM FILTER','October, 2026'),row('Team A')]);assert.equal(app.state.data[2][0],'Account Manager');}
+ assert.ok(app.state.formulas.some(r=>String(r[3]).includes('SUM')));
+});
+
 // The fixture is deliberately a sheet-shaped data model, including source formulas.
+test('AM FILTER starter reserves row two and excludes unrecognized populated layouts',()=>{
+ const app=harness();app.tables.set(41,{name:'September 2026',data:structuredClone(app.state.data),maxRows:100,maxColumns:26});app.state.data.splice(0,app.state.data.length,row('AM FILTER','October, 2026'));app.state.formulas.splice(0,app.state.formulas.length,row());app.sheet.getName=()=> 'October 2026';
+ const before=app.read();assert.equal(before.ok,true,before.error?.message);
+ const saved=app.post({requestId:'starter-first-property',revision:before.snapshot.revision,changes:[{kind:'addProperty',monthId:'0',name:'New House',manager:'TeamB',totalCents:1000}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.state.data[2][0],'Account Manager');
+ for(const data of [[row('Notes')],[row('AM FILTER','October, 2026','Unrelated data')],[row('AM FILTER'),row('Team A'),row('Existing data')]]){
+  app.tables.set(42,{name:'January 2027',data,maxRows:100,maxColumns:26});
+  assert.equal(app.read().snapshot.months.some((m:any)=>m.id==='42'),false);
+ }
+});
+
 type Cell = string | number | boolean | Date;
 const header: Cell[] = ['Account Manager', 'Property Name', '', 'Amount', 'Platform Payout Time', 'Payout Bundle Amount', 'Bank Received Time', 'Bank Received Amount', 'Verify By System', 'Verify By Daisy'];
 const row = (...values: Cell[]) => Array.from({ length: 10 }, (_, i) => values[i] ?? '');

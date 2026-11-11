@@ -202,16 +202,21 @@ function castleRead() {
     var label = sheet.getName(), bundleOnly = / - Bundle Matching$/.test(label), monthKey = castleMonth(label.replace(/ - Bundle Matching$/, ''));
     if (!monthKey) return; // Never read unrelated tabs.
     var lastRow = sheet.getLastRow();
-    if (!lastRow) return;
     var maxColumns = sheet.getMaxColumns();
-    var range = sheet.getRange(1, 1, lastRow, Math.min(17, maxColumns));
-    var values = range.getValues(), formulas = range.getFormulas();
-    if (!values.some(castleHeader)) return;
-    var bankOffset=castleText(values.filter(castleHeader)[0][6])==='bank details'?1:0;
+    var range = lastRow ? sheet.getRange(1, 1, lastRow, Math.min(17, maxColumns)) : null;
+    var values = range ? range.getValues() : [], formulas = range ? range.getFormulas() : [];
+    var headers = values.filter(castleHeader);
+    var filterSetup = !bundleOnly && lastRow <= 2 && values.length > 0 && castleText(values[0][0]) === 'am filter' &&
+      values.every(function(row, r){return row.every(function(cell, c){return (r === 0 && c <= 1) || (r === 1 && c === 0) || cell === '';});}) &&
+      !formulas.some(function(row){return row.some(Boolean);});
+    // A blank tab or the standard two-row AM FILTER setup can receive its first import.
+    // Keep populated, unrecognized layouts excluded so imports cannot overwrite them.
+    if (lastRow && !headers.length && !filterSetup) return;
+    var bankOffset=headers.length ? (castleText(headers[0][6])==='bank details'?1:0) : 1;
     if(values.filter(castleHeader).some(function(row){return (castleText(row[6])==='bank details'?1:0)!==bankOffset;}))castleThrow('SOURCE_DATA',label+': use the same Bank Details column layout for every property header.');
     var id = String(sheet.getSheetId());
     var month = { id: id, label: label, month: monthKey, properties: [] };
-    var meta = { bundleOnly:bundleOnly, bankOffset:bankOffset, sheetId: Number(id), lastRow: lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
+    var meta = { bundleOnly:bundleOnly, bankOffset:bankOffset, sheetId: Number(id), lastRow: filterSetup ? Math.max(2,lastRow) : lastRow, maxRows: sheet.getMaxRows(), maxColumns: maxColumns, month: month };
     monthIndex[id] = meta;
     source.push({ id: id, label: label, values: values, formulas: formulas });
     for (var index = 0; index < values.length; index++) {
@@ -724,6 +729,8 @@ function castleFinancialRequests(changes, current) {
   if (Object.keys(followupChanges).length) requests = requests.concat(castleStatusRequests(current, followupChanges));
   Object.keys(appendRows).forEach(function (monthId) {
     var target = current.months[monthId], needed = appendRows[monthId] - 1;
+    var neededColumns = 10 + (target.bankOffset || 0);
+    if (neededColumns > target.maxColumns) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'COLUMNS', length: neededColumns - target.maxColumns } });
     if (needed > target.maxRows) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'ROWS', length: needed - target.maxRows } });
   });
   // Apply all edits and new blocks at their original coordinates, then insert
