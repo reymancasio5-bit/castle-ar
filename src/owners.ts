@@ -23,11 +23,14 @@ export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{ki
  const seen=new Set<string>(),names=new Set<string>();
  const allocations=c.allocations.map(a=>{
   if(!a||!positive(a.amountCents)||seen.has(a.propertyId))throw new Error('Use positive allocations with each property only once.');
-  seen.add(a.propertyId);const p=month.properties.find(p=>p.id===a.propertyId);
+  const allocationMonth=snapshot.months.find(m=>m.id===(a.monthId??c.monthId));
+  if(!allocationMonth)throw new Error('Allocation month not found.');
+  seen.add(a.propertyId);const p=allocationMonth.properties.find(p=>p.id===a.propertyId);
   if(!p||p.bundleOnly||!owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name)))throw new Error('Allocate only to this owner’s AR properties in the selected month.');
-  if(names.has(ownerKey(p.name)))throw new Error('These properties have ambiguous duplicate names. Correct their names before splitting this deposit.');
-  names.add(ownerKey(p.name));
-  return {propertyName:p.name,amountCents:a.amountCents};
+  const nameKey=JSON.stringify([allocationMonth.id,ownerKey(p.name)]);
+  if(names.has(nameKey))throw new Error('These properties have ambiguous duplicate names. Correct their names before splitting this deposit.');
+  names.add(nameKey);
+  return {propertyName:p.name,monthId:allocationMonth.id,amountCents:a.amountCents};
  });
  if(allocations.reduce((sum,a)=>sum+a.amountCents,0)!==c.amountCents)throw new Error('Allocations must equal the deposit exactly.');
  return {id:crypto.randomUUID(),ownerId:owner.id,ownerName:owner.name,bankName,account,date:c.date,reference,source:clean(c.source,'statement source',240),amountCents:c.amountCents,monthId:month.id,allocations};
@@ -45,11 +48,10 @@ export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
   return;
  }
  const transfer=prepareOwnerTransfer(snapshot,c);
- const month=snapshot.months.find(m=>m.id===c.monthId)!;
- for(const a of c.allocations)month.properties.find(p=>p.id===a.propertyId)!.payments.push({id:crypto.randomUUID(),type:'Owner',amountCents:a.amountCents,payoutDate:'',bundleCents:null,bankDetails:'Checking '+transfer.account,bankDate:transfer.date,bankCents:a.amountCents,verifiedBySystem:true,verifiedByDaisy:false});
+ for(const a of c.allocations)snapshot.months.find(m=>m.id===(a.monthId??c.monthId))!.properties.find(p=>p.id===a.propertyId)!.payments.push({id:crypto.randomUUID(),type:'Owner',amountCents:a.amountCents,payoutDate:'',bundleCents:null,bankDetails:'Checking '+transfer.account,bankDate:transfer.date,bankCents:a.amountCents,verifiedBySystem:true,verifiedByDaisy:false});
  (snapshot.ownerTransfers??=[]).push(transfer);
 }
-export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[]){
+export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[],allocationMonths:Month[]=[month]){
  const seen=new Set(transfers.map(t=>transferKey(t.account,t.reference)));
  const signatures=new Map<string,string>(),conflicts=new Set<string>();
  for(const d of deposits.filter(d=>d.kind==='owner'&&d.reference)){
@@ -60,7 +62,7 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
  return deposits.filter(d=>d.kind==='owner').map(deposit=>{
   const candidates=owners.filter(o=>ownerKey(o.bankName)===ownerKey(deposit.ownerName??''));
   const owner=candidates.length===1?candidates[0]:undefined;
-  const properties=owner?month.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))):[];
+  const properties=owner?allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label}))):[];
   const key=transferKey(deposit.account,deposit.reference),duplicate=!!deposit.reference&&(seen.has(key)||conflicts.has(key));
   if(deposit.reference)seen.add(key);
   const allocations:{propertyId:string;amountCents:number}[]=[];
@@ -71,7 +73,7 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
   else if(!owner)status=candidates.length?'Ambiguous owner name':'Unknown owner';
   else if(!owner.active)status='Inactive owner — manual review';
   else {
-   const exact=properties.filter(p=>outstanding.get(p.id)===deposit.amountCents&&positive(deposit.amountCents));
+   const exact=properties.filter(p=>p.monthId===month.id&&outstanding.get(p.id)===deposit.amountCents&&positive(deposit.amountCents));
    if(exact.length===1){allocations.push({propertyId:exact[0].id,amountCents:deposit.amountCents});outstanding.set(exact[0].id,0);status='Ready';}
    else if(exact.length>1)status='Ambiguous: multiple exact outstanding balances';
   }

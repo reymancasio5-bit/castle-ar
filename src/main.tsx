@@ -19,7 +19,7 @@ function storedEndpoint(){
 }
 function Root(){
  const [endpoint]=useState(storedEndpoint);
- const api=useMemo(()=>{try{return endpoint?createApi(endpoint):createPreviewApi()}catch{return createPreviewApi()}},[endpoint]);
+ const api=useMemo(()=>{try{return endpoint?createApi(endpoint):createPreviewApi(import.meta.env.DEV && new URLSearchParams(window.location.search).get('ownerDemo')==='1')}catch{return createPreviewApi()}},[endpoint]);
  const valid=(()=>{try{return !!endpoint&&!!validateEndpoint(endpoint)}catch{return false}})();
  return <ConfirmationProvider><App api={api} configured={valid}/></ConfirmationProvider>;
 }

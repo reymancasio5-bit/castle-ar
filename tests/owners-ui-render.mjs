@@ -27,6 +27,14 @@ try{
  snapshot=await api.save(snapshot.revision,[{...deposit,kind:'importOwnerTransfer',ownerId:owner.id,monthId:month.id,bankName:deposit.ownerName,allocations:splits}]);
  const history=renderToStaticMarkup(React.createElement(PropertyOwners,{...props,snapshot}));assert.ok(history.includes('C1TEST123'));
  const modal=renderToStaticMarkup(React.createElement(BankStatementImport,{snapshot,month,onClose:()=>{},onApply:async()=>{},supported:true}));assert.ok(modal.includes('owner e-Transfer'));
+ const demoApi=createPreviewApi(true);const demo=await demoApi.read();
+ const demoDeposit={...deposit,ownerName:'BIJOU DEMO OWNER',amountCents:2311};
+ const demoRow=matchOwnerDeposits([demoDeposit],demo.months[0],demo.owners,[],demo.months)[0];
+ assert.equal(demoRow.properties.length,3);assert.equal(demoRow.allocations.length,1);
+ const demoHtml=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,row:demoRow,values:{[demoRow.allocations[0].propertyId]:'23.11'}}));
+ for(const text of ['Nov, 2026','Oct, 2026','Sep, 2026','0.00 - Paid','30.00','40.00'])assert.ok(demoHtml.includes(text),text);
+ const combinedHtml=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,row:demoRow,values:{[demoRow.allocations[0].propertyId]:'10.00'},balancePreview:{[demoRow.allocations[0].propertyId]:0}}));
+ assert.ok(combinedHtml.includes('0.00 - Paid'));assert.ok(!combinedHtml.includes('13.11 - Outstanding'));
  console.log('Owner directory, allocation review, payment history and import rendering passed.');
 }finally{await server.close();}
 

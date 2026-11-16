@@ -58,7 +58,7 @@ export function matchStatement(deposits: BankDeposit[], month: Month) {
  const changes: Change[]=[];
  const all=month.properties.flatMap(property=>property.payments.map(payment=>({property:property.name,payment})));
  const rows=deposits.map(deposit=>{
-  let payments=all.filter(({payment:p})=>p.type==='Airbnb'&&p.bundleCents===deposit.amountCents&&bankAccount(p.bankDetails??'')===deposit.account);
+  let payments=all.filter(({payment:p})=>p.type==='Airbnb'&&p.receivedBy!=='owner'&&p.bundleCents===deposit.amountCents&&bankAccount(p.bankDetails??'')===deposit.account);
   let status='Ready';
   if(deposits.filter(d=>d.account===deposit.account&&d.amountCents===deposit.amountCents).length>1)status='Ambiguous: repeated deposit amount';
   else if(!payments.length)status='No matching bundle in this month';

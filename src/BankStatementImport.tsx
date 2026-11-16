@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Upload, X, CheckCircle2 } from 'lucide-react';
 import type { Change, Month, Snapshot } from './types';
 import { matchStatement, parseStatement, type BankDeposit } from './bank-statement';
-import { money } from './domain';
+import { money, balance } from './domain';
 import {matchOwnerDeposits, applyOwnerChange} from './owners';
 import OwnerPaymentReview, {allocationDraft, parseAllocations} from './OwnerPaymentReview';
 import './import.css';
@@ -12,7 +12,7 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
  const [deposits,setDeposits]=useState<BankDeposit[]>([]),[warnings,setWarnings]=useState<string[]>([]);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[reviewed,setReviewed]=useState(false);
  const [allocations,setAllocations]=useState<Record<number,Record<string,string>>>({}),[skipped,setSkipped]=useState<Record<number,boolean>>({});
- const ownerRows=useMemo(()=>matchOwnerDeposits(deposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[]),[deposits,month,snapshot]);
+ const ownerRows=useMemo(()=>matchOwnerDeposits(deposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[],snapshot?.ownerAllocationSchema===1?snapshot.months:[month]),[deposits,month,snapshot]);
  const result=useMemo(()=>matchStatement(deposits,month),[deposits,month]);
  const ownerReview=useMemo(()=>{
   const changes:Change[]=[],errors:Record<number,string>={};
@@ -23,15 +23,15 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
     if(!working||working.ownerSchema!==1)throw new Error('Update the Apps Script deployment to record owner payments, or skip this deposit.');
     if(!row.owner)throw new Error('Add or correct this owner’s bank name in Property Owners, then import again.');
     if(!row.deposit.reference)throw new Error('A readable transaction reference is required to prevent duplicate payments.');
-    if(!row.properties.length)throw new Error('Map this owner to an AR property in the selected reporting month, then import again.');
-    const split=parseAllocations(allocations[index]??allocationDraft(row));
+    if(!row.properties.length)throw new Error('Map this owner to an AR property, then import again.');
+    const split=parseAllocations(allocations[index]??allocationDraft(row)).map(a=>{const target=row.properties.find(p=>p.id===a.propertyId);if(!target)throw new Error('Choose a mapped property and month.');return {...a,...(working.ownerAllocationSchema===1?{monthId:target.monthId}:{})};});
     if(!split.length)throw new Error('Choose the property amounts for this deposit, or skip it for now.');
     if(split.reduce((sum,a)=>sum+a.amountCents,0)!==row.deposit.amountCents)throw new Error('Allocated amounts must equal the full deposit.');
     const change:Change={kind:'importOwnerTransfer',ownerId:row.owner.id,monthId:month.id,account:row.deposit.account,date:row.deposit.date,reference:row.deposit.reference,source:row.deposit.source,bankName:row.deposit.ownerName??'',amountCents:row.deposit.amountCents,allocations:split};
     applyOwnerChange(working,change);changes.push(change);
    }catch(error){errors[index]=error instanceof Error?error.message:'Review this payment.';}
   });
-  return {changes,errors};
+  return {changes,errors,balancePreview:working&&Object.keys(errors).length===0?Object.fromEntries(working.months.flatMap(m=>m.properties.map(p=>[p.id,balance(p)]))):null};
  },[ownerRows,allocations,skipped,snapshot,month.id]);
  const changes=[...result.changes,...ownerReview.changes],hasUnresolved=Object.keys(ownerReview.errors).length>0;
  const rowCount=result.changes.length+ownerReview.changes.reduce((sum,c)=>sum+(c.kind==='importOwnerTransfer'?c.allocations.length:0),0);
@@ -69,7 +69,7 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Bank Deposits Before Saving</strong><p>Airbnb deposits match payout bundles and bank accounts. Owner deposits are applied directly to their properties, with exact amounts and the bank transaction date.</p></div></div>
    {warnings.length>0&&<div className="import-warning"><p>{warnings.length} entries could not be read completely and were skipped. Check the original bank files.</p><details><summary>View Skipped Entries</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details></div>}
    {reviewed&&<><div className="import-section-heading"><h3>Review Matches</h3><span>{deposits.length} deposits · {rowCount} rows to update</span></div>{!deposits.length?<p>No readable Airbnb or owner deposits found. Check the PDF statement or Excel/CSV transaction export.</p>:result.rows.length>0?<div className="import-table-scroll import-review-scroll"><table className="import-table"><thead><tr><th>Statement / Bank</th><th>Bank Date</th><th>Statement Bundle / F Match</th><th>Matched Rows / D To I</th><th>Result</th></tr></thead><tbody>{result.rows.map((row,i)=><tr key={i}><td>{row.deposit.source}<small>Checking {row.deposit.account} {row.deposit.reference&&`· ${row.deposit.reference}`}</small></td><td>{row.deposit.date}</td><td>{money(row.deposit.amountCents)}</td><td>{row.payments.map(({property,payment})=><div key={payment.id}>{property}<small>Row {payment.id.split(':').at(-1)} · {money(payment.amountCents)}</small></div>)}</td><td><span className={`import-status import-status-${row.status==='Ready'?'ready':'skipped'}`}>{row.status}</span></td></tr>)}</tbody></table></div>:null}</>}
-   {reviewed&&ownerRows.length>0&&<><div className="import-section-heading"><h3>Owner Payments</h3><span>{ownerRows.length} deposits · {ownerReview.changes.length} ready</span></div><p className="owner-help">A unique exact balance match is preselected. Review other deposits and split them as needed. These direct payments have no bundle amount; each allocation reduces the property’s outstanding balance when saved.</p>{ownerRows.map((row,index)=><OwnerPaymentReview key={index} row={row} values={allocations[index]??allocationDraft(row)} skipped={!!skipped[index]} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>)}</>}
+   {reviewed&&ownerRows.length>0&&<><div className="import-section-heading"><h3>Owner Payments</h3><span>{ownerRows.length} deposits · {ownerReview.changes.length} ready</span></div><p className="owner-help">A unique exact balance match in the selected month is preselected. For bulk payments, enter how much to apply to each property and month. Allocate the full deposit before saving. Owner payments reduce the assigned months’ balances; a zero balance is Paid.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate one owner deposit across reporting months. Until then, allocations are limited to the selected month.</p>}{ownerRows.map((row,index)=><OwnerPaymentReview key={index} row={row} balancePreview={ownerReview.balancePreview} values={allocations[index]??allocationDraft(row)} skipped={!!skipped[index]} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>)}</>}
    {rowCount>500&&<div className="import-warning">More than 500 rows match. Import fewer statement files at a time.</div>}
   </div>
   <footer className="import-footer"><button className="import-button import-button-secondary" disabled={busy||saving} onClick={onClose}>Cancel</button><button className="import-button import-button-primary" disabled={!supported||!reviewed||!changes.length||rowCount>500||hasUnresolved||busy||saving} onClick={()=>void save()}>{saving?'Saving…':`Save ${rowCount} Payment Rows`}</button></footer>

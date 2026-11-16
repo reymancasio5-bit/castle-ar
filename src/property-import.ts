@@ -5,7 +5,7 @@ import type { ImportCell, ImportOptions, ImportPreview, ImportSheet, PreviewRow 
 import type { Change, InitialPayment, Month, Payment, Property } from './types.ts';
 
 export interface PropertyImportOptions extends ImportOptions {
-  propertyName: string; manager: string; total: string; airbnbSlot: 'auto' | '1' | '2' | '3';
+  airbnbRecipient?: 'castle' | 'owner' | ''; propertyName: string; manager: string; total: string; airbnbSlot: 'auto' | '1' | '2' | '3';
 }
 export interface PropertyPreviewRow extends PreviewRow { bankDetails?: string; payoutDate?: string; bundleCents?: number; slot?: number }
 export interface PropertyImportPreview extends ImportPreview { rows: PropertyPreviewRow[]; newProperty: boolean; totalCents: number; propertyName: string }
@@ -45,6 +45,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   if (sheet.error) throw new Error(sheet.error);
   if (sheet.rows.length > MAX_IMPORT_ROWS) throw new Error('This worksheet exceeds 10,000 rows. Split it into smaller files.');
   if (options.headerRow !== null && (!Number.isInteger(options.headerRow) || options.headerRow < 0 || options.headerRow >= sheet.rows.length)) throw new Error('Choose a valid header row.');
+  if(isAirbnbSheet(sheet,options.headerRow)&&options.airbnbRecipient==='')throw new Error('Choose whether Airbnb paid Castle or the owner.');
   const name = validName(options.propertyName, 'property name');
   const enteredTotal = parseMoney(options.total);
   const bundleOnly = isAirbnbSheet(sheet, options.headerRow) && (enteredTotal === null || enteredTotal === 0);
@@ -86,7 +87,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   // No property/total is saved when there are no usable payment rows.
   const usable = rows.some(row => row.status === 'ready' || row.reason === 'Already imported; unchanged.');
   if (usable && !existing) {
-    const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ ...(change.fields.bankDetails ? {bankDetails:change.fields.bankDetails} : {}), index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
+    const initialPayments: InitialPayment[] = changes.flatMap(change => change.kind === 'updatePayment' ? [{ ...(change.fields.receivedBy?{receivedBy:change.fields.receivedBy}:{}), ...(change.fields.bankDetails ? {bankDetails:change.fields.bankDetails} : {}), index: property.payments.findIndex(payment => payment.id === change.paymentId), amountCents: change.fields.amountCents!, ...(change.fields.payoutDate !== undefined ? { payoutDate: change.fields.payoutDate } : {}), ...(change.fields.bundleCents != null ? { bundleCents: change.fields.bundleCents } : {}) }] : []);
     const additionalPayments = changes.flatMap(change => change.kind === 'appendPayments' ? change.payments : []);
     changes = [{ kind: 'addProperty', monthId: month.id, name, manager, totalCents, ...(bundleOnly ? {bundleOnly:true} : {}), initialPayments, ...(additionalPayments.length ? { additionalPayments } : {}) }];
   } else if (usable && existing && existing.totalCents !== totalCents) changes.unshift({ kind: 'setTotal', propertyId: property.id, amountCents: totalCents });
@@ -154,6 +155,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
     if (currencies.size > 1) throw new Error('Import one currency at a time.');
     const bankDetails = extractBankDetails(parent[columns.details]?.value);
     const fields = {
+      ...(options.airbnbRecipient?{receivedBy:options.airbnbRecipient}:{}),
       amountCents: amount(cells[columns.amount], `Row ${sourceRow} payment`),
       payoutDate: payoutDate(parent[columns['arriving by date']]),
       bundleCents: amount(parent[columns['paid out']], `Row ${sourceRow} payout bundle`),
@@ -161,7 +163,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
     };
     // Consume each matching saved row once so equal-value reservations remain
     // separate, while repeating the same upload remains idempotent.
-    const duplicate = payments.findIndex((payment, slot) => !usedSlots.has(slot) && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || !payment.bankDetails || payment.bankDetails === bankDetails));
+    const duplicate = payments.findIndex((payment, slot) => !usedSlots.has(slot) && (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || !payment.bankDetails || payment.bankDetails === bankDetails));
     let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
     const append = slot < 0 || !payments[slot];
     if (append) {
@@ -169,7 +171,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
       payments.push({ id: `reservation-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
     }
     const payment = payments[slot];
-    const unchanged = payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || payment.bankDetails === bankDetails);
+    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || payment.bankDetails === bankDetails);
     Object.assign(row, fields, { propertyId: property.id, propertyName: property.name, currentCents: payment.amountCents, proposedCents: fields.amountCents, slot: slot + 1, status: unchanged ? 'skipped' : 'ready', reason: unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}.` });
     usedSlots.add(slot);
     if (!unchanged) {
@@ -222,8 +224,8 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
   for (const group of groups) {
     const amountCents = group.rows.reduce((sum, row) => sum + row.amountCents!, 0);
     if (!Number.isSafeInteger(amountCents) || Math.abs(amountCents) > 999999999999) throw new Error('Combined payment amount is too large.');
-    const fields = { ...(group.bankDetails?{bankDetails:group.bankDetails}:{}), amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
-    const duplicate = payments.findIndex(payment => payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||!payment.bankDetails||payment.bankDetails===group.bankDetails));
+    const fields = { ...(options.airbnbRecipient?{receivedBy:options.airbnbRecipient}:{}), ...(group.bankDetails?{bankDetails:group.bankDetails}:{}), amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
+    const duplicate = payments.findIndex(payment => (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||!payment.bankDetails||payment.bankDetails===group.bankDetails));
     let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
     const append = slot < 0 || !payments[slot];
     if (append) {
@@ -231,7 +233,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
       payments.push({ id: `import-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
     }
     const payment = payments[slot];
-    const unchanged = payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||payment.bankDetails===group.bankDetails);
+    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||payment.bankDetails===group.bankDetails);
     group.rows.forEach(row => { row.currentCents = payment.amountCents; row.proposedCents = amountCents; row.slot = slot + 1; row.status = unchanged ? 'skipped' : 'ready'; row.reason = unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}${group.rows.length > 1 ? `; sums ${group.rows.length} detail rows` : ''}.`; });
     if (!unchanged) {
       if (append) {

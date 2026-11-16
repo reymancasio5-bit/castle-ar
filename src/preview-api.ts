@@ -3,9 +3,14 @@ import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
 import {applyOwnerChange} from './owners.ts';
-export function createPreviewApi() {
+export function createPreviewApi(ownerDemo=false) {
  let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.recordEditingSchema=1;
- state.ownerSchema=1;state.owners=[];state.ownerTransfers=[];
+ state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerSchema=1;state.owners=[];state.ownerTransfers=[];
+ if(ownerDemo){
+  const propertyName='Mtl 404 Le Bijou';
+  state.owners=[{id:'demo-owner',name:'Bijou Demo Owner',bankName:'BIJOU DEMO OWNER',email:'',notes:'Fictional owner for testing statement allocation.',active:true,propertyNames:[propertyName]}];
+  state.months=[['2026-11','Nov, 2026',2311],['2026-10','Oct, 2026',3000],['2026-09','Sep, 2026',4000]].map(([month,label,total])=>({id:String(month),month:String(month),label:String(label),properties:[{id:String(month)+':bijou',name:propertyName,manager:'Team B',totalCents:Number(total),payments:[]}]}));
+ }
  // Fictional, editable examples belong only to the isolated preview.
  for(const [team,name,id] of [['Team A','Alex Chen','preview-assistant-alex'],['Team B','Maya Cruz','preview-assistant-maya']]){
   const parent=state.managers!.find(manager=>manager.name.replace(/\s/g,'').toLowerCase()===team.replace(/\s/g,'').toLowerCase());
@@ -52,8 +57,8 @@ export function createPreviewApi() {
      const manager=resolveManager(next,c.manager,p.managerId);p.manager=manager?.name??'';p.managerId=manager?.id;p.followUp={status:c.status,note:c.note,attachments:structuredClone(c.attachments),updatedAt:new Date().toISOString()};
     }
     else if(c.kind==='appendPayments'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');for(const fields of c.payments)p.payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});}
-    else if(c.kind==='reconcileBank'){const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p||p.bundleCents!==c.bundleCents)throw new Error('Bundle changed.');p.bankCents=p.amountCents;p.bankDate=c.bankDate;p.verifiedBySystem=true;}
-    else {const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p)throw new Error('Payment not found.');const evidenceChanged=Object.entries(c.fields).some(([key,value])=>key!=='verifiedByDaisy'&&p[key as keyof Payment]!==value);Object.assign(p,c.fields);if(evidenceChanged)p.verifiedBySystem=false}
+    else if(c.kind==='reconcileBank'){const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p||p.receivedBy==='owner'||p.bundleCents!==c.bundleCents)throw new Error('Bundle changed.');p.bankCents=p.amountCents;p.bankDate=c.bankDate;p.verifiedBySystem=true;}
+    else {const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p)throw new Error('Payment not found.');if((c.fields.receivedBy??p.receivedBy)==='owner'&&(c.fields.type??p.type)!=='Airbnb')throw new Error('Only Airbnb payouts can be received by an owner.');const evidenceChanged=Object.entries(c.fields).some(([key,value])=>key!=='verifiedByDaisy'&&p[key as keyof Payment]!==value);Object.assign(p,c.fields);if(evidenceChanged)p.verifiedBySystem=false}
    }
   }
   next.revision='preview-'+crypto.randomUUID();next.updatedAt=new Date().toISOString();state=next;return structuredClone(state);

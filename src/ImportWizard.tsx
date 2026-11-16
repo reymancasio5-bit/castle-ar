@@ -13,7 +13,7 @@ import ManagerSelect from './ManagerSelect';
 import {useConfirmation} from './Confirmation';
 
 const PAGE_SIZE = 30;
-const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto' };
+const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto', airbnbRecipient: '' };
 type ImportFile = { name: string; sheets: ImportSheet[]; sheetIndex: number; options: PropertyImportOptions };
 function columnLetter(index: number) {
   let result = '';
@@ -22,7 +22,7 @@ function columnLetter(index: number) {
 }
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
-export function ImportWizard({ initialFile, month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+export function ImportWizard({ airbnbRecipientSupported=false, initialFile, month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
   const askConfirmation=useConfirmation();
   const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -71,9 +71,9 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
 
   const previewState = useMemo(() => {
     if (!files.length) return { preview: null, error: '' };
-    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: { ...file.options, ...destination } }))), error: '' }; }
+    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: { ...file.options, ...(file.options.airbnbRecipient==='castle'&&!airbnbRecipientSupported?{airbnbRecipient:undefined}:{}), ...destination } }))), error: '' }; }
     catch (cause) { return { preview: null, error: cause instanceof Error ? cause.message : 'Check the selected columns.' }; }
-  }, [month, files, destination]);
+  }, [month, files, destination, airbnbRecipientSupported]);
   const preview = previewState.preview;
   const columnCount = sheet?.rows.reduce((max, row) => Math.max(max, row.length), 0) ?? 0;
   const columns = Array.from({ length: columnCount }, (_, index) => {
@@ -196,6 +196,7 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
           <div className="import-field-grid">
             <label className="import-field">Worksheet<select value={sheetIndex} onChange={event => changeSheet(Number(event.target.value))}>{sheets.map((candidate, index) => <option value={index} key={`${candidate.name}-${index}`}>{candidate.name}</option>)}</select></label>
             <div className="import-field"><label htmlFor="import-header-row">Header Row</label><div className="import-header-controls"><input id="import-header-row" type="number" min={1} max={sheet.rows.length || 1} disabled={options.headerRow === null} value={options.headerRow === null ? '' : options.headerRow + 1} onChange={event => setOptions(current => ({ ...current, headerRow: Number(event.target.value) - 1 }))} /><label className="import-checkbox"><input type="checkbox" checked={options.headerRow === null} onChange={event => setOptions(current => ({ ...current, headerRow: event.target.checked ? null : 0 }))} />No headers</label></div></div>
+            {airbnb&&<label className="import-field import-field-full">Airbnb Payment Received By<select value={options.airbnbRecipient??''} onChange={event=>setOptions(current=>({...current,airbnbRecipient:event.target.value as PropertyImportOptions['airbnbRecipient']}))}><option value="">Choose Payment Recipient</option><option value="castle">Received By Castle</option><option value="owner" disabled={!airbnbRecipientSupported}>Received By Owner</option></select><small>This choice applies to all transactions in this file. Owner-received payouts are retained for reference and do not reduce the outstanding balance.</small>{!airbnbRecipientSupported&&<small>Update the Apps Script deployment to enable owner-received payouts.</small>}</label>}
             {airbnb ? <label className="import-field import-field-full">Save Airbnb payments to<select disabled={files.length > 1} value={files.length > 1 ? 'auto' : options.airbnbSlot} onChange={event => setOptions(current => ({ ...current, airbnbSlot: event.target.value as PropertyImportOptions['airbnbSlot'] }))}><option value="auto">Fill empty slots, then append rows (skip identical imports)</option>{[1, 2, 3].map(slot => <option key={slot} value={String(slot)}>Replace starting at Airbnb payment {slot}</option>)}</select><small>Airbnb export detected. Amount → payment; Arriving by date → platform payout date; Paid out → payout bundle; Details ? bank account. Each payout group uses one payment slot. Additional payouts create new payment rows automatically.</small></label> : <>
               <label className="import-field">Amount Column<select value={options.amountColumn} onChange={event => setOptions(current => ({ ...current, amountColumn: Number(event.target.value) }))}>{columns.map(column => <option value={column.index} key={column.index}>{column.label}</option>)}</select></label>
               <label className="import-field">Save Amounts to<select value={options.destination} onChange={event => setOptions(current => ({ ...current, destination: event.target.value as ImportDestination }))}>{destinations.filter(destination => destination.value !== 'total').map(destination => <option value={destination.value} key={destination.value}>{destination.label}</option>)}</select><small>This updates the selected payment, or adds a row if missing, for {options.propertyName || 'your property'} in {month.label}.</small></label>
@@ -223,7 +224,7 @@ export function ImportWizard({ initialFile, month, propertyCatalog = month.prope
                 <td className="import-numeric">{row.currentCents == null ? '—' : money(row.currentCents)}</td>
                 <td className="import-numeric">{row.amountCents === undefined ? row.originalAmount || '—' : money(row.amountCents)}</td>
                 <td className="import-numeric">{row.proposedCents === undefined ? '—' : money(row.proposedCents)}</td>
-                {airbnb && <><td>{row.payoutDate || '—'}</td><td className="import-numeric">{row.bundleCents === undefined ? '—' : money(row.bundleCents)}</td><td>{row.bankDetails || 'Not specified'}</td></>}
+                {airbnb && <><td>{row.payoutDate || '—'}</td><td className="import-numeric">{row.bundleCents === undefined ? '—' : money(row.bundleCents)}</td><td>{row.bankDetails || 'Not specified'}<small>{files[row.fileIndex]?.options.airbnbRecipient==='owner'?'Received By Owner':'Received By Castle'}</small></td></>}
                 <td><span className={`import-status import-status-${row.status}`}>{row.status === 'invalid' ? "Needs Attention" : row.status === 'unmatched' ? 'Unmatched' : row.status === 'skipped' ? 'Skipped' : 'Ready'}</span><small className="import-row-reason">{row.reason}</small></td>
               </tr>)}{!pageRows.length && <tr><td colSpan={airbnb ? 9 : 6} className="import-empty">No rows in this view.</td></tr>}</tbody>
             </table>

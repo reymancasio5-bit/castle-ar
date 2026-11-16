@@ -4,11 +4,24 @@ import * as importer from '../src/property-import.ts';
 import type { Month } from '../src/types.ts';
 import type { ImportSheet } from '../src/import.ts';
 import { inferColumns } from '../src/import.ts';
+import {balance,collected} from '../src/domain.ts';
+import {createPreviewApi} from '../src/preview-api.ts';
 
 const month: Month = { id: 'm', label: 'September 2026', month: '2026-09', properties: [{ id: 'p', name: 'Jarvis', manager: 'Team B', totalCents: 37048, payments: [0, 1, 2].map(i => ({ id: `a${i}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false })) }] };
 const sheet = (rows: unknown[][]): ImportSheet => ({ name: 'CSV', rows: rows.map(row => row.map(value => ({ value }))) });
 const data = sheet([['Date', 'Arriving by date', 'Type', 'Listing', 'Currency', 'Amount', 'Paid out'], ['10/02/2026', '10/09/2026', 'Payout', '', 'CAD', '', '381.40'], ['10/02/2026', '', 'Co-Host payout', 'Airbnb listing title', 'CAD', '116.86', '']]);
 const options = { headerRow: 0, nameColumn: 3, amountColumn: 5, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'Jarvis', manager: '', total: '370.48', airbnbSlot: 'auto' as const };
+
+test('owner-received Airbnb payout is retained but does not reduce the management fee balance',async()=>{
+ const api=createPreviewApi(true),before=await api.read(),m=before.months[0];
+ const source=structuredClone(data);source.rows[2][5].value='291.04';
+ const result=importer.buildPropertyImportPreview(m,source,{...options,propertyName:m.properties[0].name,total:'23.11',airbnbRecipient:'owner'});
+ const saved=await api.save(before.revision,result.changes),p=saved.months[0].properties[0];
+ assert.equal(p.payments[0].amountCents,29104);assert.equal(p.payments[0].receivedBy,'owner');
+ assert.equal(collected(p),0);assert.equal(balance(p),2311);
+ await assert.rejects(api.save(saved.revision,[{kind:'updatePayment',paymentId:p.payments[0].id,fields:{type:'Owner'}}]),/Only Airbnb/);
+ assert.equal(importer.buildPropertyImportPreview(saved.months[0],source,{...options,propertyName:p.name,total:'23.11',airbnbRecipient:'owner'}).changes.length,0);
+});
 
 test('Airbnb listing cells and the Listing column are optional', () => {
  const expected=importer.buildPropertyImportPreview(month,data,options).changes;

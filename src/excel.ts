@@ -76,17 +76,17 @@ export function createExportSheets(snapshot: Snapshot, monthId: string) {
   let totalCents = 0;
   let paidCents = 0;
   const arProperties = month.properties.filter(property => !property.bundleOnly);
-  const bundleRecords = month.properties.filter(property => property.bundleOnly).flatMap(property => property.payments.map(payment => ({Month:month.label,Property:property.name,Manager:property.manager,'Airbnb payment':payment.amountCents === null ? null : payment.amountCents / 100,'Payout date':payment.payoutDate,'Bundle amount':payment.bundleCents === null ? null : payment.bundleCents / 100,'Bank Details':payment.bankDetails ?? '', 'Bank date':payment.bankDate,'Bank amount':payment.bankCents === null ? null : payment.bankCents / 100,'System check':systemStatus(payment),'Verified by Daisy':payment.verifiedByDaisy})));
+  const bundleRecords = month.properties.filter(property => property.bundleOnly).flatMap(property => property.payments.map(payment => ({Month:month.label,Property:property.name,Manager:property.manager,'Received By':payment.receivedBy==='owner'?'Owner':'Castle','Airbnb payment':payment.amountCents === null ? null : payment.amountCents / 100,'Payout date':payment.payoutDate,'Bundle amount':payment.bundleCents === null ? null : payment.bundleCents / 100,'Bank Details':payment.bankDetails ?? '', 'Bank date':payment.bankDate,'Bank amount':payment.bankCents === null ? null : payment.bankCents / 100,'System check':systemStatus(payment),'Verified by Daisy':payment.verifiedByDaisy})));
   arProperties.forEach(property => {
     const paid = collected(property);
     totalCents += property.totalCents;
     paidCents += paid;
     const base = { Month: month.label, Property: property.name, Manager: property.manager, Total: property.totalCents / 100, 'Accounts receivable': (property.totalCents - paid) / 100 };
     let airbnbIndex = 0;
-    if (!property.payments.length) records.push({ ...base, 'Payment type': '', 'Payment amount': null, 'Payout date': '', 'Bundled payment': null, 'Bank Details': '', 'Bank date': '', 'Bank amount': null, 'Verified by Daisy': false });
+    if (!property.payments.length) records.push({ ...base, 'Payment type': '', 'Received By':'', 'Payment amount': null, 'Payout date': '', 'Bundled payment': null, 'Bank Details': '', 'Bank date': '', 'Bank amount': null, 'Verified by Daisy': false });
     property.payments.forEach(payment => {
       const label = payment.type === 'Airbnb' ? `Airbnb ${++airbnbIndex}` : payment.type;
-      records.push({ ...base, 'Payment type': label, 'Payment amount': payment.amountCents === null ? null : payment.amountCents / 100, 'Payout date': payment.payoutDate, 'Bundled payment': payment.bundleCents === null ? null : payment.bundleCents / 100, 'Bank Details': payment.bankDetails??'', 'Bank date': payment.bankDate, 'Bank amount': payment.bankCents === null ? null : payment.bankCents / 100, 'Verified by Daisy': payment.verifiedByDaisy });
+      records.push({ ...base, 'Payment type': label, 'Received By':payment.receivedBy==='owner'?'Owner':'Castle', 'Payment amount': payment.amountCents === null ? null : payment.amountCents / 100, 'Payout date': payment.payoutDate, 'Bundled payment': payment.bundleCents === null ? null : payment.bundleCents / 100, 'Bank Details': payment.bankDetails??'', 'Bank date': payment.bankDate, 'Bank amount': payment.bankCents === null ? null : payment.bankCents / 100, 'Verified by Daisy': payment.verifiedByDaisy });
     });
   });
   const summary: unknown[][] = [

@@ -14,6 +14,6 @@ export function parseMoney(value: unknown): number | null {
   return Object.is(cents, -0) ? 0 : cents;
 }
 export const money = (cents: number | null) => cents === null ? '—' : (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-export const collected = (property: Property) => property.payments.reduce((sum, payment) => sum + (payment.amountCents ?? 0), 0);
+export const collected = (property: Property) => property.payments.reduce((sum, payment) => sum + (payment.receivedBy==='owner'?0:(payment.amountCents ?? 0)), 0);
 export const balance = (property: Property) => property.totalCents - collected(property);
-export const systemStatus = (payment: Payment): 'Matched' | 'Mismatch' | 'Pending' => payment.verifiedBySystem === false ? (payment.bankDate && payment.bankCents !== null ? 'Mismatch' : 'Pending') : payment.verifiedBySystem && payment.bankCents !== null && payment.bankDate && payment.bankCents === payment.amountCents ? 'Matched' : payment.bundleCents === null || payment.bankCents === null ? 'Pending' : payment.bundleCents === payment.bankCents ? 'Matched' : 'Mismatch';
+export const systemStatus = (payment: Payment): 'Matched' | 'Mismatch' | 'Pending' | 'Owner Received' => payment.receivedBy==='owner'?'Owner Received':payment.verifiedBySystem === false ? (payment.bankDate && payment.bankCents !== null ? 'Mismatch' : 'Pending') : payment.verifiedBySystem && payment.bankCents !== null && payment.bankDate && payment.bankCents === payment.amountCents ? 'Matched' : payment.bundleCents === null || payment.bankCents === null ? 'Pending' : payment.bundleCents === payment.bankCents ? 'Matched' : 'Mismatch';

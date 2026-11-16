@@ -4,6 +4,40 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
+test('owner-received payouts persist as reference amounts and are excluded from AR formulas',()=>{
+ const app=harness(),before=app.read().snapshot;
+ const saved=app.post({requestId:'recipient-new',revision:before.revision,changes:[{kind:'addProperty',monthId:'0',name:'Owner Direct',manager:'TeamB',totalCents:2311,initialPayments:[{index:0,amountCents:29104,receivedBy:'owner'}]}]});
+ assert.equal(saved.ok,true,saved.error?.message);
+ let property=saved.snapshot.months[0].properties.find((p:any)=>p.name==='Owner Direct');
+ assert.equal(property.payments[0].receivedBy,'owner');assert.equal(property.payments[0].amountCents,29104);
+ assert.equal(property.sourceArCents,2311);
+ const paid=app.post({requestId:'recipient-owner-paid',revision:saved.snapshot.revision,changes:[{kind:'appendPayments',propertyId:property.id,payments:[{type:'Owner',amountCents:2311}]}]});
+ assert.equal(paid.ok,true,paid.error?.message);property=paid.snapshot.months[0].properties.find((p:any)=>p.name==='Owner Direct');
+ assert.equal(property.sourceArCents,0);assert.equal(property.payments[0].receivedBy,'owner');
+ const rejected=app.post({requestId:'recipient-invalid',revision:paid.snapshot.revision,changes:[{kind:'appendPayments',propertyId:property.id,payments:[{type:'Owner',amountCents:100,receivedBy:'owner'}]}]});
+ assert.equal(rejected.ok,false);
+});
+
+test('owner allocation backend preserves month identity and rejects mismatched month targets',()=>{
+ const app=harness();
+ app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ const current=vm.runInContext('castleRead()',app.context),api=app.context as any;
+ const original=current.properties['0:4'];
+ current.months['oct']={...current.months['0']};
+ current.properties['oct:4']={...original,sheetId:'oct',property:{...original.property,id:'oct:4'}};
+ const owner={id:'owner-months',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:[original.property.name]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'7524',date:'2026-11-04',reference:'MONTHS123',source:'statement.xlsx',bankName:'Owner',amountCents:3311,allocations:[{propertyId:'0:4',monthId:'0',amountCents:2311},{propertyId:'oct:4',monthId:'oct',amountCents:1000}]};
+ const prepared=api.castlePrepareOwners([{kind:'saveOwner',owner},transfer],current);
+ assert.equal(prepared.payments.length,2);
+ assert.deepEqual(Array.from(prepared.payments,(p:any)=>p.propertyId),['0:4','oct:4']);
+ const stored=prepared.tables.transfers.records[0];
+ assert.deepEqual(Array.from(stored.allocations,(a:any)=>a.monthId),['0','oct']);
+ assert.doesNotThrow(()=>api.castleOwnerTransferValidate(stored,true));
+ assert.throws(()=>api.castlePrepareOwners([{kind:'saveOwner',owner},{...transfer,allocations:[{propertyId:'0:4',monthId:'oct',amountCents:3311}]}],current),/mapped AR/);
+ assert.throws(()=>api.castlePrepareOwners([{kind:'saveOwner',owner},{...transfer,allocations:[{propertyId:'0:4',monthId:'missing',amountCents:3311}]}],current),/mapped AR/);
+ assert.equal(app.batches.length,0);
+});
+
 test('assistant partial property rename preserves manager through the real validator',()=>{
  const app=harness();vm.runInContext(readFileSync('apps-script/Assistant.gs','utf8'),app.context);
  const current=vm.runInContext('castleRead()',app.context),p=current.snapshot.months[0].properties[0];
@@ -328,7 +362,7 @@ function harness() {
           if (!update.fields.includes('userEnteredValue')) return;
           const value = cell.userEnteredValue;
           formulas[r][c] = value?.formulaValue ?? '';
-          if (value?.formulaValue) { const match = value.formulaValue.match(/^=D(\d+)-SUM\(D(\d+):D(\d+)\)$/); const direct = value.formulaValue.match(/^=D(\d+)$/); data[r][c] = direct ? Number(data[+direct[1] - 1][3]) : match ? Number(data[+match[1] - 1][3]) - data.slice(+match[2] - 1, +match[3]).reduce((sum, item) => sum + Number(item[3]), 0) : ''; }
+          if (value?.formulaValue) { const match = value.formulaValue.match(/^=D(\d+)-SUM\(D(\d+):D(\d+)\)(?:\+SUMIF\(C\d+:C\d+,"Airbnb Owner Payout",D\d+:D\d+\))?$/); const direct = value.formulaValue.match(/^=D(\d+)$/); data[r][c] = direct ? Number(data[+direct[1] - 1][3]) : match ? Number(data[+match[1] - 1][3]) - data.slice(+match[2] - 1, +match[3]).reduce((sum, item) => sum + (value.formulaValue.includes('SUMIF')&&item[2]==='Airbnb Owner Payout'?0:Number(item[3])), 0) : ''; }
           else if (value?.numberValue !== undefined && cell.userEnteredFormat?.numberFormat?.type === 'DATE') data[r][c] = new Date(Date.UTC(1899, 11, 30 + value.numberValue, 12));
           else data[r][c] = value?.numberValue ?? value?.stringValue ?? value?.boolValue ?? '';
         }));

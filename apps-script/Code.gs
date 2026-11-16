@@ -250,11 +250,12 @@ function castleRead() {
           index = paymentIndexRow;
           break;
         }
-        var type = { 'airbnb payment': 'Airbnb', 'vrbo payment': 'Vrbo', 'owner payment': 'Owner' }[rowType];
+        var type = { 'airbnb payment': 'Airbnb', 'airbnb owner payout': 'Airbnb', 'vrbo payment': 'Vrbo', 'owner payment': 'Owner' }[rowType];
         if (!type) castleThrow('SOURCE_DATA', label + ': unrecognized payment row ' + rowNumber + '. Expected Airbnb Payment, Vrbo Payment, Owner Payment, or AR.');
         var paymentId = id + ':' + rowNumber;
         var payment = {
           id: paymentId, type: type,
+          ...(rowType==='airbnb owner payout'?{receivedBy:'owner'}:{}),
           amountCents: castleSourceCents(paymentRow[3], true, label + '!D' + rowNumber),
           payoutDate: castleSourceDate(paymentRow[4], timezone, label + '!E' + rowNumber),
           bundleCents: castleSourceCents(paymentRow[5], true, label + '!F' + rowNumber),
@@ -322,7 +323,7 @@ function castleRead() {
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData, ownerData: ownerData,
-    snapshot: { ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { airbnbRecipientSchema: 1, ownerAllocationSchema: 1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -565,7 +566,18 @@ function castleStatusRequests(current, changes) {
   return requests;
 }
 
+function castleRecipient(value,type){
+ if(value!==undefined&&value!=='castle'&&value!=='owner')castleThrow('VALIDATION','Choose Castle or Owner as payment recipient.');
+ if(value==='owner'&&type!=='Airbnb')castleThrow('VALIDATION','Only Airbnb payouts can be received by an owner.');
+}
+function castlePaymentLabel(type,receivedBy){return receivedBy==='owner'?'Airbnb Owner Payout':type+' Payment';}
+function castleArFormula(totalRow,arRow,hasOwner){
+ if(arRow<=totalRow+1)return '=D'+totalRow;
+ var first=totalRow+1,last=arRow-1;
+ return '=D'+totalRow+'-SUM(D'+first+':D'+last+')'+(hasOwner?'+SUMIF(C'+first+':C'+last+',"Airbnb Owner Payout",D'+first+':D'+last+')':'');
+}
 function castleFinancialRequests(changes, current) {
+  var recipientAware=Object.keys(current.payments).some(function(id){return current.payments[id].payment.receivedBy==='owner';})||changes.some(function(c){return JSON.stringify(c).indexOf('"receivedBy":"owner"')>=0;});
   var requests = [], targets = {}, appendRows = {}, addedNames = {}, insertions = {}, paymentCount = 0, followupChanges = Object.create(null);
   function queuePayments(key, target, payments, ownerImport) {
     if (!Array.isArray(payments) || !payments.length) castleThrow('VALIDATION', 'Provide at least one payment.');
@@ -573,8 +585,9 @@ function castleFinancialRequests(changes, current) {
     if (paymentCount > 500) castleThrow('VALIDATION', 'A save supports at most 500 imported payments.');
     payments.forEach(function (payment) {
       if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid payment.');
-      castleKeys(payment, ownerImport?['type','amountCents','bankDetails','ownerBankDate']:['type', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
+      castleKeys(payment, ownerImport?['type','amountCents','bankDetails','ownerBankDate']:['type', 'receivedBy', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
       if (payment.type !== undefined && ['Airbnb', 'Vrbo', 'Owner'].indexOf(payment.type) < 0) castleThrow('VALIDATION', 'Payment type must be Airbnb, Vrbo, or Owner.');
+      castleRecipient(payment.receivedBy,payment.index===undefined?(payment.type||'Airbnb'):payment.index<3?'Airbnb':payment.index===3?'Vrbo':'Owner');
       castleCents(payment.amountCents, false, false);
       if (payment.bankDetails !== undefined) castleValidateBankDetails(payment.bankDetails,current.months[String(target.sheetId)].bankOffset);
       if (payment.bundleCents !== undefined) castleCents(payment.bundleCents, false, false);
@@ -612,7 +625,7 @@ function castleFinancialRequests(changes, current) {
       var p = target.payment;
       var accountMatch = String(p.bankDetails || '').match(/(?:checking|chequing|savings)\s+([\d -]+)/i);
       var account = accountMatch ? accountMatch[1].replace(/\D/g,'').slice(-4) : '';
-      if (!/^\d{4}$/.test(change.account) || account !== change.account || p.type !== 'Airbnb' || p.bundleCents !== change.bundleCents || !(p.amountCents > 0)) castleThrow('VALIDATION','The statement does not match this payment bundle and bank account.');
+      if (!/^\d{4}$/.test(change.account) || account !== change.account || p.type !== 'Airbnb' || p.receivedBy==='owner' || p.bundleCents !== change.bundleCents || !(p.amountCents > 0)) castleThrow('VALIDATION','The statement does not match this payment bundle and bank account.');
       if (!castleDateValid(change.bankDate)) castleThrow('VALIDATION','The bank transaction date must be a valid YYYY-MM-DD date.');
       if ((p.bankCents !== null && p.bankCents !== p.amountCents) || (p.bankDate && p.bankDate !== change.bankDate)) castleThrow('CONFLICT','Existing bank values conflict with this statement. Review the payment first.');
       ['type','amountCents','payoutDate','bundleCents','bankDetails','bankDate','bankCents'].forEach(function(key){castleUnique(targets,'payment:'+change.paymentId+':'+key);});
@@ -627,12 +640,19 @@ function castleFinancialRequests(changes, current) {
       var fields = change.fields;
       if (!fields || typeof fields !== 'object' || Array.isArray(fields) || !Object.keys(fields).length) castleThrow('VALIDATION', 'Payment fields are required.');
       var offset=target.bankOffset||0;
-      var columns = { type:3, amountCents: 4, payoutDate: 5, bundleCents: 6, bankDetails:7, bankDate: 7+offset, bankCents: 8+offset, verifiedByDaisy: 10+offset };
+      var columns = { receivedBy:3, type:3, amountCents: 4, payoutDate: 5, bundleCents: 6, bankDetails:7, bankDate: 7+offset, bankCents: 8+offset, verifiedByDaisy: 10+offset };
       castleKeys(fields, Object.keys(columns));
+      var nextType=fields.type||target.payment.type, nextRecipient=fields.receivedBy===undefined?target.payment.receivedBy:fields.receivedBy;
+      castleRecipient(nextRecipient,nextType);
+      if('receivedBy' in fields||('type' in fields&&target.payment.receivedBy==='owner')){
+       var parent=Object.keys(current.properties).map(function(id){return current.properties[id];}).filter(function(p){return p.property.payments.some(function(row){return row.id===change.paymentId;});})[0];
+       if(parent&&!parent.property.bundleOnly)requests.push(castleCell(parent.sheetId,parent.arRow,4,castleArFormula(parent.row,parent.arRow,true),'formula'));
+      }
       Object.keys(fields).forEach(function (key) {
         castleUnique(targets, 'payment:' + change.paymentId + ':' + key);
         var value = fields[key];
-        if(key==='type'){if(['Airbnb','Vrbo','Owner'].indexOf(value)<0)castleThrow('VALIDATION','Choose a valid payment type.');requests.push(castleCell(target.sheetId,target.row,3,value+' Payment'));
+        if(key==='receivedBy'){requests.push(castleCell(target.sheetId,target.row,3,castlePaymentLabel(nextType,nextRecipient)));
+        } else if(key==='type'){if(['Airbnb','Vrbo','Owner'].indexOf(value)<0)castleThrow('VALIDATION','Choose a valid payment type.');requests.push(castleCell(target.sheetId,target.row,3,castlePaymentLabel(value,nextRecipient)));
         } else if(key==='bankDetails'){castleValidateBankDetails(value,offset);requests.push(castleCell(target.sheetId,target.row,7,value.trim()));
         } else if (key === 'verifiedByDaisy') {
           if (typeof value !== 'boolean') castleThrow('VALIDATION', 'Daisy verification must be true or false.');
@@ -646,12 +666,12 @@ function castleFinancialRequests(changes, current) {
           requests.push(castleCell(target.sheetId, target.row, columns[key], value === null ? null : value / 100));
         }
       });
-      if ('type' in fields || 'bundleCents' in fields || 'bankCents' in fields || 'amountCents' in fields || 'payoutDate' in fields || 'bankDate' in fields || 'bankDetails' in fields) {
+      if ('receivedBy' in fields || 'type' in fields || 'bundleCents' in fields || 'bankCents' in fields || 'amountCents' in fields || 'payoutDate' in fields || 'bankDate' in fields || 'bankDetails' in fields) {
         // Only managed verification is updated; unrelated values and AR formulas survive.
         var verificationKey = 'system:' + change.paymentId;
         if (!targets[verificationKey]) {
           // Verification must be invalidated when evidence fields change.
-          var sourceChanged = ['amountCents','payoutDate','bundleCents','bankDetails','bankDate','bankCents'].some(function(key){return key in fields && fields[key] !== target.payment[key];});
+          var sourceChanged = ['receivedBy','type','amountCents','payoutDate','bundleCents','bankDetails','bankDate','bankCents'].some(function(key){return key in fields && fields[key] !== target.payment[key];});
           if (target.payment.verifiedBySystem !== undefined) { if(sourceChanged) { targets[verificationKey]=true; requests.push(castleCell(target.sheetId,target.row,9+offset,false)); } }
           else { targets[verificationKey]=true; requests.push(castleCell(target.sheetId, target.row, 9+offset, castleBankFormula(target.row,offset), 'formula')); }
         }
@@ -680,7 +700,8 @@ function castleFinancialRequests(changes, current) {
       var initialSlots = {};
       initialPayments.forEach(function (payment) {
         if (!payment || typeof payment !== 'object' || Array.isArray(payment)) castleThrow('VALIDATION', 'Invalid initial payment.');
-        castleKeys(payment, ['index', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
+        castleKeys(payment, ['index', 'receivedBy', 'amountCents', 'payoutDate', 'bundleCents', 'bankDetails']);
+        castleRecipient(payment.receivedBy,payment.index<3?'Airbnb':payment.index===3?'Vrbo':'Owner');
         if (!Number.isInteger(payment.index) || payment.index < 0 || payment.index > 4 || initialSlots[payment.index]) castleThrow('VALIDATION', 'Initial payment slots must be unique indexes from 0 to 4.');
         castleCents(payment.amountCents, false, false);
         if (payment.bankDetails !== undefined) castleValidateBankDetails(payment.bankDetails,target.bankOffset);
@@ -695,7 +716,7 @@ function castleFinancialRequests(changes, current) {
       var paymentTypes = orderedPayments.map(function (payment) { return payment.index === 4 ? 'Owner' : payment.index === 3 ? 'Vrbo' : 'Airbnb'; });
       var newHeaders=CASTLE_HEADERS.slice();if(target.bankOffset)newHeaders.splice(6,0,'Bank Details');
       var rows = [newHeaders, [manager, name, target.bundleOnly ? 'Bundle Matching Only' : 'Total Payment', target.bundleOnly ? '' : change.totalCents / 100]];
-      orderedPayments.forEach(function (payment, index) { rows.push(['', '', paymentTypes[index] + ' Payment', payment.amountCents / 100]); });
+      orderedPayments.forEach(function (payment, index) { rows.push(['', '', castlePaymentLabel(paymentTypes[index],payment.receivedBy), payment.amountCents / 100]); });
       rows.push(['', '', target.bundleOnly ? 'End Bundle Matching' : 'AR']);
       appendRows[change.monthId] = firstRow + rows.length;
       var arRow = firstRow + rows.length - 1;
@@ -706,7 +727,7 @@ function castleFinancialRequests(changes, current) {
       rows.forEach(function (values, offset) {
         var cells = [];
         for (var column = 0; column < 10+(target.bankOffset||0); column++) cells.push(castleValue(values[column] === undefined ? null : values[column]));
-        if (!target.bundleOnly && offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: '=D' + totalRow + (orderedPayments.length ? '-SUM(D' + (totalRow + 1) + ':D' + (arRow - 1) + ')' : '') } };
+        if (!target.bundleOnly && offset === rows.length - 1) cells[3] = { userEnteredValue: { formulaValue: castleArFormula(totalRow,arRow,orderedPayments.some(function(p){return p.receivedBy==='owner';})) } };
         if (offset >= 2 && offset < rows.length - 1) {
           var row = firstRow + offset;
           cells[9+(target.bankOffset||0)] = castleValue(false);
@@ -755,7 +776,7 @@ function castleFinancialRequests(changes, current) {
         destination: { sheetId: sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: 10+bankOffset },
         pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
       } });
-      var values = ['', '', type + ' Payment', payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false];
+      var values = ['', '', castlePaymentLabel(type,payment.receivedBy), payment.amountCents / 100, '', payment.bundleCents === undefined ? '' : payment.bundleCents / 100, '', '', '', false];
       if(bankOffset)values.splice(6,0,(payment.bankDetails||'').trim());
       values=values.map(castleValue);
       values[8+bankOffset] = payment.ownerBankDate?castleValue(true):{ userEnteredValue: { formulaValue:castleBankFormula(row,bankOffset) } };
@@ -766,7 +787,7 @@ function castleFinancialRequests(changes, current) {
     });
     requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10+bankOffset }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     if(current.months[String(sheetId)].bundleOnly)requests=requests.concat(castleBundleBorderRequests(sheetId,insertion.row-1,first+count,bankOffset));
-    if(!current.months[String(sheetId)].bundleOnly)requests.push(castleCell(sheetId, first + count, 4, '=D' + insertion.row + '-SUM(D' + (insertion.row + 1) + ':D' + (first + count - 1) + ')', 'formula'));
+    if(!current.months[String(sheetId)].bundleOnly)requests.push(castleCell(sheetId, first + count, 4, castleArFormula(insertion.row,first+count,recipientAware), 'formula'));
   });
   return requests;
 }
@@ -977,7 +998,7 @@ function castleRecordRequests(changes,current){
     target=Object.keys(current.properties).map(function(id){return current.properties[id];}).filter(function(p){return p.property.payments.some(function(row){return row.id===action.paymentId;});})[0];
     var arRow=target.arRow-1;
     if(target.property.bundleOnly)return [{deleteDimension:{range:{sheetId:payment.sheetId,dimension:'ROWS',startIndex:payment.row-1,endIndex:payment.row}}}];
-    return [{deleteDimension:{range:{sheetId:payment.sheetId,dimension:'ROWS',startIndex:payment.row-1,endIndex:payment.row}}},castleCell(payment.sheetId,arRow,4,'=D'+target.row+(arRow>target.row+1?'-SUM(D'+(target.row+1)+':D'+(arRow-1)+')':''),'formula')];
+    return [{deleteDimension:{range:{sheetId:payment.sheetId,dimension:'ROWS',startIndex:payment.row-1,endIndex:payment.row}}},castleCell(payment.sheetId,arRow,4,castleArFormula(target.row,arRow,target.property.payments.some(function(p){return p.id!==action.paymentId&&p.receivedBy==='owner';})),'formula')];
   }
   castleKeys(action,action.kind==='deleteProperty'?['kind','propertyId']:['kind','propertyId','name','manager']);
   target=current.properties[action.propertyId];if(!target)castleThrow('VALIDATION','Property not found. Refresh records.');
@@ -1085,8 +1106,9 @@ function castleOwnerTransferValidate(t,stored){
  if(!Array.isArray(t.allocations)||!t.allocations.length||t.allocations.length>500)castleThrow('VALIDATION','Provide positive property allocations.');
  var sum=0,seen=Object.create(null);t.allocations.forEach(function(a){
   if(!a||typeof a!=='object'||Array.isArray(a))castleThrow('VALIDATION','Invalid allocation.');
-  castleKeys(a,stored?['propertyName','amountCents']:['propertyId','amountCents']);
-  var key=stored?castleManagerName(castleName(a.propertyName,'Property name')):castleOwnerText(a.propertyId,'Property ID',100,true);castleUnique(seen,key);
+  castleKeys(a,stored?['propertyName','monthId','amountCents']:['propertyId','monthId','amountCents']);
+  if(a.monthId!==undefined)castleOwnerText(a.monthId,'Allocation month ID',100,true);
+  var key=stored?JSON.stringify([a.monthId||t.monthId,castleManagerName(castleName(a.propertyName,'Property name'))]):castleOwnerText(a.propertyId,'Property ID',100,true);castleUnique(seen,key);
   castleCents(a.amountCents,false,true);if(a.amountCents<=0)castleThrow('VALIDATION','Allocations must be positive.');sum+=a.amountCents;
  });
  if(!Number.isSafeInteger(sum)||sum!==t.amountCents)castleThrow('VALIDATION','Allocations must sum exactly to the transfer amount.');
@@ -1128,12 +1150,12 @@ function castlePrepareOwners(changes,current){
   var owner=tables.owners.records.filter(function(o){return o.id===c.ownerId;})[0];if(!owner||castleManagerName(owner.bankName)!==castleManagerName(c.bankName))castleThrow('VALIDATION','Choose the owner matching the bank statement name.');
   var month=current.months[c.monthId];if(!month||month.bundleOnly)castleThrow('VALIDATION','Choose an AR month for owner payments.');
   var allocationNames=Object.create(null);
-  var allocations=c.allocations.map(function(a){var target=current.properties[a.propertyId];if(!target||String(target.sheetId)!==c.monthId||target.property.bundleOnly||!owner.propertyNames.some(function(name){return castleManagerName(name)===castleManagerName(target.property.name);}))castleThrow('VALIDATION','Allocate only to mapped AR properties in the selected month.');
-   var propertyNameKey=castleManagerName(target.property.name);
+  var allocations=c.allocations.map(function(a){var allocationMonth=a.monthId===undefined?c.monthId:a.monthId;var target=current.properties[a.propertyId];if(!current.months[allocationMonth]||!target||String(target.sheetId)!==allocationMonth||target.property.bundleOnly||!owner.propertyNames.some(function(name){return castleManagerName(name)===castleManagerName(target.property.name);}))castleThrow('VALIDATION','Allocate only to mapped AR properties in the selected month.');
+   var propertyNameKey=JSON.stringify([allocationMonth,castleManagerName(target.property.name)]);
    if(allocationNames[propertyNameKey])castleThrow('VALIDATION','Ambiguous property names in this allocation: multiple properties have the same normalized name. Rename the properties before allocating to both.');
    allocationNames[propertyNameKey]=true;
    castleValidateBankDetails(c.account,target.bankOffset);
-   payments.push({propertyId:a.propertyId,payment:{type:'Owner',amountCents:a.amountCents,bankDetails:'Checking '+c.account,ownerBankDate:c.date}});return {propertyName:target.property.name,amountCents:a.amountCents};});
+   payments.push({propertyId:a.propertyId,payment:{type:'Owner',amountCents:a.amountCents,bankDetails:'Checking '+c.account,ownerBankDate:c.date}});return {propertyName:target.property.name,monthId:allocationMonth,amountCents:a.amountCents};});
   tables.transfers.records.push({id:'transfer-'+castleHash(key).slice(0,40),ownerId:owner.id,ownerName:owner.name,bankName:c.bankName,account:c.account,date:c.date,reference:c.reference,source:c.source,amountCents:c.amountCents,monthId:c.monthId,allocations:allocations});changed=true;
  });
  if(changed&&remaining.some(function(c){return c&&['updateProperty','deleteProperty','deletePayment'].indexOf(c.kind)>=0;}))castleThrow('VALIDATION','Save owner changes separately from record edits or deletions.');

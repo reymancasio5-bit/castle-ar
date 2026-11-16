@@ -194,3 +194,11 @@ These controls use the existing revision checks and atomic Sheets batches. Updat
 # Castle Assistant
 
 The app includes a direct-access AI panel for workspace questions, reports, and reviewed edits. See [setup and local preview instructions](docs/castle-assistant-setup.md). API credentials belong only in Apps Script settings.
+
+### Owner payments across reporting months
+
+Owner deposits match the saved Name on Bank Statement (case and extra spaces ignored). An exact, unique outstanding balance in the selected month is preselected. Manual review allows the full deposit to be allocated across mapped properties and months, with remaining balances shown before Save. Saving creates Owner payment rows and one transfer ledger entry; Airbnb payout records are unchanged. Existing transfers remain readable. Deploy the updated Apps Script before using cross-month allocation (`ownerAllocationSchema: 1`); older deployments remain limited to their selected month.
+
+Local demo: `npm run dev`, then open `http://127.0.0.1:5173/?preview=1&ownerDemo=1&view=owners`. This uses fictional, temporary records that reset on reload. Import the CSV files under `tests/fixtures/owner-payments`: the exact payment clears November?s 23.11 balance; allocate the bulk payment as 30.00 to October and 40.00 to September.
+
+Airbnb import mapping now requires a payment recipient for each file: Received By Castle or Received By Owner. Owner-received amounts remain visible as reference payouts and are excluded from Castle collections, AR deductions, and bank matching. The updated Apps Script advertises `airbnbRecipientSchema: 1` and stores these rows as Airbnb Owner Payout, with AR formulas excluding them. Existing unmarked payments retain their Castle-received behavior.
