@@ -11,6 +11,7 @@ try {
  const {default:ManagerSelect}=await server.ssrLoadModule('/src/ManagerSelect.tsx');
  const {default:ManagerAvatar}=await server.ssrLoadModule('/src/ManagerAvatar.tsx');
  const {default:App}=await server.ssrLoadModule('/src/App.tsx');
+ const {ConfirmationProvider}=await server.ssrLoadModule('/src/Confirmation.tsx');
  const {createPreviewApi}=await server.ssrLoadModule('/src/preview-api.ts');
  const snapshot=await createPreviewApi().read();
  const props={snapshot,monthId:snapshot.months[0].id,onSave:async()=>{},onDirtyChange:()=>{},onOpenListing:()=>{}};
@@ -46,7 +47,7 @@ try {
  const originalWindow=globalThis.window;
  try{
   globalThis.window={location:{search:''},sessionStorage:{getItem:key=>key==='castle-workspace-location-v1'?JSON.stringify({view:'reconciliation',monthId:'0',search:'Jarvis',manager:'Team B',status:'outstanding'}):null}};
-  const restored=renderToStaticMarkup(React.createElement(App,{api:createPreviewApi(),configured:false}));
+  const restored=renderToStaticMarkup(React.createElement(ConfirmationProvider,null,React.createElement(App,{api:createPreviewApi(),configured:false})));
   assert.ok(restored.includes('Payment Reconciliation'),'App restores the saved page on reload');
  }finally{if(originalWindow===undefined)delete globalThis.window;else globalThis.window=originalWindow;}
  console.log('Manager UI render checks passed: directory, empty listings, record-only selects, inactive assignments, backend upgrade notice.');

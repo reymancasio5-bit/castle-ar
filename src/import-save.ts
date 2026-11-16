@@ -11,16 +11,16 @@ export class ImportReviewRequired extends Error {
 }
 type ImportApi={read:()=>Promise<Snapshot>;save:(revision:string,changes:Change[])=>Promise<Snapshot>};
 /** Only retry server replies that guarantee the attempted write was rejected. */
-export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[],pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms))):Promise<Snapshot>{
+export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[]|Promise<Change[]>,pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),busyMessage='Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.'):Promise<Snapshot>{
   for(let attempt=0;attempt<4;attempt++){
     const latest=await api.read();
-    const changes=prepare(latest);
+    const changes=await prepare(latest);
     if(!changes.length)return latest;
     try{return await api.save(latest.revision,changes);}
     catch(error){
       const code=(error as {code?:string})?.code;
       if(code!=='CONFLICT'&&code!=='BUSY')throw error;
-      if(attempt===3)throw new Error('Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.');
+      if(attempt===3)throw new Error(busyMessage);
       await pause(200*(attempt+1)+Math.floor(Math.random()*150));
     }
   }
