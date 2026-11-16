@@ -7,6 +7,7 @@ import { destinations, inferColumns, normalizePropertyName, type ImportDestinati
 import { isAirbnbSheet, type PropertyImportOptions } from './property-import.ts';
 import { readSpreadsheet } from './excel.ts';
 import { buildBulkImportPreview } from './bulk-import.ts';
+import {ImportReviewRequired,prepareFreshBulkImport} from './import-save.ts';
 import { useExiting } from './Presence';
 import './import.css';
 import ManagerSelect from './ManagerSelect';
@@ -22,7 +23,8 @@ function columnLetter(index: number) {
 }
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
-export function ImportWizard({ airbnbRecipientSupported=false, initialFile, month, propertyCatalog = month.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+export function ImportWizard({ airbnbRecipientSupported=false, initialFile, month: initialMonth, propertyCatalog = initialMonth.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+  const [month,setReviewMonth]=useState(initialMonth);
   const askConfirmation=useConfirmation();
   const exiting = useExiting();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -134,9 +136,11 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
     setError('');
     try {
       // The complete, validated mutation list is sent in one save operation.
-      await onApply(preview.changes);
+      const entries=files.map(file=>({fileName:file.name,sheet:file.sheets[file.sheetIndex],options:{...file.options,...destination,airbnbRecipient:airbnbRecipient==='castle'&&!airbnbRecipientSupported?undefined:airbnbRecipient}}));
+      await onApply(preview.changes,latest=>prepareFreshBulkImport(month,entries,preview.changes,latest));
       onClose();
     } catch (cause) {
+      if(cause instanceof ImportReviewRequired){setReviewMonth(cause.month);setPage(0);}
       setError(cause instanceof Error ? cause.message : 'The import could not be saved. Your preview is still available.');
     } finally { setSaving(false); }
   }

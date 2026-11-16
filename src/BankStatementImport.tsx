@@ -7,7 +7,10 @@ import {matchOwnerDeposits, applyOwnerChange} from './owners';
 import OwnerPaymentReview, {allocationDraft, parseAllocations} from './OwnerPaymentReview';
 import './import.css';
 import './bank-statement.css';
-export default function BankStatementImport({month,onClose,onApply,supported,initialFile,snapshot}:{snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[])=>Promise<void>;supported:boolean}){
+import {BankImportReviewRequired,prepareFreshBankImport,remapBankAllocationDrafts} from './import-save.ts';
+export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,snapshot:initialSnapshot}:{snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
+ const [snapshot,setReviewSnapshot]=useState(initialSnapshot);
+ const month=snapshot?.months.find(m=>m.id===initialMonth.id)??initialMonth;
  const dialog=useRef<HTMLDialogElement>(null),input=useRef<HTMLInputElement>(null);
  const [deposits,setDeposits]=useState<BankDeposit[]>([]),[warnings,setWarnings]=useState<string[]>([]);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[reviewed,setReviewed]=useState(false);
@@ -59,7 +62,7 @@ export default function BankStatementImport({month,onClose,onApply,supported,ini
   }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');}finally{setBusy(false);if(input.current)input.current.value='';}
  }
  useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
- async function save(){setSaving(true);setError('');try{if(hasUnresolved)throw new Error('Allocate or skip each owner deposit before saving.');await onApply(changes);}catch(e){setError((e as Error).message);}finally{setSaving(false);}}
+ async function save(){setSaving(true);setError('');try{if(hasUnresolved)throw new Error('Allocate or skip each owner deposit before saving.');await onApply(changes,snapshot?latest=>prepareFreshBankImport(snapshot,changes,latest):undefined);}catch(e){if(e instanceof BankImportReviewRequired&&snapshot){setAllocations(current=>remapBankAllocationDrafts(snapshot,e.snapshot,current));setReviewSnapshot(e.snapshot);}setError((e as Error).message);}finally{setSaving(false);}}
  return <dialog ref={dialog} className="import-modal bank-statement-modal" aria-labelledby="bank-import-title" onCancel={e=>{e.preventDefault();if(!busy&&!saving)onClose();}}>
   <header className="import-header"><div className="import-header-icon"><FileText size={23}/></div><div><p className="import-eyebrow">BANK RECONCILIATION</p><h2 id="bank-import-title">Import Bank Statement</h2><p>Match Airbnb and owner deposits to {month.label} records.</p></div><button className="import-icon-button" onClick={onClose} disabled={busy||saving} aria-label="Close bank statement import"><X size={21}/></button></header>
   <div className="import-content" aria-busy={busy||saving}>

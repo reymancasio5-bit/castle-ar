@@ -22,7 +22,7 @@ test('save awaits server acknowledgement and returns authoritative snapshot',asy
 });
 test('server conflict is not reported as a successful save',async()=>{
  const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>({ok:false,error:{code:'CONFLICT',message:'Sheet changed. Refresh and retry.'}}),pause:async()=>{}});
- await assert.rejects(api.save('old',[]),/Sheet changed/);
+ await assert.rejects(api.save('old',[]),(error:any)=>error.code==='CONFLICT'&&/Sheet changed/.test(error.message));
 });
 test('an opaque submitted POST without acknowledgement never counts as saved',async()=>{
  const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>({ok:true,pending:true}),pause:async()=>{}});

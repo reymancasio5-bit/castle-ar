@@ -30,6 +30,7 @@ import type {AssistantRequest,AssistantReply} from './assistant-types';
 import CastleWordmark from './CastleWordmark';
 import './branding.css';
 import {createRecordSync} from './record-sync.ts';
+import {saveRebuiltImport} from './import-save.ts';
 import {loadWorkspaceLocation,saveWorkspaceLocation} from './workspace-location.ts';
 
 type Api = { read: () => Promise<Snapshot>; save: (revision: string, changes: Change[]) => Promise<Snapshot>; assistant?:(request:AssistantRequest,onProgress?:(label:string)=>void)=>Promise<AssistantReply> };
@@ -128,7 +129,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
     if (!snapshot) throw new Error('Wait for your records to load before saving.');
     await saveChanges(editRevision || snapshot.revision, changes);
   }
-  async function saveChanges(revision: string, changes: Change[]) {
+  async function saveChanges(revision: string, changes: Change[], prepare?: (latest: Snapshot) => Change[]) {
     if(snapshot?.ownerSchema!==1&&changes.some(c=>c.kind==='saveOwner'||c.kind==='importOwnerTransfer'))throw new Error('Update the Apps Script deployment before saving owners or owner payments.');
     if (savePending.current) throw new Error('Another save is in progress. Please wait.');
     if (snapshot?.managerSchema !== 1 && changes.some(c => ['deleteManager','saveManager','saveTask','addManagerUpdate','updateFollowUp','addProperty'].includes(c.kind))) throw new Error('Update the Apps Script deployment before saving manager assignments or records.');
@@ -138,7 +139,7 @@ export default function App({ api, configured }: { api: Api; configured: boolean
     savePending.current = true; setSavingRecords(true);
     pauseRefresh();
     try {
-      const next = await api.save(revision, changes);
+      const next = prepare ? await saveRebuiltImport(api,prepare) : await api.save(revision, changes);
       syncRef.current?.acceptSaved(next);
       try{broadcastRef.current?.postMessage({revision:next.revision});}catch{/* Other tabs still refresh on their timer. */}
       setNotice(configured ? 'Changes saved to Google Sheets.' : 'Preview updated. Changes reset when you reload this page.');
@@ -221,8 +222,8 @@ export default function App({ api, configured }: { api: Api; configured: boolean
     <Presence present={!!notice}>{exiting => <div className="toast" role="status" data-exiting={exiting} inert={exiting}><CheckCircle2 size={18} />{notice}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={16} /></button></div>}</Presence>
     <Presence present={!!selected}>{selected && <PropertyDrawer managers={managerRecords} editingSupported={snapshot?.recordEditingSchema===1} key={selected.id} property={selected} monthLabel={month?.label ?? ''} configured={configured} onClose={() => setSelected(null)} onSave={async changes => { await applyChanges(changes); setSelected(null); }} />}</Presence>
     <Presence present={adding && !!month}>{adding && month && <AddProperty managers={managerRecords} onManageManagers={()=>{setAdding(false);navigate('managers');}} month={month} onClose={() => setAdding(false)} onSave={async changes => { await applyChanges(changes); setAdding(false); }} />}</Presence>
-    {bankImportOpen && month && <BankStatementImport snapshot={snapshot??undefined} initialFile={assistantImportFile} month={month} supported={(snapshot?.bankStatementSchema??0)>=2} onClose={()=>setBankImportOpen(false)} onApply={async changes=>{await applyChanges(changes);setBankImportOpen(false);}}/>}
-    <Presence present={importOpen && !!month}>{importOpen && month && <ImportWizard airbnbRecipientSupported={snapshot?.airbnbRecipientSchema===1} initialFile={assistantImportFile} managers={managerRecords} onManageManagers={()=>{setImportOpen(false);navigate('managers');}} month={month} propertyCatalog={snapshot?.months.flatMap(item => item.properties)} onClose={() => setImportOpen(false)} onApply={async changes => { await applyChanges(changes); setImportOpen(false); if(changes.some(c=>c.kind==='addProperty'&&c.bundleOnly || c.kind==='appendPayments'&&month.properties.some(p=>p.id===c.propertyId&&p.bundleOnly) || c.kind==='updatePayment'&&month.properties.some(p=>p.bundleOnly&&p.payments.some(row=>row.id===c.paymentId))))navigate('bundles'); }} />}</Presence>
+    {bankImportOpen && month && <BankStatementImport snapshot={snapshot??undefined} initialFile={assistantImportFile} month={month} supported={(snapshot?.bankStatementSchema??0)>=2} onClose={()=>setBankImportOpen(false)} onApply={async (changes,prepare)=>{await saveChanges(snapshot!.revision,changes,prepare);setBankImportOpen(false);}}/>}
+    <Presence present={importOpen && !!month}>{importOpen && month && <ImportWizard airbnbRecipientSupported={snapshot?.airbnbRecipientSchema===1} initialFile={assistantImportFile} managers={managerRecords} onManageManagers={()=>{setImportOpen(false);navigate('managers');}} month={month} propertyCatalog={snapshot?.months.flatMap(item => item.properties)} onClose={() => setImportOpen(false)} onApply={async (changes,prepare) => { await saveChanges(snapshot!.revision,changes,prepare); setImportOpen(false); if(changes.some(c=>c.kind==='addProperty'&&c.bundleOnly || c.kind==='appendPayments'&&month.properties.some(p=>p.id===c.propertyId&&p.bundleOnly) || c.kind==='updatePayment'&&month.properties.some(p=>p.bundleOnly&&p.payments.some(row=>row.id===c.paymentId))))navigate('bundles'); }} />}</Presence>
     <Presence present={bankReportOpen}>{bankReportOpen&&snapshot&&month&&<BankReport snapshot={snapshot} monthId={month.id} onClose={()=>setBankReportOpen(false)}/>}</Presence>
     <Presence present={helpOpen}>{helpOpen && <Dialog title="Your Monthly AR Workflow" className="workflow-dialog" onClose={() => setHelpOpen(false)}><WorkflowGuide /></Dialog>}</Presence>
     <Presence present={settingsOpen}>{settingsOpen && <Dialog title="User Settings" className="settings-dialog" onClose={() => setSettingsOpen(false)}><UserSettings preferences={preferences} managers={allManagers} onSave={updatePreferences} onCancel={() => setSettingsOpen(false)} /></Dialog>}</Presence>

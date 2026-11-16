@@ -1,0 +1,101 @@
+import {buildBulkImportPreview,type BulkImportEntry} from './bulk-import.ts';
+import {normalizePropertyName} from './import.ts';
+import {isAirbnbSheet} from './property-import.ts';
+import {parseMoney} from './domain.ts';
+import type {Change,Month,Payment,Property,Snapshot} from './types.ts';
+import {transferKey} from './owners.ts';
+
+export class ImportReviewRequired extends Error {
+  month:Month;
+  constructor(message:string,month:Month){super(message+' Your files and choices are kept. Review the updated preview, then confirm again.');this.name='ImportReviewRequired';this.month=month;}
+}
+type ImportApi={read:()=>Promise<Snapshot>;save:(revision:string,changes:Change[])=>Promise<Snapshot>};
+/** Only retry server replies that guarantee the attempted write was rejected. */
+export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[],pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms))):Promise<Snapshot>{
+  for(let attempt=0;attempt<4;attempt++){
+    const latest=await api.read();
+    const changes=prepare(latest);
+    if(!changes.length)return latest;
+    try{return await api.save(latest.revision,changes);}
+    catch(error){
+      const code=(error as {code?:string})?.code;
+      if(code!=='CONFLICT'&&code!=='BUSY')throw error;
+      if(attempt===3)throw new Error('Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.');
+      await pause(200*(attempt+1)+Math.floor(Math.random()*150));
+    }
+  }
+  throw new Error('Import could not be saved.');
+}
+const signature=(payment:Payment)=>JSON.stringify(Object.entries(payment).filter(([key])=>key!=='id').sort(([a],[b])=>a.localeCompare(b)));
+const emptyPayment=(p:Payment)=>p.amountCents===null&&p.bundleCents===null&&!p.payoutDate&&!p.bankDetails&&p.bankCents===null&&!p.bankDate&&!p.verifiedBySystem&&!p.verifiedByDaisy;
+
+/** Reparse retained source files against current row IDs; never replay stale mutations. */
+export function prepareFreshBulkImport(original:Month,entries:BulkImportEntry[],reviewed:Change[],latest:Snapshot):Change[]{
+  const month=latest.months.find(m=>m.id===original.id);
+  if(!month)throw new Error('The selected month is no longer available. Your files are kept; choose the correct month before importing.');
+  const fail=(message:string):never=>{throw new ImportReviewRequired(message,month);};
+  for(const entry of entries){
+    const bundleOnly=isAirbnbSheet(entry.sheet,entry.options.headerRow)&&(parseMoney(entry.options.total)??0)===0;
+    const matches=(m:Month)=>m.properties.filter(p=>!!p.bundleOnly===bundleOnly&&normalizePropertyName(p.name)===normalizePropertyName(entry.options.propertyName));
+    const before=matches(original),now=matches(month);
+    if(before.length&& !now.length)fail('This property was renamed or removed by another user.');
+    if(now.length>1)fail('More than one property now matches this name.');
+    const desired=bundleOnly?0:parseMoney(entry.options.total);
+    if(now[0]&&now[0].totalCents!==desired&&(!before[0]||now[0].totalCents!==before[0].totalCents))fail('Another user changed this property’s expected amount.');
+    if(!before.length&&now[0]&&normalizePropertyName(now[0].manager)!==normalizePropertyName(entry.options.manager))fail('Another user created this property under a different manager.');
+  }
+  let changes:Change[];
+  try{changes=buildBulkImportPreview(month,entries).changes;}
+  catch(error){return fail(error instanceof Error?error.message:'The latest records need review.');}
+  const approved=reviewed.flatMap(change=>change.kind==='updatePayment'?original.properties.flatMap(p=>p.payments).filter(p=>p.id===change.paymentId):[]).map(signature);
+  const auto=entries.every(entry=>isAirbnbSheet(entry.sheet,entry.options.headerRow)&&(entries.length>1||entry.options.airbnbSlot==='auto'));
+  for(const change of changes){
+    if(change.kind!=='updatePayment')continue;
+    const payment=month.properties.flatMap(p=>p.payments).find(p=>p.id===change.paymentId);
+    if(!payment||(!approved.includes(signature(payment))&&!(auto&&emptyPayment(payment))))fail('A payment this import would replace has changed.');
+  }
+  return changes;
+}
+
+export class BankImportReviewRequired extends Error {
+  snapshot:Snapshot;
+  constructor(snapshot:Snapshot){super('Records used by this bank import changed. Your files are kept and the latest records are shown. Review the allocations, then save again.');this.name='BankImportReviewRequired';this.snapshot=snapshot;}
+}
+function findFreshProperty(original:Snapshot,latest:Snapshot,id:string):{before:Property;after:Property;monthId:string}|undefined{
+  const month=original.months.find(m=>m.properties.some(p=>p.id===id)),before=month?.properties.find(p=>p.id===id);
+  if(!month||!before)return;
+  const matches=latest.months.find(m=>m.id===month.id)?.properties.filter(p=>!!p.bundleOnly===!!before.bundleOnly&&normalizePropertyName(p.name)===normalizePropertyName(before.name))??[];
+  if(matches.length!==1)return;
+  return {before,after:matches[0],monthId:month.id};
+}
+const financialSignature=(p:Property)=>JSON.stringify([p.totalCents,p.payments.map(signature)]);
+export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest:Snapshot):Change[]{
+  const fail=():never=>{throw new BankImportReviewRequired(latest);};
+  const results:Change[]=[];
+  for(const change of changes){
+    if(change.kind==='reconcileBank'){
+      const before=original.months.flatMap(m=>m.properties).find(p=>p.payments.some(row=>row.id===change.paymentId));
+      const target=before&&findFreshProperty(original,latest,before.id);
+      if(!target||financialSignature(target.before)!==financialSignature(target.after))return fail();
+      const index=target.before.payments.findIndex(p=>p.id===change.paymentId);
+      results.push({...change,paymentId:target.after.payments[index].id});
+    }else if(change.kind==='importOwnerTransfer'){
+      const targets=change.allocations.map(a=>({allocation:a,target:findFreshProperty(original,latest,a.propertyId)}));
+      if(targets.some(t=>!t.target))return fail();
+      const duplicate=latest.ownerTransfers?.find(t=>transferKey(t.account,t.reference)===transferKey(change.account,change.reference));
+      if(duplicate){
+        const normalize=(items:{propertyName:string;monthId:string;amountCents:number}[])=>JSON.stringify(items.map(a=>[normalizePropertyName(a.propertyName),a.monthId,a.amountCents]).sort());
+        const expected=targets.map(({allocation,target})=>({propertyName:target!.before.name,monthId:target!.monthId,amountCents:allocation.amountCents}));
+        if(duplicate.ownerId!==change.ownerId||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents||normalize(duplicate.allocations.map(a=>({...a,monthId:a.monthId??duplicate.monthId})))!==normalize(expected))return fail();
+        continue;
+      }
+      if(targets.some(({target})=>financialSignature(target!.before)!==financialSignature(target!.after)))return fail();
+      results.push({...change,allocations:targets.map(({allocation,target})=>({...allocation,propertyId:target!.after.id}))});
+    }else throw new Error('Unsupported bank import change.');
+  }
+  return results;
+}
+/** Preserve entered allocation amounts when unrelated row insertions move properties. */
+export function remapBankAllocationDrafts(original:Snapshot,latest:Snapshot,drafts:Record<number,Record<string,string>>):Record<number,Record<string,string>>{
+  return Object.fromEntries(Object.entries(drafts).map(([index,values])=>[index,Object.fromEntries(Object.entries(values).flatMap(([id,value])=>{const target=findFreshProperty(original,latest,id);return target?[[target.after.id,value]]:[];}))]));
+}

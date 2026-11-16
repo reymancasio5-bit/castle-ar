@@ -29,7 +29,7 @@ function submitForm(endpoint:string,payload:Payload) {
  return ()=>{form.remove();frame.remove()};
 }
 function checked(reply:Reply):Snapshot {
- if(!reply.ok) throw new Error(reply.error?.message || 'Google Sheets could not complete this request.');
+ if(!reply.ok) throw Object.assign(new Error(reply.error?.message || 'Google Sheets could not complete this request.'),{code:reply.error?.code});
  if(!reply.snapshot || !Array.isArray(reply.snapshot.months) || !reply.snapshot.revision) throw new Error('The Apps Script response is incomplete. Deploy the supplied Code.gs and try again.');
  return reply.snapshot;
 }
