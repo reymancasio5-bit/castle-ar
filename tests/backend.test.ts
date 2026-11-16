@@ -344,10 +344,24 @@ function harness() {
             for (let c = gridRange.startColumnIndex; c < gridRange.endColumnIndex; c++) validations[r][c] = structuredClone(request.setDataValidation.rule);
           }
         }
-        if (request.repeatCell?.fields === 'userEnteredFormat.numberFormat') {
+        if (request.repeatCell?.fields.startsWith('userEnteredFormat')) {
           for (let r = gridRange.startRowIndex; r < gridRange.endRowIndex; r++) {
             formats[r] ??= Array.from({ length: 10 }, () => ({}));
-            for (let c = gridRange.startColumnIndex; c < gridRange.endColumnIndex; c++) formats[r][c].numberFormat = structuredClone(request.repeatCell.cell.userEnteredFormat.numberFormat);
+            for (let c = gridRange.startColumnIndex; c < gridRange.endColumnIndex; c++) {
+              if(request.repeatCell.fields==='userEnteredFormat')formats[r][c]=structuredClone(request.repeatCell.cell.userEnteredFormat);
+              else for(const field of request.repeatCell.fields.split(',')){
+                const path=field.split('.').slice(1);let destination=formats[r][c]??=( {} ),source=request.repeatCell.cell.userEnteredFormat;
+                for(const part of path.slice(0,-1)){destination=destination[part]??={};source=source[part];}
+                destination[path.at(-1)!]=structuredClone(source[path.at(-1)!]);
+              }
+            }
+          }
+        }
+        if(request.updateBorders){
+          const {range,...borders}=request.updateBorders;
+          for(let r=range.startRowIndex;r<range.endRowIndex;r++)for(let c=range.startColumnIndex;c<range.endColumnIndex;c++){
+            const cell=formats[r][c];cell.borders??={};
+            for(const edge of ['top','bottom','left','right'])if(borders[edge]&&({top:r===range.startRowIndex,bottom:r===range.endRowIndex-1,left:c===range.startColumnIndex,right:c===range.endColumnIndex-1} as any)[edge])cell.borders[edge]=structuredClone(borders[edge]);
           }
         }
         if (!request.updateCells) continue;
@@ -649,7 +663,20 @@ test('multiple appended properties get distinct source rows and duplicate names 
   assert.equal(app.state.data.length, 32);
 });
 
-test('new properties inherit the first property borders, fonts, alignment, and date formats', () => {
+test('manual monthly formatting preserves values, formulas, validation and revision and is repeatable',()=>{
+  const app=harness();
+  const before=structuredClone({data:app.state.data,formulas:app.state.formulas,validations:app.state.validations});
+  const revision=app.read().snapshot.revision;
+  assert.equal(vm.runInContext('formatAllMonthlySheets()',app.context),1);
+  assert.equal(app.state.formats[3][3].numberFormat.pattern,'#,##0.00');
+  const formats=structuredClone(app.state.formats);
+  assert.equal(vm.runInContext('formatAllMonthlySheets()',app.context),1);
+  assert.deepEqual(app.state.formats,formats);
+  assert.deepEqual({data:app.state.data,formulas:app.state.formulas,validations:app.state.validations},before);
+  assert.equal(app.read().snapshot.revision,revision);
+});
+
+test('new properties receive the standard monthly layout without changing existing blocks', () => {
   const app = harness();
   const originalValues = structuredClone(app.state.data);
   const originalFormulas = structuredClone(app.state.formulas);
@@ -660,7 +687,8 @@ test('new properties inherit the first property borders, fonts, alignment, and d
   ] });
   assert.equal(result.ok, true, result.error?.message);
   for (const firstIndex of [26, 29]) {
-    assert.deepEqual(app.state.formats.slice(firstIndex, firstIndex + 3), [originalFormats[2], originalFormats[3], originalFormats[9]]);
+    assert.equal(app.state.formats[firstIndex+1][3].numberFormat.pattern, '#,##0.00');
+    assert.equal(app.state.formats[firstIndex+1][4].numberFormat.pattern, 'yyyy-mm-dd');
     assert.equal(app.state.formats[firstIndex][0].borders.top.style, 'SOLID');
     assert.equal(app.state.formats[firstIndex][0].textFormat.bold, true);
     assert.equal(app.state.formats[firstIndex + 1][1].horizontalAlignment, 'CENTER');
@@ -675,7 +703,7 @@ test('new properties inherit the first property borders, fonts, alignment, and d
   assert.equal(app.state.writes, 1, 'formats and values belong to the same atomic save');
 });
 
-test('format copying matches payment roles when the template has extra payment rows', () => {
+test('standard formatting stays within a new block when the old template has extra payment rows', () => {
   const app = harness();
   app.state.data.splice(7, 0, row('', '', 'Airbnb Payment', 19.99));
   app.state.formulas.splice(7, 0, row());
@@ -838,8 +866,8 @@ test('sparse semantic payment slots create only actual rows after Owner and reta
   assert.equal(property.sourceArCents, 8600);
   assert.equal(app.state.data.length, 33);
   assert.equal(app.state.formulas[32][3], '=D28-SUM(D29:D32)');
-  assert.equal(app.state.formats[28][2].textFormat.fontSize, 9);
-  assert.equal(app.state.formats[30][2].textFormat.fontSize, 8);
+  assert.equal(app.state.formats[28][2].textFormat.fontSize, 10);
+  assert.equal(app.state.formats[30][2].textFormat.fontSize, 10);
   for (let r = 28; r <= 31; r++) {
     assert.equal(app.state.data[r][9], false);
     assert.equal(app.state.validations[r][9].condition.type, 'BOOLEAN');
@@ -856,9 +884,9 @@ test('typed payment appends support manual Vrbo and Owner imports with matching 
   const property = result.snapshot.months[0].properties.at(-1);
   assert.deepEqual(property.payments.map((p: any) => [p.type, p.amountCents]), [['Vrbo', 1000], ['Vrbo', 2000], ['Owner', 500], ['Airbnb', 100]]);
   assert.equal(property.sourceArCents, 6400);
-  assert.equal(app.state.formats[28][2].textFormat.fontSize, 8);
-  assert.equal(app.state.formats[29][2].textFormat.fontSize, 8);
-  assert.equal(app.state.formats[30][2].textFormat.fontSize, 9);
+  assert.equal(app.state.formats[28][2].textFormat.fontSize, 10);
+  assert.equal(app.state.formats[29][2].textFormat.fontSize, 10);
+  assert.equal(app.state.formats[30][2].textFormat.fontSize, 10);
   assert.equal(app.state.formulas[32][3], '=D28-SUM(D29:D32)');
 });
 
@@ -888,7 +916,8 @@ test('an empty first template allows future payment insertion and no default Own
     assert.deepEqual(properties.at(-1).payments, []);
     assert.equal(properties.at(-1).sourceArCents, 3000);
     assert.equal(app.state.validations[4][9].condition.type, 'BOOLEAN');
-    if (keepOtherProperties) assert.equal(app.state.formats[4][2].textFormat.italic, true);
+    assert.equal(app.state.formats[4][2].textFormat.fontSize, 10);
+    assert.equal(app.state.formats[4][2].textFormat.bold, true);
   }
 });
 

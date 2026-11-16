@@ -750,6 +750,7 @@ function castleFinancialRequests(changes, current) {
   if (Object.keys(followupChanges).length) requests = requests.concat(castleStatusRequests(current, followupChanges));
   Object.keys(appendRows).forEach(function (monthId) {
     var target = current.months[monthId], needed = appendRows[monthId] - 1;
+    if (!target.bundleOnly) requests = requests.concat(castleMonthlyLayoutRequests(target));
     var neededColumns = 10 + (target.bankOffset || 0);
     if (neededColumns > target.maxColumns) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'COLUMNS', length: neededColumns - target.maxColumns } });
     if (needed > target.maxRows) requests.unshift({ appendDimension: { sheetId: target.sheetId, dimension: 'ROWS', length: needed - target.maxRows } });
@@ -787,12 +788,17 @@ function castleFinancialRequests(changes, current) {
     });
     requests.push({ setDataValidation: { range: { sheetId: sheetId, startRowIndex: first - 1, endRowIndex: first - 1 + count, startColumnIndex: 9, endColumnIndex: 10+bankOffset }, rule: { condition: { type: 'BOOLEAN' }, strict: true, showCustomUi: true } } });
     if(current.months[String(sheetId)].bundleOnly)requests=requests.concat(castleBundleBorderRequests(sheetId,insertion.row-1,first+count,bankOffset));
+    else {
+      requests=requests.concat(castleMonthlyBlockRequests(current.months[String(sheetId)],insertion.row-1,first+count));
+      if (!appendRows[String(sheetId)]) requests=requests.concat(castleMonthlyLayoutRequests(current.months[String(sheetId)]));
+    }
     if(!current.months[String(sheetId)].bundleOnly)requests.push(castleCell(sheetId, first + count, 4, castleArFormula(insertion.row,first+count,recipientAware), 'formula'));
   });
   return requests;
 }
 
 function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
+  if (!month.bundleOnly) return castleMonthlyBlockRequests(month, firstRow, firstRow + paymentTypes.length + 2);
   var bankOffset=month.bankOffset||0;
   var template = month.formatTemplate, used = {};
   var borders=month.bundleOnly?castleBundleBorderRequests(month.sheetId,firstRow,firstRow+paymentTypes.length+2,bankOffset):[];
@@ -823,6 +829,64 @@ function castlePropertyFormatRequests(month, firstRow, paymentTypes) {
       pasteType: 'PASTE_FORMAT', pasteOrientation: 'NORMAL'
     } };
   }).concat(borders);
+}
+
+// Formatting-only requests: never change values, formulas, validation, or row visibility.
+function castleMonthlyLayoutRequests(month) {
+  var widths = [158, 180, 114, 190, 190, 190];
+  if (month.bankOffset) widths.push(190);
+  widths = widths.concat([190, 190, 190, 170]);
+  var requests = widths.map(function (width, index) {
+    return {updateDimensionProperties:{range:{sheetId:month.sheetId,dimension:'COLUMNS',startIndex:index,endIndex:index+1},properties:{pixelSize:width},fields:'pixelSize'}};
+  });
+  // Only freeze the selector when the existing layout reserves its two top rows.
+  if (month.formatTemplate ? month.formatTemplate.headerRow >= 3 : month.lastRow === 2) {
+    requests.push({updateSheetProperties:{properties:{sheetId:month.sheetId,gridProperties:{frozenRowCount:2}},fields:'gridProperties.frozenRowCount'}});
+  }
+  return requests;
+}
+
+function castleMonthlyBlockRequests(month, firstRow, lastRow) {
+  var sheetId=month.sheetId, offset=month.bankOffset||0, columns=10+offset, requests=[];
+  function range(first,last,left,right){return {sheetId:sheetId,startRowIndex:first-1,endRowIndex:last,startColumnIndex:left,endColumnIndex:right};}
+  function format(first,last,left,right,value,fields){requests.push({repeatCell:{range:range(first,last,left,right),cell:{userEnteredFormat:value},fields:fields||'userEnteredFormat'}});}
+  var black={style:'SOLID',color:{red:0,green:0,blue:0}};
+  var grid={style:'SOLID',color:{red:0.87,green:0.87,blue:0.87}};
+  format(firstRow,lastRow,0,columns,{textFormat:{fontFamily:'Calibri',fontSize:12,bold:false,foregroundColor:{red:0,green:0,blue:0}},backgroundColor:{red:1,green:1,blue:1},horizontalAlignment:'CENTER',verticalAlignment:'MIDDLE',wrapStrategy:'CLIP',borders:{top:grid,bottom:grid,left:grid,right:grid}});
+  format(firstRow,firstRow,0,columns,{textFormat:{bold:true},wrapStrategy:'WRAP'},'userEnteredFormat.textFormat.bold,userEnteredFormat.wrapStrategy');
+  format(firstRow+1,lastRow-1,0,3,{textFormat:{fontSize:10}},'userEnteredFormat.textFormat.fontSize');
+  format(firstRow+1,lastRow-1,2,3,{textFormat:{bold:true}},'userEnteredFormat.textFormat.bold');
+  [3,5,7+offset].forEach(function(column){format(firstRow+1,lastRow,column,column+1,{numberFormat:{type:'NUMBER',pattern:'#,##0.00'}},'userEnteredFormat.numberFormat');});
+  [4,6+offset].forEach(function(column){format(firstRow+1,lastRow,column,column+1,{numberFormat:{type:'DATE',pattern:'yyyy-mm-dd'}},'userEnteredFormat.numberFormat');});
+  requests.push({updateBorders:{range:range(firstRow,lastRow,0,columns),top:black,bottom:black,left:black,right:black}});
+  [0,1].forEach(function(column){requests.push({updateBorders:{range:range(firstRow,lastRow,column,column+1),left:black,right:black}});});
+  requests.push({updateDimensionProperties:{range:{sheetId:sheetId,dimension:'ROWS',startIndex:firstRow-1,endIndex:lastRow},properties:{pixelSize:27},fields:'pixelSize'}});
+  requests.push({updateDimensionProperties:{range:{sheetId:sheetId,dimension:'ROWS',startIndex:firstRow-1,endIndex:firstRow},properties:{pixelSize:32},fields:'pixelSize'}});
+  return requests;
+}
+
+// Run these from the bound Apps Script editor. Month aliases such as Oct, 2026 work too.
+function formatOctober2026() { return castleFormatMonthlySheets('2026-10'); }
+function formatAllMonthlySheets() { return castleFormatMonthlySheets(null); }
+function castleFormatMonthlySheets(monthKey) {
+  var lock=LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Another save is in progress. Try formatting again shortly.');
+  try {
+    var current=castleRead(), requests=[], count=0;
+    Object.keys(current.months).forEach(function(id){
+      var month=current.months[id];
+      if(month.bundleOnly || (monthKey && month.month.month!==monthKey))return;
+      if(month.lastRow<3)return;
+      var blocks=Object.keys(current.properties).map(function(key){return current.properties[key];}).filter(function(property){return property.sheetId===month.sheetId;});
+      if(!blocks.length)return;
+      requests=requests.concat(castleMonthlyLayoutRequests(month));
+      blocks.forEach(function(property){requests=requests.concat(castleMonthlyBlockRequests(month,property.row-1,property.arRow));});
+      count++;
+    });
+    if(!count)throw new Error('No recognized monthly property blocks found'+(monthKey?' for '+monthKey:'')+'.');
+    Sheets.Spreadsheets.batchUpdate({requests:requests},CASTLE_SPREADSHEET_ID);
+    return count;
+  } finally {lock.releaseLock();}
 }
 
 function castleValidateFollowUp(value) {

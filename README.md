@@ -33,6 +33,19 @@ The supplied Code.gs also includes the spreadsheet's account-manager filter. Sav
 
 Saving the bound script enables this edit handler. To update the live web app too, publish a new version under **Deploy → Manage deployments**; saving the editor alone does not update the web-app deployment.
 
+## Monthly Sheet Formatting
+
+New property blocks and appended payment imports automatically receive the September-style monthly layout: Calibri, centered text, bold repeated headers and payment labels, wider columns, property-block borders, two-decimal amounts, and `yyyy-mm-dd` dates. Sheets with an existing two-row selector area keep those rows frozen. Both layouts (with or without Bank Details) are supported. Bundle Matching tabs retain their separate style.
+
+To format existing October data:
+
+1. Copy the complete generated `public/Code.gs` into the spreadsheet's bound Apps Script project and save. This file includes the assistant functions too; avoid duplicate function definitions in other script files.
+2. Select `formatOctober2026` in the editor's function menu and click **Run**. Authorize access if Google asks. This recognizes October 2026 aliases such as `Oct, 2026` and excludes Bundle Matching tabs.
+3. Optionally run `formatAllMonthlySheets` to apply the same layout to every recognized monthly financial tab.
+4. For future web-app imports, use **Deploy → Manage deployments → Edit → New version → Deploy** on the existing deployment, preserving its URL.
+
+The manual functions change formatting only, preserving values, formulas, checkbox rules, the A2 selection, and hidden rows. They are safe to rerun. They do not create missing month tabs or install an edit trigger for pasting data directly into Google Sheets; run the formatter after direct sheet imports. The existing account-manager filter behavior is unchanged.
+
 ## Publish on GitHub Pages
 
 Create a repository named `castle-monthly-ar`, then push this project with `main` as the default branch. In **Settings → Pages → Build and deployment**, select **GitHub Actions**. The included `.github/workflows/deploy.yml` tests, builds, and deploys on each push to `main`.

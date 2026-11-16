@@ -8,6 +8,23 @@ const options = { headerRow: 0, nameColumn: 1, amountColumn: 2, destination: 'Ai
 const sheet = (n: number, currency = 'CAD'): ImportSheet => ({ name: 'CSV', rows: [['Type','Listing','Amount','Paid out','Arriving by date','Currency'], ['Payout','','',n,'2026-10-09',currency], ['Reservation','Listing',n,'','',currency]].map(row => row.map(value => ({value}))) });
 const entry = (n: number) => ({ fileName: `${n}.csv`, sheet: sheet(n), options });
 
+test('one batch recipient overrides every file and changing it rebuilds all payouts', () => {
+ const files=[entry(1),entry(2),entry(3),entry(4)].map((file,index)=>({...file,options:{...file.options,airbnbRecipient:index===0?'owner' as const:'' as const}}));
+ for(const airbnbRecipient of ['castle','owner','castle'] as const){
+  const result=buildBulkImportPreview(month,files,{airbnbRecipient});
+  assert.equal(result.readyCount,4);
+  const change=result.changes[0];assert.equal(change.kind,'addProperty');
+  if(change.kind!=='addProperty')throw new Error('Expected new property');
+  const payments=[...(change.initialPayments??[]),...(change.additionalPayments??[])];
+  assert.equal(payments.length,4);
+  assert.ok(payments.every(payment=>payment.receivedBy===airbnbRecipient));
+ }
+ assert.throws(()=>buildBulkImportPreview(month,files,{airbnbRecipient:''}),/Choose whether Airbnb paid/);
+ // Older deployments omit Castle recipient metadata but must still cover all files.
+ const legacy=buildBulkImportPreview(month,files,{airbnbRecipient:undefined});
+ assert.equal(legacy.readyCount,4);
+});
+
 test('bulk imports accept blank listing names and exports without a Listing column', () => {
  const blank=entry(1); blank.sheet.rows[2][1].value='';
  const absent=entry(2); absent.sheet.rows.forEach(row=>row.splice(1,1));
