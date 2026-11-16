@@ -61,6 +61,8 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 
 ## What the app does
 
+Wells Fargo PDF imports support incoming **Zelle From** owner payments, including wrapped sender names, references, and memos. **Zelle To**, Airbnb deposits, and other Wells Fargo transactions are excluded with an import note. Owner matching uses the configured bank-statement name. An address in the memo can suggest a uniquely matching property already assigned to that owner; an explicit month/year such as `09/2026` selects that reporting month when available. Otherwise matching uses the selected month. Unknown owners, ambiguous addresses, and unavailable months require review. Suggestions remain editable before saving, and transaction references prevent duplicate imports. RBC PDF and spreadsheet import behavior remains supported.
+
 - Month, team, status, and property search filters.
 - **Follow-ups** replaces the Properties page: track owner-contact status, write notes, attach up to three compressed screenshots, and assign an account manager per monthly property. Saving updates Overview and the shared Google Sheet.
 - **Castle team → User settings:** choose the opening page, default manager/team and record filter, table spacing, and payout date display. Preferences apply when saved and persist in the current browser; they do not change shared records. Defaults also apply when switching months, and the default status applies when navigating pages. Restore defaults changes the draft until Save preferences is selected. If browser storage is blocked, a notice explains that preferences last only for the current session.

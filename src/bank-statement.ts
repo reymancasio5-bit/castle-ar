@@ -1,5 +1,6 @@
 import type { Change, Month } from './types.ts';
-export interface BankDeposit { kind?: 'owner'; ownerName?: string; account: string; date: string; amountCents: number; reference: string; source: string }
+import {parseWellsFargoStatement} from './wells-fargo.ts';
+export interface BankDeposit { kind?: 'owner'; ownerName?: string; description?: string; propertyReference?: string; serviceMonth?: string; account: string; date: string; amountCents: number; reference: string; source: string }
 const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 const cents = (s: string) => Math.round(Number(s.replace(/,/g,''))*100);
 export function bankAccount(value: string): string {
@@ -7,6 +8,7 @@ export function bankAccount(value: string): string {
  return match ? match[1].replace(/\D/g,'').slice(-4) : '';
 }
 export function parseStatement(text: string, source = 'Pasted statement'): { deposits: BankDeposit[]; warnings: string[] } {
+ if(/^\s*Wells\s+Fargo\b/im.test(text)) return parseWellsFargoStatement(text,source);
  const period=text.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})\s+to\s+([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})/i);
  const accountMatch=text.match(/Account number\s*:\s*([\d -]+)/i);
  if(!period || !accountMatch) throw new Error('Include the statement period and account number from the PDF header.');

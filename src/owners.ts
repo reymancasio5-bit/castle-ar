@@ -3,6 +3,8 @@ import type {BankDeposit} from './bank-statement.ts';
 import {balance} from './domain.ts';
 
 export const ownerKey=(value:string)=>value.trim().replace(/\s+/g,' ').toLowerCase();
+// Compare address text, not just its street number; never fuzzy-match owners.
+const addressKey=(value:string)=>ownerKey(value).replace(/^.*?(?=\d)/,'').replace(/\b(?:street|st|road|rd|avenue|ave|drive|dr)\.?$/,'').replace(/[^a-z0-9]+/g,' ').trim();
 export const transferKey=(account:string,reference:string)=>JSON.stringify([account.replace(/[\s-]/g,'').toLowerCase(),reference.trim().toLowerCase()]);
 const clean=(value:unknown,label:string,max=160,required=true,multiline=false):string=>{
  if(typeof value!=='string')throw new Error(`Enter a valid ${label}.`);
@@ -55,14 +57,14 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
  const seen=new Set(transfers.map(t=>transferKey(t.account,t.reference)));
  const signatures=new Map<string,string>(),conflicts=new Set<string>();
  for(const d of deposits.filter(d=>d.kind==='owner'&&d.reference)){
-  const key=transferKey(d.account,d.reference),signature=JSON.stringify([d.date,d.amountCents,ownerKey(d.ownerName??'')]);
+  const key=transferKey(d.account,d.reference),signature=JSON.stringify([d.date,d.amountCents,ownerKey(d.ownerName??''),d.propertyReference??'',d.serviceMonth??'']);
   if(signatures.has(key)&&signatures.get(key)!==signature)conflicts.add(key);else signatures.set(key,signature);
  }
- const outstanding=new Map(month.properties.map(p=>[p.id,balance(p)]));
+ const outstanding=new Map(allocationMonths.flatMap(m=>m.properties.map(p=>[p.id,balance(p)] as const)));
  return deposits.filter(d=>d.kind==='owner').map(deposit=>{
   const candidates=owners.filter(o=>ownerKey(o.bankName)===ownerKey(deposit.ownerName??''));
   const owner=candidates.length===1?candidates[0]:undefined;
-  const properties=owner?allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label}))):[];
+  const properties=owner?allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label,monthKey:m.month}))):[];
   const key=transferKey(deposit.account,deposit.reference),duplicate=!!deposit.reference&&(seen.has(key)||conflicts.has(key));
   if(deposit.reference)seen.add(key);
   const allocations:{propertyId:string;amountCents:number}[]=[];
@@ -72,8 +74,16 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
   else if(!deposit.reference)status='Missing transaction reference — skip';
   else if(!owner)status=candidates.length?'Ambiguous owner name':'Unknown owner';
   else if(!owner.active)status='Inactive owner — manual review';
+  else if(deposit.propertyReference){
+   const hinted=properties.filter(p=>addressKey(p.name)===addressKey(deposit.propertyReference!)&&(deposit.serviceMonth?p.monthKey===deposit.serviceMonth:p.monthId===month.id));
+   if(hinted.length===1&&positive(deposit.amountCents)){
+    allocations.push({propertyId:hinted[0].id,amountCents:deposit.amountCents});
+    outstanding.set(hinted[0].id,(outstanding.get(hinted[0].id)??balance(hinted[0]))-deposit.amountCents);
+    status='Suggested from statement property reference — review allocation';
+   }else status=hinted.length?'Ambiguous property reference — choose the allocation':'Statement property or reporting month is not mapped — review allocation';
+  }
   else {
-   const exact=properties.filter(p=>p.monthId===month.id&&outstanding.get(p.id)===deposit.amountCents&&positive(deposit.amountCents));
+   const exact=properties.filter(p=>(deposit.serviceMonth?p.monthKey===deposit.serviceMonth:p.monthId===month.id)&&outstanding.get(p.id)===deposit.amountCents&&positive(deposit.amountCents));
    if(exact.length===1){allocations.push({propertyId:exact[0].id,amountCents:deposit.amountCents});outstanding.set(exact[0].id,0);status='Ready';}
    else if(exact.length>1)status='Ambiguous: multiple exact outstanding balances';
   }

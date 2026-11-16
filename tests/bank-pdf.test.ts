@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import { statementPageText } from '../src/bank-pdf-layout.ts';
 import { parseStatement } from '../src/bank-statement.ts';
 const item=(str:string,x:number,y:number)=>({str,transform:[1,0,0,1,x,y]});
+
+test('Wells Fargo savings statements without Zelle payments return no owner deposits',()=>{
+ const text=statementPageText([
+  item('Wells Fargo Way2Save® Savings',20,750),
+  item('October 31, 2026 Page 1 of 5',20,730),
+  item('Account number: 0000001234 (primary account)',350,700),
+  item('Beginning balance on 10/1 $100.00',20,680),
+  item('Ending balance on 10/31 $200.00',20,660),
+ ]);
+ const result=parseStatement(text);assert.equal(result.deposits.length,0);assert.match(result.warnings[0],/incoming Zelle From/);
+});
 test('PDF positioning distinguishes credit, debit and balance including split headings',()=>{
  const rows=[item('September 4, 2026 to October 5, 2026',350,750),item('Account number: 00409 103-586-4',350,730),item('Date',20,700),item('Description',65,700),item('Cheques & Debits ($)',290,700),item('Deposits & Credits ($)',400,700),item('Balance ($)',530,700),item('09 Sep',20,670),item('AIRBNB PAYMENTS',65,670),item('00000344234136',65,655),item('6,824.51',440,655),item('20,000.00',540,655),item('10 Sep',20,630),item('AIRBNB PAYMENTS',65,630),item('100.00',330,615),item('19,900.00',540,615)];
  const parsed=parseStatement(statementPageText(rows));assert.deepEqual(parsed.deposits.map(d=>d.amountCents),[682451]);

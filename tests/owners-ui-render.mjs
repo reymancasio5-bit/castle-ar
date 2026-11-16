@@ -22,6 +22,8 @@ try{
  const reviewProps={row,values:{[properties[0].id]:'40.00',[properties[1].id]:'60.00'},skipped:false,disabled:false,onChange:()=>{},onSkip:()=>{}};
  const review=renderToStaticMarkup(React.createElement(OwnerPaymentReview,reviewProps));
  for(const label of ['Allocate this deposit','Skip this deposit','Remaining:','C1TEST123','40.00','60.00'])assert.ok(review.includes(label),label);
+ const memoReview=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,row:{...row,deposit:{...row.deposit,description:'09/2026 Service Fee for Unit 1400 Speedway',propertyReference:'1400 Speedway',serviceMonth:'2026-09'}}}));
+ for(const label of ['Statement Memo:','Property Reference:','1400 Speedway','Reporting Month:','2026-09'])assert.ok(memoReview.includes(label),label);
  const splits=parseAllocations(reviewProps.values);assert.equal(splits.reduce((sum,a)=>sum+a.amountCents,0),10000);
  assert.throws(()=>parseAllocations({id:'-1'}));assert.throws(()=>parseAllocations({id:'1.001'}));
  snapshot=await api.save(snapshot.revision,[{...deposit,kind:'importOwnerTransfer',ownerId:owner.id,monthId:month.id,bankName:deposit.ownerName,allocations:splits}]);
