@@ -11,3 +11,6 @@
 .owner-profile-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-left:auto}
 .owner-profile-actions .button{min-height:36px;white-space:nowrap}
 @media(max-width:560px){.owner-profile-actions{width:100%;margin-left:0;justify-content:flex-start}.owner-profile-actions .button{flex:1 1 auto}}
+
+.am-form textarea.owner-bank-names{min-height:0;resize:none;overflow-y:auto}
+.owner-workspace .am-form-grid{align-items:start}

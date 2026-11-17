@@ -8,7 +8,7 @@ Run `npm.cmd run dev` and open http://127.0.0.1:5173/?preview=1. Click the chat 
 
 ## Configure the backend when ready
 
-1. Run `npm.cmd run build`. Copy the entire generated `public/Code.gs` into the Apps Script project's Code.gs. It combines `apps-script/Code.gs` and `apps-script/Assistant.gs`. Alternatively, maintain those two source files separately in Apps Script; do not install both forms, which would duplicate functions.
+1. Copy the complete `apps-script/Code.gs` into the Apps Script project's Code.gs. This is the single maintained script and includes Castle Assistant. Remove any old separate Assistant.gs from that project to avoid duplicate functions. The build copies this file unchanged to public/Code.gs for download.
 2. Update the Apps Script manifest from `public/appsscript.json`. It adds the external-request permission needed to call OpenAI. Keep the advanced Sheets service enabled.
 3. In Apps Script **Project Settings → Script Properties**, set:
 
@@ -44,7 +44,7 @@ Obvious unrelated prompts are rejected without an OpenAI call. Ambiguous or mixe
 
 The API key stays in Script Properties, which project editors can access. The assistant uses `store:false`, but questions and relevant records are still transmitted to OpenAI for processing. Short-lived results are cached in Apps Script for 10 minutes and retrieved using a random request receipt. Treat receipt URLs as private. No passcode or login is required: anyone who can reach the app or its endpoint can use the shared AI allowance. Server-side usage limits still apply. Any old CASTLE_AI_PASSCODE property is ignored and may be left in place.
 
-No model fine-tuning is required. Maintain the application guide in `Assistant.gs` when workflows change. The API uses [OpenAI Responses function calling](https://developers.openai.com/api/docs/guides/function-calling) and the default [GPT-4.1 mini model](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
+No model fine-tuning is required. Maintain the application guide in the assistant section of `apps-script/Code.gs` when workflows change. The API uses [OpenAI Responses function calling](https://developers.openai.com/api/docs/guides/function-calling) and the default [GPT-4.1 mini model](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
 
 ## Verification before live use
 
@@ -60,4 +60,4 @@ Use the paperclip or paste a screenshot into the message box. Supported attachme
 
 Ask to import an attached original bank PDF or Excel/CSV file. The model supplies a Review import button that opens the existing importer with that file already loaded. Users still review matching/mapping and apply explicitly. Screenshots support analysis and reviewed field-edit proposals, not bank verification or bulk import. Attachments remain selected for follow-up questions until removed. Attached content is untrusted evidence; the model is instructed not to follow instructions inside files or images.
 
-Deploy the rebuilt public/Code.gs (already includes Assistant.gs) and the rebuilt frontend to enable these additions. The API key remains in Script Properties.
+Deploy the rebuilt public/Code.gs (includes the embedded assistant) and the rebuilt frontend to enable these additions. The API key remains in Script Properties.

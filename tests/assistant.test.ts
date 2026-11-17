@@ -15,7 +15,8 @@ function engine() {
   castleBuildRequests:()=>[],
   UrlFetchApp:{fetch:()=>{calls++;return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'message',content:[{type:'output_text',text:'Castle report'}]}]})};}}
  };
- vm.createContext(ctx);vm.runInContext(readFileSync('apps-script/Assistant.gs','utf8'),ctx);
+ const bridgeStubs={castleHash:ctx.castleHash,castleRequestId:ctx.castleRequestId,castleRead:ctx.castleRead,castleBuildRequests:ctx.castleBuildRequests};
+ vm.createContext(ctx);vm.runInContext(readFileSync('apps-script/Code.gs','utf8'),ctx);Object.assign(ctx,bridgeStubs);
  return {ctx,props,cache,calls:()=>calls};
 }
 test('assistant accepts requests without any passcode property',()=>{const e=engine();e.props.delete('CASTLE_AI_PASSCODE');const r=e.ctx.castleAiRun({message:'Report on Castle payments',monthId:'m',history:[]});assert.equal(r.text,'Castle report');assert.equal(e.calls(),1);});

@@ -1,4 +1,4 @@
-﻿# Castle Monthly AR
+# Castle Monthly AR
 
 A responsive, no-login accounts-receivable workspace. The interface runs on GitHub Pages; the existing Google Sheet is the shared database through Google Apps Script.
 
@@ -20,7 +20,7 @@ Without an Apps Script URL, the app opens a clearly labeled preview based on the
 ## Connect the shared database
 
 1. Open [the supplied spreadsheet](https://docs.google.com/spreadsheets/d/1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY/edit).
-2. Select **Extensions → Apps Script**. Paste `apps-script/Code.gs` into the script editor, replacing its empty starter function. The spreadsheet ID is already set.
+2. Select **Extensions → Apps Script**. Paste `apps-script/Code.gs` into the script editor, replacing its empty starter function. The spreadsheet ID is already set. This is the single maintained script, including the embedded Castle Assistant. Remove any old separate Assistant.gs from the Apps Script project to avoid duplicate functions.
 3. Under **Services**, add **Google Sheets API** (v4). The supplied `apps-script/appsscript.json` also declares this advanced service; you can copy it into the manifest if preferred. For a standard Google Cloud project, enable its Google Sheets API too.
 4. Select **Deploy → New deployment → Web app**. Set **Execute as: Me** and **Who has access: Anyone**. Authorize the requested spreadsheet access as the spreadsheet owner. Some Workspace administrators restrict public deployments.
 5. Copy the deployment URL ending in `/exec`, not the editor URL or `/dev` URL.
@@ -29,7 +29,7 @@ Without an Apps Script URL, the app opens a clearly labeled preview based on the
 
 This is deliberately a no-login app: anyone with access to the Apps Script endpoint can read and edit the records. The frontend contains no Google credentials. The public endpoint URL is not a password. No authentication layer is implemented because the user explicitly requested none.
 
-The supplied Code.gs also includes the spreadsheet's account-manager filter. Save it in the spreadsheet's bound Apps Script project, keeping only one `onEdit` and one `filterAccountManagers` function across the project. Editing `Nov, 2026!A2` shows the selected team's complete property sections; `All` or an empty cell restores every data row. Matching ignores case and surrounding spaces. The filter removes any standard sheet filter and starts at row 3. After adding properties through the website, run `filterAccountManagers` or change A2 to apply the selection to the new sections.
+The supplied Code.gs also includes the spreadsheet's account-manager filter. Save it in the spreadsheet's bound Apps Script project, keeping only one `onEdit` and one `filterAccountManagers` function across the project. Editing A2 on any monthly AR or Bundle Matching tab shows the selected team's complete property sections; `All` or an empty cell restores every data row. Matching ignores case and surrounding spaces. The filter removes any standard sheet filter and starts at row 3. After adding properties through the website, run `filterAccountManagers` or change A2 to apply the selection to the new sections.
 
 Saving the bound script enables this edit handler. To update the live web app too, publish a new version under **Deploy → Manage deployments**; saving the editor alone does not update the web-app deployment.
 
@@ -39,7 +39,7 @@ New property blocks and appended payment imports automatically receive the Septe
 
 To format existing October data:
 
-1. Copy the complete generated `public/Code.gs` into the spreadsheet's bound Apps Script project and save. This file includes the assistant functions too; avoid duplicate function definitions in other script files.
+1. Copy the complete `apps-script/Code.gs` into the spreadsheet's bound Apps Script project and save. This file includes the assistant functions too; avoid duplicate function definitions in other script files.
 2. Select `formatOctober2026` in the editor's function menu and click **Run**. Authorize access if Google asks. This recognizes October 2026 aliases such as `Oct, 2026` and excludes Bundle Matching tabs.
 3. Optionally run `formatAllMonthlySheets` to apply the same layout to every recognized monthly financial tab.
 4. For future web-app imports, use **Deploy → Manage deployments → Edit → New version → Deploy** on the existing deployment, preserving its URL.
@@ -203,7 +203,7 @@ Bank spreadsheets must include unique **Account Number**, **Transaction Date**, 
 
 AIRBNB PAYMENTS credits match using the account's last four digits and exact bundle cents in F, across all properties in the selected month regardless of dashboard filters. Column E is not used as a matching condition: payout dates may differ or be blank. Shared bundle rows are matched using F and G; their amounts cannot exceed the deposit total. Repeated deposit amounts, conflicting bank values, missing dates, unknown PDF columns and unmatched deposits are skipped for review. Already verified rows are not rewritten. Owner e-Transfer - Autodeposit credits use the existing owner-name matching and allocation review; missing references remain unresolved, and the owner transfer ledger prevents repeat imports across formats.
 
-Excel bank imports use the same backend save actions as PDFs; no bank schema migration is needed. Publish the frontend to make the combined uploader available. If using Castle Assistant to open bank spreadsheet review, also redeploy `apps-script/Assistant.gs` with its expanded import file support.
+Excel bank imports use the same backend save actions as PDFs; no bank schema migration is needed. Publish the frontend to make the combined uploader available. If using Castle Assistant to open bank spreadsheet review, also redeploy `apps-script/Code.gs` with its expanded import file support.
 
 A dedicated revision-protected Apps Script action revalidates the account/bundle, copies the current row's D amount to I, writes the bank transaction date to H and TRUE to J. It never modifies Daisy's K checkbox. Changes to evidence fields through the app invalidate prior system verification. Direct edits in Google Sheets do not trigger that app-side invalidation; recheck those records manually.
 

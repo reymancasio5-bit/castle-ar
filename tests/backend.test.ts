@@ -52,7 +52,7 @@ test('owner allocation backend preserves month identity and rejects mismatched m
 });
 
 test('assistant partial property rename preserves manager through the real validator',()=>{
- const app=harness();vm.runInContext(readFileSync('apps-script/Assistant.gs','utf8'),app.context);
+ const app=harness();
  const current=vm.runInContext('castleRead()',app.context),p=current.snapshot.months[0].properties[0];
  const propose=(app.context as any).castleAiProposal;
  const result=propose([{kind:'updateProperty',propertyId:p.id,name:'Assistant renamed house'}],current);
@@ -260,7 +260,7 @@ function harness() {
   const properties = new Map<string, string>();
   const cache = new Map<string, string>();
   const sheet = {
-    getName: () => 'Nov, 2026', getSheetId: () => 0, getLastRow: () => data.length, getMaxRows: () => state.maxRows, getMaxColumns: () => state.maxColumns,
+    getLastColumn: () => state.maxColumns, getName: () => 'Nov, 2026', getSheetId: () => 0, getLastRow: () => data.length, getMaxRows: () => state.maxRows, getMaxColumns: () => state.maxColumns,
     getFilter: () => state.standardFilter ? { remove: () => { state.standardFilter = false; } } : null,
     showRows: (first: number, count: number) => {
       assert.ok(first >= 3 && count > 0 && first + count - 1 <= data.length);
@@ -278,15 +278,15 @@ function harness() {
       return {
         getValues: () => { if (state.failReadAfterWrite && state.writes) throw new Error('Read unavailable'); return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => data[r - 1 + y]?.[c - 1 + x] ?? '')); },
         getFormulas: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => formulas[r - 1 + y]?.[c - 1 + x] ?? '')),
-        getDisplayValues: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => String(data[r - 1 + y]?.[c - 1 + x] ?? ''))),
+        setBorder: () => {}, getDisplayValues: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => String(data[r - 1 + y]?.[c - 1 + x] ?? ''))),
       };
     },
   };
   const statusSheet = {getName:()=> 'Status',getSheetId:()=>status.id,getLastRow:()=>status.data.length,getMaxRows:()=>status.maxRows,getMaxColumns:()=>status.maxColumns,getRange:(r:number,c:number,rows:number,columns:number)=>({getValues:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.data[r-1+y]?.[c-1+x]??'')),getFormulas:()=>Array.from({length:rows},(_,y)=>Array.from({length:columns},(_,x)=>status.formulas[r-1+y]?.[c-1+x]??''))})};
-  const spreadsheet = { getSheetByName: (name: string) => name === sheet.getName() ? sheet : name === 'Status' && status.exists ? statusSheet : (()=>{const entry=[...tables].find(([,t])=>t.name===name);return entry?tableSheet(...entry):null;})(), getSheets: () => [...[...tables].map(([id,t])=>tableSheet(id,t)),sheet, ...(status.exists?[statusSheet]:[]), { getSheetId:()=>99, getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
+  const spreadsheet = { getActiveSheet: (): any => sheet, getSheetByName: (name: string) => name === sheet.getName() ? sheet : name === 'Status' && status.exists ? statusSheet : (()=>{const entry=[...tables].find(([,t])=>t.name===name);return entry?tableSheet(...entry):null;})(), getSheets: () => [...[...tables].map(([id,t])=>tableSheet(id,t)),sheet, ...(status.exists?[statusSheet]:[]), { getSheetId:()=>99, getName: () => 'Private notes', getRange: () => { throw new Error('Unrelated sheet read'); } }], getSpreadsheetTimeZone: () => 'America/New_York' };
   const context = vm.createContext({
     Date, JSON, Math, Number, String, Object, Array, Error, RegExp, Boolean, isFinite,
-    SpreadsheetApp: { getActiveSpreadsheet: () => spreadsheet, openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
+    SpreadsheetApp: { BorderStyle: {SOLID:'SOLID'}, getActiveSpreadsheet: () => spreadsheet, openById: (id: string) => { assert.equal(id, '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY'); return spreadsheet; }, flush() {} },
     ContentService: { MimeType: { JSON: 'application/json', JAVASCRIPT: 'application/javascript' }, createTextOutput: (value: string) => ({ value, mime: '', setMimeType(mime: string) { this.mime = mime; return this; } }) },
     Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (_: string, value: string) => [...createHash('sha256').update(value).digest()], formatDate: (date: Date, zone: string, format: string) => { const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date); const get = (type: string) => parts.find(part => part.type === type)!.value; return format === 'yyyy-MM' ? `${get('year')}-${get('month')}` : `${get('year')}-${get('month')}-${get('day')}`; } },
     LockService: { getScriptLock: () => ({ tryLock: () => { if (state.locked) return false; state.locked = true; return true; }, releaseLock: () => { state.locked = false; } }) },
@@ -447,7 +447,7 @@ test('the edit trigger ignores other tabs, other cells, and calls without an edi
   const app = harness();
   assert.equal(typeof app.context.onEdit, 'function');
   app.state.hiddenRows.add(3);
-  for (const event of [undefined, {}, { range: { getSheet: () => app.sheet, getA1Notation: () => 'B2' } }, { range: { getSheet: () => ({ getName: () => 'Dec, 2026' }), getA1Notation: () => 'A2' } }]) {
+  for (const event of [undefined, {}, { range: { getSheet: () => app.sheet, getA1Notation: () => 'B2' } }, { range: { getSheet: () => ({ getName: () => 'Property Owners' }), getA1Notation: () => 'A2' } }]) {
     app.context.onEdit(event);
   }
   assert.deepEqual([...app.state.hiddenRows], [3]);
@@ -469,9 +469,9 @@ test('sections missing AR end at the next header or the final row', () => {
 test('manual filtering safely skips a missing tab or a sheet without data rows', () => {
   const app = harness();
   assert.equal(typeof app.context.filterAccountManagers, 'function');
-  app.spreadsheet.getSheetByName = () => null;
+  app.spreadsheet.getActiveSheet = () => null;
   assert.doesNotThrow(() => app.context.filterAccountManagers());
-  app.spreadsheet.getSheetByName = () => app.sheet;
+  app.spreadsheet.getActiveSheet = () => app.sheet;
   app.state.data.splice(2);
   assert.doesNotThrow(() => app.context.filterAccountManagers());
   assert.equal(app.state.standardFilter, true);
