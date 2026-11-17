@@ -2,6 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApi, validateEndpoint } from '../src/api.ts';
 import { sampleSnapshot } from '../src/sample.ts';
+import {getProgress,subscribeProgress,progressPercent} from '../src/operation-progress.ts';
+
+test('assistant attachment stays in progress until the server confirms completion',async()=>{
+ const states:any[]=[];let calls=0;
+ const unsubscribe=subscribeProgress(()=>states.push(...getProgress().filter(p=>p.title.includes('receipt.txt'))));
+ try{
+  const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>++calls===1?{ok:true,pending:true,progress:'Reading attachment'}:{ok:true,assistant:{text:'Read successfully'}},pause:async()=>{}});
+  await api.assistant({message:'Review',monthId:'0',history:[],attachment:{id:'file-1',name:'receipt.txt',kind:'document',text:'Example'}});
+  assert.ok(states.some(p=>p.state==='working'&&p.label==='Reading attachment'));
+  assert.ok(states.filter(p=>p.state==='working').every(p=>progressPercent(p)===undefined));
+  assert.equal(states.at(-1)?.state,'complete');
+ }finally{unsubscribe();}
+});
+
+test('assistant attachment failure is not presented as a completed upload',async()=>{
+ const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>({ok:false,error:{code:'FAILED',message:'Server unavailable'}}),pause:async()=>{}});
+ await assert.rejects(api.assistant({message:'Review',monthId:'0',history:[],attachment:{id:'file-2',name:'failed.txt',kind:'document',text:'Example'}}),/Server unavailable/);
+ const state=getProgress().find(p=>p.title.includes('failed.txt'));
+ assert.equal(state?.state,'error');
+ assert.equal(state&&progressPercent(state),undefined);
+});
 
 test('assistant sends no credentials and polls an opaque receipt',async()=>{
  let body:any,cleaned=false;const queries:Record<string,string>[]=[];

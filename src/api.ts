@@ -40,18 +40,22 @@ export function createApi(input:string, transport?:Transport) {
  return {
   read:async()=>checked(await io.get({action:'read'})),
   assistant:async(request:AssistantRequest,onProgress?:(label:string)=>void):Promise<AssistantReply>=>{
+   const send=async(report:ReportProgress):Promise<AssistantReply>=>{
+   report({label:'Sending Attachment · Waiting For Server'});
    const requestId=crypto.randomUUID();const cleanup=io.post({...request,requestId,operation:'assistant'});
    try {
     for(let attempt=0;attempt<90;attempt++) {
      await io.pause(2000);
      const reply=await io.get({action:'assistantStatus',requestId});
-     if(reply.pending){if(reply.progress)onProgress?.(reply.progress);continue;}
+     if(reply.pending){if(reply.progress){onProgress?.(reply.progress);report({label:reply.progress});}continue;}
      if(!reply.ok)throw new Error(reply.error?.message||'The assistant could not respond.');
      if(!reply.assistant || typeof reply.assistant.text!=='string')throw new Error('Update your Apps Script deployment to enable Castle Assistant.');
      return reply.assistant;
     }
     throw new Error('The assistant timed out. No record changes were applied. Check your Apps Script deployment before retrying.');
    } finally {cleanup()}
+   };
+   return request.attachment?runProgress(`Sending Attachment: ${request.attachment.name}`,send):send(()=>{});
   },
   save:async(revision:string,changes:Change[],onProgress?:ReportProgress)=>runProgress('Saving To Google Sheets',async report=>{
    const update=report;

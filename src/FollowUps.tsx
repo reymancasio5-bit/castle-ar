@@ -7,6 +7,7 @@ import {buildFollowUpChange, followUpDirty, followUpDraft, followUpStatuses, isS
 import type {FollowUpDraft} from './follow-ups.ts';
 import './follow-ups.css';
 import ManagerSelect from './ManagerSelect';
+import {runProgress} from './operation-progress.ts';
 export interface FollowUpsProps {properties:Property[];managers:AccountManager[];revision:string;onSave:(revision:string,change:Change)=>Promise<void>;onOpen:(property:Property)=>void;onDirtyChange?:(dirty:boolean)=>void}
 interface Edit {id:string;revision:string;initial:FollowUpDraft;draft:FollowUpDraft}
 function ScreenshotViewer({attachment,onClose}:{attachment:FollowUpAttachment;onClose:()=>void}) {
@@ -54,7 +55,13 @@ export default function FollowUps({properties,managers,revision,onSave,onOpen,on
   setError('');
   if(files.length+edit.draft.attachments.length>3){setError('Attach up to three screenshots. Remove one before adding more.');return;}
   setProcessing(true);
-  try {const attachments:FollowUpAttachment[]=[];for(const file of files)attachments.push(await prepareScreenshot(file));update({attachments:[...edit.draft.attachments,...attachments]});}
+  try {
+   await runProgress(`Preparing ${files.length} Screenshot${files.length===1?'':'s'}`,async report=>{
+    const attachments:FollowUpAttachment[]=[];
+    for(const [index,file] of files.entries())attachments.push(await prepareScreenshot(file,progress=>report({...progress,label:`File ${index+1} Of ${files.length}: ${file.name} · ${progress.label}`})));
+    update({attachments:[...edit.draft.attachments,...attachments]});
+   });
+  }
   catch(cause){setError(cause instanceof Error ? cause.message : 'Could not prepare this screenshot.');}
   finally {setProcessing(false);}
  }
