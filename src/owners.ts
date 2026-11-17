@@ -53,6 +53,24 @@ export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
  for(const a of c.allocations)snapshot.months.find(m=>m.id===(a.monthId??c.monthId))!.properties.find(p=>p.id===a.propertyId)!.payments.push({id:crypto.randomUUID(),type:'Owner',amountCents:a.amountCents,payoutDate:'',bundleCents:null,bankDetails:'Checking '+transfer.account,bankDate:transfer.date,bankCents:a.amountCents,verifiedBySystem:true,verifiedByDaisy:false});
  (snapshot.ownerTransfers??=[]).push(transfer);
 }
+// Count distinct subsets (capped at two); never choose arbitrarily between exact matches.
+function exactOwnerSplit(candidates:{propertyId:string;amountCents:number}[],target:number){
+ type Match={count:number;items:typeof candidates};
+ const sums=new Map<number,Match>([[0,{count:1,items:[]}]]);
+ if(!positive(target))return {status:'Needs manual allocation',items:[]};
+ if(candidates.length>200)return {status:'Too many balances to compare automatically — allocate manually',items:[]};
+ for(const candidate of candidates){
+  for(const [sum,match] of [...sums]){
+   const next=sum+candidate.amountCents;if(next>target)continue;
+   const existing=sums.get(next);
+   sums.set(next,{count:Math.min(2,(existing?.count??0)+match.count),items:existing?.items??[...match.items,candidate]});
+   // Bound work for large portfolios; incomplete searches must never suggest a match.
+   if(sums.size>50000)return {status:'Too many combinations to compare automatically — allocate manually',items:[]};
+  }
+ }
+ const match=sums.get(target);
+ return match?.count===1?{status:'Ready',items:match.items}:{status:match?'Multiple exact combinations — allocate manually':'No exact balance combination — allocate manually',items:[]};
+}
 export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[],allocationMonths:Month[]=[month]){
  const seen=new Set(transfers.map(t=>transferKey(t.account,t.reference)));
  const signatures=new Map<string,string>(),conflicts=new Set<string>();
@@ -76,16 +94,19 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
   else if(!owner.active)status='Inactive owner — manual review';
   else if(deposit.propertyReference){
    const hinted=properties.filter(p=>addressKey(p.name)===addressKey(deposit.propertyReference!)&&(deposit.serviceMonth?p.monthKey===deposit.serviceMonth:p.monthId===month.id));
-   if(hinted.length===1&&positive(deposit.amountCents)){
+   if(hinted.length===1&&positive(deposit.amountCents)&&outstanding.get(hinted[0].id)===deposit.amountCents){
     allocations.push({propertyId:hinted[0].id,amountCents:deposit.amountCents});
     outstanding.set(hinted[0].id,(outstanding.get(hinted[0].id)??balance(hinted[0]))-deposit.amountCents);
     status='Suggested from statement property reference — review allocation';
-   }else status=hinted.length?'Ambiguous property reference — choose the allocation':'Statement property or reporting month is not mapped — review allocation';
+   }else status=hinted.length===1?'Statement amount does not equal the referenced balance — allocate manually':hinted.length?'Ambiguous property reference — choose the allocation':'Statement property or reporting month is not mapped — review allocation';
   }
   else {
-   const exact=properties.filter(p=>(deposit.serviceMonth?p.monthKey===deposit.serviceMonth:p.monthId===month.id)&&outstanding.get(p.id)===deposit.amountCents&&positive(deposit.amountCents));
-   if(exact.length===1){allocations.push({propertyId:exact[0].id,amountCents:deposit.amountCents});outstanding.set(exact[0].id,0);status='Ready';}
-   else if(exact.length>1)status='Ambiguous: multiple exact outstanding balances';
+   const eligible=properties.filter(p=>deposit.serviceMonth?p.monthKey===deposit.serviceMonth:p.monthId===month.id)
+    .map(p=>({propertyId:p.id,amountCents:outstanding.get(p.id)??0}))
+    .filter(p=>positive(p.amountCents)&&p.amountCents<=deposit.amountCents);
+   const match=exactOwnerSplit(eligible,deposit.amountCents);
+   allocations.push(...match.items);status=match.status;
+   for(const allocation of allocations)outstanding.set(allocation.propertyId,0);
   }
   return {deposit,owner,properties,allocations,status,duplicate};
  });

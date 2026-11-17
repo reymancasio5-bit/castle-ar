@@ -9,6 +9,32 @@ const snapshot=():Snapshot=>({revision:'1',updatedAt:'',spreadsheetUrl:'',owners
 const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
 const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
 
+test('a unique exact combination splits the deposit and reserves those balances for subsequent deposits',()=>{
+ const s=snapshot();
+ const rows=matchOwnerDeposits([{...deposit(),amountCents:30000},{...deposit('SECOND'),amountCents:30000}],s.months[0],s.owners!,[]);
+ assert.deepEqual(rows[0].allocations,[{propertyId:'p',amountCents:10000},{propertyId:'q',amountCents:20000}]);
+ assert.deepEqual(rows[1].allocations,[]);
+ applyOwnerChange(s,{...change(),amountCents:30000,allocations:rows[0].allocations});
+ assert.deepEqual(s.months[0].properties.map(balance),[0,0]);
+});
+test('exact subset matching leaves unrelated balances untouched and rejects one-cent mismatches',()=>{
+ const s=snapshot();s.owners![0].propertyNames.push('Third');
+ s.months[0].properties.push({id:'r',name:'Third',manager:'',totalCents:7000,payments:[]});
+ assert.deepEqual(matchOwnerDeposits([{...deposit(),amountCents:27000}],s.months[0],s.owners!,[])[0].allocations,[{propertyId:'q',amountCents:20000},{propertyId:'r',amountCents:7000}]);
+ for(const amountCents of [27001,26999,40000])assert.deepEqual(matchOwnerDeposits([{...deposit(),amountCents}],s.months[0],s.owners!,[])[0].allocations,[]);
+});
+test('a single exact balance competing with an exact split requires manual allocation',()=>{
+ const s=snapshot();s.owners![0].propertyNames.push('Third');
+ s.months[0].properties.push({id:'r',name:'Third',manager:'',totalCents:30000,payments:[]});
+ assert.deepEqual(matchOwnerDeposits([{...deposit(),amountCents:30000}],s.months[0],s.owners!,[])[0].allocations,[]);
+});
+test('automatic splits respect the selected or explicitly stated reporting month',()=>{
+ const s=snapshot();const other={id:'oct',label:'October',month:'2026-10',properties:[{id:'oct:p',name:'House',manager:'',totalCents:7000,payments:[]}]};
+ s.months.push(other);
+ assert.deepEqual(matchOwnerDeposits([{...deposit(),amountCents:17000}],s.months[0],s.owners!,[],s.months)[0].allocations,[]);
+ assert.deepEqual(matchOwnerDeposits([{...deposit(),amountCents:7000,serviceMonth:'2026-10'}],s.months[0],s.owners!,[],s.months)[0].allocations,[{propertyId:'oct:p',amountCents:7000}]);
+});
+
 test('owner fee settlement clears 23.11 without verifying the landlord Airbnb payout',()=>{
  const s=snapshot(),p=s.months[0].properties[0];p.totalCents=2311;
  p.payments=[{id:'airbnb',type:'Airbnb',amountCents:null,payoutDate:'',bundleCents:29104,bankDetails:'Checking 4305',bankDate:'',bankCents:null,verifiedByDaisy:false}];

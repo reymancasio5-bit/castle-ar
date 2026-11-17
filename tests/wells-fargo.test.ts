@@ -20,9 +20,11 @@ test('wrapped Zelle references, posting dates, and missing credit columns are ha
 const owner:PropertyOwner={id:'o',name:'Sample Owner',bankName:'Sample Owner',propertyNames:['1400 Speedway','Other'],email:'',notes:'',active:true};
 const sept:Month={id:'sep',label:'September',month:'2026-09',properties:[{id:'sep:p',name:'1400 Speedway',manager:'',totalCents:50000,payments:[]},{id:'sep:q',name:'Other',manager:'',totalCents:33025,payments:[]}]};
 const oct:Month={...sept,id:'oct',label:'October',month:'2026-10',properties:sept.properties.map(p=>({...p,payments:[],id:p.id.replace('sep','oct')}))};
-test('memo address and explicit month suggest the mapped property even for partial payments',()=>{
+test('memo address and explicit month require an exact balance; partial payments remain manual',()=>{
  const deposits=parseStatement(header+incoming).deposits;
- const row=matchOwnerDeposits(deposits,oct,[owner],[],[sept,oct])[0];
+ assert.deepEqual(matchOwnerDeposits(deposits,oct,[owner],[],[sept,oct])[0].allocations,[]);
+ const exactSept=structuredClone(sept);exactSept.properties[0].totalCents=33025;
+ const row=matchOwnerDeposits(deposits,oct,[owner],[],[exactSept,oct])[0];
  assert.deepEqual(row.allocations,[{propertyId:'sep:p',amountCents:33025}]);
  const saved={revision:'1',updatedAt:'',spreadsheetUrl:'',months:structuredClone([sept,oct]),owners:[owner],ownerTransfers:[]};
  const d=deposits[0];
