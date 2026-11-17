@@ -3,7 +3,7 @@ import { FileText, Upload, CheckCircle2 } from 'lucide-react';
 import type { Change, Month, Snapshot } from './types';
 import { matchStatement, parseStatement, type BankDeposit } from './bank-statement';
 import { money, balance } from './domain';
-import {matchOwnerDeposits, applyOwnerChange} from './owners';
+import {matchOwnerDeposits, applyOwnerChange, ownerDepositSkipped, ownerBankNames} from './owners';
 import OwnerPaymentReview, {allocationDraft, parseAllocations} from './OwnerPaymentReview';
 import './import.css';
 import './bank-statement.css';
@@ -20,13 +20,15 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  const background=useBackgroundForm('Import Bank Statement',busy||saving,saving);
  useEffect(()=>{const el=dialog.current;if(background.minimized)el?.close();else if(el&&!el.open)el.showModal();},[background.minimized]);
  const [allocations,setAllocations]=useState<Record<number,Record<string,string>>>({}),[skipped,setSkipped]=useState<Record<number,boolean>>({});
- const ownerRows=useMemo(()=>matchOwnerDeposits(deposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[],snapshot?.ownerAllocationSchema===1?snapshot.months:[month]),[deposits,month,snapshot]);
+ const [depositEdits,setDepositEdits]=useState<Record<number,{ownerName:string;reference:string}>>({});
+ const reviewDeposits=useMemo(()=>{let index=0;return deposits.map(deposit=>deposit.kind==='owner'?{...deposit,...depositEdits[index++]}:deposit);},[deposits,depositEdits]);
+ const ownerRows=useMemo(()=>matchOwnerDeposits(reviewDeposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[],snapshot?.ownerAllocationSchema===1?snapshot.months:[month]),[reviewDeposits,month,snapshot]);
  const result=useMemo(()=>matchStatement(deposits,month),[deposits,month]);
  const ownerReview=useMemo(()=>{
   const changes:Change[]=[],errors:Record<number,string>={};
   const working=snapshot?structuredClone(snapshot):null;
   ownerRows.forEach((row,index)=>{
-   if(row.duplicate||skipped[index])return;
+   if(ownerDepositSkipped(row,skipped[index]))return;
    try{
     if(!working||working.ownerSchema!==1)throw new Error('Update the Apps Script deployment to record owner payments, or skip this deposit.');
     if(!row.owner)throw new Error('Add or correct this owner’s bank name in Property Owners, then import again.');
@@ -49,7 +51,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
   await runProgress(`Reading ${files.length} Bank File${files.length===1?'':'s'}`,report=>readFiles(files,report)).catch(()=>{});
  }
  async function readFiles(files:FileList|File[],report:ReportProgress){
-  setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});
+  setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});setDepositEdits({});
   try{
    if(files.length>10||Array.from(files).reduce((n,f)=>n+f.size,0)>50*1024*1024)throw new Error('Choose up to 10 bank files, totaling no more than 50 MB.');
    const all:BankDeposit[]=[],notes:string[]=[];
@@ -81,7 +83,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Bank Deposits Before Saving</strong><p>Airbnb deposits match payout bundles and bank accounts. Owner deposits are applied directly to their properties, with exact amounts and the bank transaction date.</p></div></div>
    {warnings.length>0&&<div className="import-warning"><p>Review {warnings.length} import note{warnings.length===1?'':'s'} before saving.</p><details><summary>View Import Notes</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details></div>}
    {reviewed&&<><div className="import-section-heading"><h3>Review Matches</h3><span>{deposits.length} deposits · {rowCount} rows to update</span></div>{!deposits.length?<p>No readable Airbnb or owner deposits found. Check the PDF statement or Excel/CSV transaction export.</p>:result.rows.length>0?<div className="import-table-scroll import-review-scroll"><table className="import-table"><thead><tr><th>Statement / Bank</th><th>Bank Date</th><th>Statement Bundle / F Match</th><th>Matched Rows / D To I</th><th>Result</th></tr></thead><tbody>{result.rows.map((row,i)=><tr key={i}><td>{row.deposit.source}<small>Checking {row.deposit.account} {row.deposit.reference&&`· ${row.deposit.reference}`}</small></td><td>{row.deposit.date}</td><td>{money(row.deposit.amountCents)}</td><td>{row.payments.map(({property,payment})=><div key={payment.id}>{property}<small>Row {payment.id.split(':').at(-1)} · {money(payment.amountCents)}</small></div>)}</td><td><span className={`import-status import-status-${row.status==='Ready'?'ready':'skipped'}`}>{row.status}</span></td></tr>)}</tbody></table></div>:null}</>}
-   {reviewed&&ownerRows.length>0&&<><div className="import-section-heading"><h3>Owner Payments</h3><span>{ownerRows.length} deposits · {ownerReview.changes.length} ready</span></div><p className="owner-help">A unique property balance or combination of balances is preselected only when it equals the bank deposit exactly. Automatic matching uses the selected month, or the reporting month named in the statement. A property reference must also match its balance exactly. Unmatched amounts and multiple possible combinations require manual allocation. Review all allocations before saving; you can split payments across properties and months manually. Allocate the full deposit before saving. Owner payments reduce the assigned months’ balances; a zero balance is Paid.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate one owner deposit across reporting months. Until then, allocations are limited to the selected month.</p>}{ownerRows.map((row,index)=><OwnerPaymentReview key={index} row={row} balancePreview={ownerReview.balancePreview} values={allocations[index]??allocationDraft(row)} skipped={!!skipped[index]} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>)}</>}
+   {reviewed&&ownerRows.length>0&&<><div className="import-section-heading"><h3>Owner Payments</h3><span>{ownerRows.length} deposits · {ownerReview.changes.length} ready</span></div><p className="owner-help">A unique property balance or combination of balances is preselected only when it equals the bank deposit exactly. Automatic matching uses the selected month, or the reporting month named in the statement. A property reference must also match its balance exactly. Unmatched deposits are skipped automatically. Choose Edit / Unskip to correct the statement name or reference and allocate manually. Statement amounts cannot be changed. Review all allocations before saving; you can split payments across properties and months manually. Allocate the full deposit before saving. Owner payments reduce the assigned months’ balances; a zero balance is Paid.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate one owner deposit across reporting months. Until then, allocations are limited to the selected month.</p>}{ownerRows.map((row,index)=><OwnerPaymentReview key={index} row={row} balancePreview={ownerReview.balancePreview} values={allocations[index]??allocationDraft(row)} skipped={ownerDepositSkipped(row,skipped[index])} statementNames={(snapshot?.owners??[]).flatMap(owner=>ownerBankNames(owner.bankName))} onEditDeposit={edit=>{setDepositEdits(previous=>({...previous,[index]:edit}));setAllocations(previous=>({...previous,[index]:{}}));setSkipped(previous=>({...previous,[index]:false}));}} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>)}</>}
    {rowCount>500&&<div className="import-warning">More than 500 rows match. Import fewer statement files at a time.</div>}
   </div>
   <footer className="import-footer"><button className="import-button import-button-secondary" disabled={busy||saving} onClick={onClose}>Cancel</button><button className="import-button import-button-primary" disabled={!supported||!reviewed||!changes.length||rowCount>500||hasUnresolved||busy||saving} onClick={()=>void save()}>{saving?'Saving…':`Save ${rowCount} Payment Rows`}</button></footer>

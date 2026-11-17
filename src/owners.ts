@@ -4,6 +4,9 @@ import {balance} from './domain.ts';
 
 export const ownerKey=(value:string)=>value.trim().replace(/\s+/g,' ').toLowerCase();
 export const ownerBankNames=(value:string)=>value.split(/\r?\n/).map(name=>name.trim()).filter(Boolean);
+export function ownerDepositSkipped(row:{duplicate:boolean;allocations:unknown[];owner?:PropertyOwner},choice?:boolean){
+ return row.duplicate||(choice??(!row.owner?.active||!row.allocations.length));
+}
 function cleanBankNames(value:string){
  if(typeof value!=='string'||value.length>4000)throw new Error('Enter up to 20 bank statement names, one per line.');
  const names=ownerBankNames(value).map(name=>clean(name,'statement name'));

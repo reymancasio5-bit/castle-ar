@@ -2,6 +2,7 @@
 import {createServer} from 'vite';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
+import {act,create} from 'react-test-renderer';
 const server=await createServer({server:{middlewareMode:true},appType:'custom'});
 try{
  const {default:PropertyOwners}=await server.ssrLoadModule('/src/PropertyOwners.tsx');
@@ -22,6 +23,20 @@ try{
  const reviewProps={row,values:{[properties[0].id]:'40.00',[properties[1].id]:'60.00'},skipped:false,disabled:false,onChange:()=>{},onSkip:()=>{}};
  const review=renderToStaticMarkup(React.createElement(OwnerPaymentReview,reviewProps));
  for(const label of ['Allocate this deposit','Skip this deposit','Remaining:','C1TEST123','40.00','60.00'])assert.ok(review.includes(label),label);
+ const skippedHtml=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:true,error:'Resolve owner'}));
+ assert.ok(skippedHtml.includes('Edit / Unskip'));assert.ok(!skippedHtml.includes('Resolve owner'));assert.ok(!skippedHtml.includes('owner-allocation-result'));
+ globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ let editor,unskipped=false,edit;
+ await act(async()=>{editor=create(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:true,onSkip:value=>{unskipped=!value;},onEditDeposit:value=>{edit=value;}}));});
+ await act(async()=>editor.root.findAllByType('button').find(button=>button.children.includes('Edit / Unskip')).props.onClick());
+ assert.equal(unskipped,true);
+ await act(async()=>editor.update(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:false,onEditDeposit:value=>{edit=value;}})));
+ const nameInput=editor.root.findAllByType('input').find(input=>input.props.value===owner.bankName);
+ await act(async()=>nameInput.props.onChange({target:{value:'CORRECTED OWNER'}}));
+ assert.deepEqual(edit,{ownerName:'CORRECTED OWNER',reference:deposit.reference});
+ assert.ok(!editor.root.findAllByType('input').some(input=>input.props.value===deposit.amountCents||input.props.value==='100.00'));
+ assert.ok(editor.root.findAllByType('strong').some(node=>node.children.includes('100.00')));
+ await act(async()=>editor.unmount());
  const memoReview=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,row:{...row,deposit:{...row.deposit,description:'09/2026 Service Fee for Unit 1400 Speedway',propertyReference:'1400 Speedway',serviceMonth:'2026-09'}}}));
  for(const label of ['Statement Memo:','Property Reference:','1400 Speedway','Reporting Month:','2026-09'])assert.ok(memoReview.includes(label),label);
  const splits=parseAllocations(reviewProps.values);assert.equal(splits.reduce((sum,a)=>sum+a.amountCents,0),10000);

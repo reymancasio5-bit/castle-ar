@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {applyOwnerChange,matchOwnerDeposits,ownerKey,transferKey} from '../src/owners.ts';
+import {applyOwnerChange,matchOwnerDeposits,ownerKey,transferKey,ownerDepositSkipped} from '../src/owners.ts';
 import {createPreviewApi} from '../src/preview-api.ts';
 import type {Snapshot,OwnerChange,PropertyOwner} from '../src/types.ts';
 import {balance} from '../src/domain.ts';
@@ -8,6 +8,16 @@ const owner:PropertyOwner={id:'o',name:'Jane',bankName:'Jane Smith',email:'',not
 const snapshot=():Snapshot=>({revision:'1',updatedAt:'',spreadsheetUrl:'',owners:[structuredClone(owner)],ownerTransfers:[],months:[{id:'m',label:'Month',month:'2026-09',properties:[{id:'p',name:'House',manager:'',totalCents:10000,payments:[]},{id:'q',name:'Other',manager:'',totalCents:20000,payments:[]}]}]});
 const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
 const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
+
+test('unmatched owner deposits default to skipped while exact matches remain included; manual choices override defaults',()=>{
+ const s=snapshot();
+ const rows=matchOwnerDeposits([deposit(),{...deposit('UNKNOWN'),ownerName:'Unknown'}, {...deposit('PARTIAL'),amountCents:1234}],s.months[0],s.owners!,[]);
+ assert.deepEqual(rows.map(row=>ownerDepositSkipped(row)),[false,true,true]);
+ assert.equal(ownerDepositSkipped(rows[1],false),false);
+ assert.equal(ownerDepositSkipped(rows[0],true),true);
+ const duplicate=matchOwnerDeposits([deposit(),deposit()],s.months[0],s.owners!,[])[1];
+ assert.equal(ownerDepositSkipped(duplicate,false),true);
+});
 
 test('multiple statement names save, match independently and preserve the actual transfer name',()=>{
  const s=snapshot();applyOwnerChange(s,{kind:'saveOwner',owner:{...owner,bankName:'Jane Smith\n JANE   BUSINESS '}});
