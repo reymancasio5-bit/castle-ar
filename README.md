@@ -61,6 +61,14 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 
 ## What the app does
 
+### Background Uploads And Saves
+
+Uploads and record saves continue while you navigate the app. Busy import and property dialogs minimize automatically; the progress panel offers **View Form** or **Return To Form** to reopen the retained draft. Follow-up, manager, and owner editors keep their drafts when you switch views or reporting months. A completed background import does not redirect you away from your current page.
+
+Saves run one at a time, rereading and validating against the latest records before writing. Repeated clicks on the same pending submission share one write. A conflict waits for **View Task** before asking for review; errors keep the form available, and unconfirmed writes are not automatically replayed. Measured percentages describe the current byte, row, page, or save stage; stages without a known total remain indeterminate.
+
+Keep the browser tab open until work finishes. This is in-tab background processing, not a server job that survives closing or reloading the page. No additional Apps Script polling is introduced.
+
 Imports do not require a current dashboard revision. On confirmation, spreadsheet imports reread the latest records and rebuild the retained files against current property/payment rows, deduplicating payments already present. Bank imports remap reviewed payments and allocations to current rows. Explicit server conflict/busy replies are retried up to four attempts; unconfirmed writes and network failures are never blindly retried. When a targeted amount or payment has changed, the dialog retains its files and shows refreshed records for another review instead of requiring a page reload. All record editors also read current records before saving and merge changes to different fields. Same-field conflicts show the current and proposed values for confirmation, while keeping the draft. Row-based property/payment identifiers are remapped using the original record; ambiguous or removed targets are never silently redirected.
 
 Wells Fargo PDF imports support incoming **Zelle From** owner payments, including wrapped sender names, references, and memos. **Zelle To**, Airbnb deposits, and other Wells Fargo transactions are excluded with an import note. Owner matching uses the configured bank-statement name. An address in the memo can suggest a uniquely matching property already assigned to that owner; an explicit month/year such as `09/2026` selects that reporting month when available. Otherwise matching uses the selected month. Unknown owners, ambiguous addresses, and unavailable months require review. Suggestions remain editable before saving, and transaction references prevent duplicate imports. RBC PDF and spreadsheet import behavior remains supported.

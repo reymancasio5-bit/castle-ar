@@ -13,6 +13,7 @@ import './import.css';
 import ManagerSelect from './ManagerSelect';
 import {useConfirmation} from './Confirmation';
 import {runProgress,type ReportProgress} from './operation-progress';
+import {useBackgroundForm} from './BackgroundWork';
 
 const PAGE_SIZE = 30;
 const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto', airbnbRecipient: '' };
@@ -44,6 +45,11 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
   }
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const background=useBackgroundForm('Import Spreadsheets',loading||saving);
+  useEffect(()=>{
+    const dialog=dialogRef.current;
+    if(background.minimized)dialog?.close();else if(dialog&&!dialog.open)dialog.showModal();
+  },[background.minimized]);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
   const [page, setPage] = useState(0);
@@ -154,16 +160,17 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
 
   return createPortal(
     <dialog ref={dialogRef} className="import-modal" data-exiting={exiting} inert={exiting} aria-labelledby="import-title" aria-describedby="import-description"
-      onCancel={event => { event.preventDefault(); if (!saving && !exiting) onClose(); }}
+      onCancel={event => { event.preventDefault(); if (exiting)return;if(loading||saving)background.minimize();else onClose(); }}
       onClick={event => {
-        if (event.target !== event.currentTarget || saving || exiting) return;
+        if (event.target !== event.currentTarget || saving || loading || exiting) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
       }}>
       <header className="import-header">
         <div className="import-header-icon"><FileSpreadsheet size={23} aria-hidden="true" /></div>
         <div><p className="import-eyebrow">EXCEL IMPORT</p><h2 id="import-title">Bring your amounts in</h2><p id="import-description">Import into {month.label}. Choose one property for all files, then review every change.</p></div>
-        <button className="import-icon-button" aria-label="Close import" onClick={onClose} disabled={saving}><X size={21} aria-hidden="true" /></button>
+        <button type="button" className="import-button import-button-secondary" onClick={background.minimize}>Continue Browsing</button>
+        <button className="import-icon-button" aria-label="Close import" onClick={onClose} disabled={saving||loading}><X size={21} aria-hidden="true" /></button>
       </header>
 
       <ol className="import-steps" aria-label="Import progress">

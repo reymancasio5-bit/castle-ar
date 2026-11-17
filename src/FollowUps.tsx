@@ -9,7 +9,7 @@ import './follow-ups.css';
 import ManagerSelect from './ManagerSelect';
 import {runProgress} from './operation-progress.ts';
 export interface FollowUpsProps {properties:Property[];managers:AccountManager[];revision:string;onSave:(revision:string,change:Change)=>Promise<void>;onOpen:(property:Property)=>void;onDirtyChange?:(dirty:boolean)=>void}
-interface Edit {id:string;revision:string;initial:FollowUpDraft;draft:FollowUpDraft}
+interface Edit {id:string;revision:string;initial:FollowUpDraft;draft:FollowUpDraft;properties:Property[]}
 function ScreenshotViewer({attachment,onClose}:{attachment:FollowUpAttachment;onClose:()=>void}) {
  const dialog=useRef<HTMLDialogElement>(null);const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const [visible,setVisible]=useState(false);const title=useId();
@@ -48,7 +48,7 @@ export default function FollowUps({properties,managers,revision,onSave,onOpen,on
   return ()=>window.removeEventListener('beforeunload',protectDraft);
  },[locked]);
  const update=(patch:Partial<FollowUpDraft>)=>setEdit(current=>current ? {...current,draft:{...current.draft,...patch}} : null);
- const start=(property:Property)=>{if(locked)return;onDirtyChange?.(true);const draft=followUpDraft(property);setEdit({id:property.id,revision,initial:structuredClone(draft),draft});setError('');setSuccess('');};
+ const start=(property:Property)=>{if(locked)return;onDirtyChange?.(true);const draft=followUpDraft(property);setEdit({id:property.id,revision,initial:structuredClone(draft),draft,properties:structuredClone(properties)});setError('');setSuccess('');};
  const cancel=()=>{if(saving||processing)return;setEdit(null);setError('');};
  async function upload(files:File[]) {
   if(!edit||saving||processing||!files.length)return;
@@ -68,13 +68,13 @@ export default function FollowUps({properties,managers,revision,onSave,onOpen,on
  async function save() {
   if(!edit||saving||processing||!dirty)return;
   setError('');setSaving(true);
-  try {await onSave(edit.revision,buildFollowUpChange(edit.id,edit.draft));setSuccess(`Follow-up saved for ${properties.find(p=>p.id===edit.id)?.name??'property'}.`);setEdit(null);}
+  try {await onSave(edit.revision,buildFollowUpChange(edit.id,edit.draft));setSuccess(`Follow-up saved for ${edit.properties.find(p=>p.id===edit.id)?.name??'property'}.`);setEdit(null);}
   catch(cause){setError(cause instanceof Error ? cause.message : 'Could not save. Your draft is still here.');}
   finally {setSaving(false);}
  }
- const visible=properties;
+ const visible=edit?.properties??properties;
  return <section className="follow-ups" aria-label="Property Follow-Ups">
-  {locked&&<p className="fu-editing-note" role="status">Save or cancel your update before switching views.</p>}
+  {locked&&<p className="fu-editing-note" role="status">Your draft and its property list are kept while you browse. Save or cancel to refresh this list.</p>}
   {success && <p className="fu-success" role="status"><Check size={16}/>{success}</p>}
   <div className="fu-column-labels" aria-hidden="true"><span>Property & Balance</span><span>Status & Account Manager</span><span>Conversation Notes</span><span/></div>
   <div className="fu-list">{visible.map(property=>{

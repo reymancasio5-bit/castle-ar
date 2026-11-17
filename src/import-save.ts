@@ -12,7 +12,7 @@ export class ImportReviewRequired extends Error {
 }
 type ImportApi={read:()=>Promise<Snapshot>;save:(revision:string,changes:Change[],onProgress?:ReportProgress)=>Promise<Snapshot>};
 /** Only retry server replies that guarantee the attempted write was rejected. */
-export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[]|Promise<Change[]>,pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),busyMessage='Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.'):Promise<Snapshot>{
+export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[]|Promise<Change[]>,pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),busyMessage='Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.',onProgress?:ReportProgress):Promise<Snapshot>{
  return runProgress('Saving Records',async report=>{
   for(let attempt=0;attempt<4;attempt++){
     report({label:attempt?'Refreshing Records Before Retry':'Checking Latest Records'});
@@ -29,7 +29,7 @@ export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=
     }
   }
   throw new Error('Import could not be saved.');
- });
+ },onProgress);
 }
 const signature=(payment:Payment)=>JSON.stringify(Object.entries(payment).filter(([key])=>key!=='id').sort(([a],[b])=>a.localeCompare(b)));
 const emptyPayment=(p:Payment)=>p.amountCents===null&&p.bundleCents===null&&!p.payoutDate&&!p.bankDetails&&p.bankCents===null&&!p.bankDate&&!p.verifiedBySystem&&!p.verifiedByDaisy;

@@ -1,6 +1,6 @@
 export type Progress = {label:string;completed?:number;total?:number;unit?:string};
 export type ReportProgress = (progress:Progress)=>void;
-export type OperationProgress = Progress & {id:number;title:string;state:'working'|'complete'|'error'};
+export type OperationProgress = Progress & {id:number;title:string;state:'working'|'complete'|'error';open?:()=>void};
 let sequence=0;
 let operations:OperationProgress[]=[];
 const listeners=new Set<()=>void>();
@@ -13,11 +13,11 @@ export function progressPercent(progress:Progress):number|undefined {
  return Math.max(0,Math.min(100,Math.floor(progress.completed!/progress.total!*100)));
 }
 /** Percentages describe completed work in the current stage, never elapsed time. */
-export async function runProgress<T>(title:string,work:(report:ReportProgress)=>Promise<T>,parent?:ReportProgress):Promise<T>{
+export async function runProgress<T>(title:string,work:(report:ReportProgress)=>Promise<T>,parent?:ReportProgress,open?:()=>void):Promise<T>{
  if(parent)return work(parent);
  const id=++sequence;
- operations=[...operations.filter(p=>p.state==='working'),{id,title,label:'Preparing',state:'working'}];publish();
- const report:ReportProgress=progress=>{operations=operations.map(p=>p.id===id?{id,title,state:'working',...progress}:p);publish();};
+ operations=[...operations.filter(p=>p.state!=='complete'),{id,title,label:'Preparing',state:'working',open}];publish();
+ const report:ReportProgress=progress=>{operations=operations.map(p=>p.id===id?{id,title,state:'working',open,...progress}:p);publish();};
  try{
   const result=await work(report);
   operations=operations.map(p=>p.id===id?{...p,label:'Complete',completed:1,total:1,unit:undefined,state:'complete'}:p);publish();
