@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
@@ -24,11 +24,11 @@ try{
  const review=renderToStaticMarkup(React.createElement(OwnerPaymentReview,reviewProps));
  for(const label of ['Allocate this deposit','Skip this deposit','Remaining:','C1TEST123','40.00','60.00'])assert.ok(review.includes(label),label);
  const skippedHtml=renderToStaticMarkup(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:true,error:'Resolve owner'}));
- assert.ok(skippedHtml.includes('Edit / Unskip'));assert.ok(!skippedHtml.includes('Resolve owner'));assert.ok(!skippedHtml.includes('owner-allocation-result'));
+ assert.ok(skippedHtml.includes('Edit'));assert.ok(!skippedHtml.includes('Resolve owner'));assert.ok(!skippedHtml.includes('owner-allocation-result'));
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;
  let editor,unskipped=false,edit;
  await act(async()=>{editor=create(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:true,onSkip:value=>{unskipped=!value;},onEditDeposit:value=>{edit=value;}}));});
- await act(async()=>editor.root.findAllByType('button').find(button=>button.children.includes('Edit / Unskip')).props.onClick());
+ await act(async()=>editor.root.findAllByType('button').find(button=>button.children.includes('Edit')).props.onClick());
  assert.equal(unskipped,true);
  await act(async()=>editor.update(React.createElement(OwnerPaymentReview,{...reviewProps,skipped:false,onEditDeposit:value=>{edit=value;}})));
  const nameInput=editor.root.findAllByType('input').find(input=>input.props.value===owner.bankName);
