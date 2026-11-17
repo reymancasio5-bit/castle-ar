@@ -16,3 +16,5 @@
 .owner-workspace .am-form-grid{align-items:start}
 
 .owner-deposit-edit{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}.owner-deposit-edit label{display:grid;gap:6px;font-size:12px;font-weight:600;min-width:0}.owner-deposit-edit input{width:100%;min-width:0;border:1px solid var(--line);border-radius:7px;padding:10px 12px;font:inherit;background:white;color:var(--text)}.owner-deposit-edit>small{grid-column:1/-1;color:var(--muted);font-size:12px}@media(max-width:560px){.owner-deposit-edit{grid-template-columns:1fr}}
+
+.owner-review-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;flex-wrap:wrap}.owner-review-actions .owner-skip{margin-top:0}.owner-review-actions .button{margin-left:auto;flex-shrink:0}
