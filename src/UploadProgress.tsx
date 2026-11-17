@@ -16,13 +16,13 @@ export default function UploadProgress(){
  },[needsTab]);
  const [host,setHost]=useState<Element>(document.body);
  useEffect(()=>{
-  const sync=()=>setHost(Array.from(document.querySelectorAll('dialog[open]')).at(-1)??document.body);
+  const sync=()=>setHost(Array.from(document.querySelectorAll('dialog:modal')).at(-1)??document.body);
   const observer=new MutationObserver(sync);
   observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['open']});sync();
   return ()=>observer.disconnect();
  },[]);
  if(!operations.length&&!panels.length)return null;
- // Render inside the active modal so its top layer cannot obscure progress.
+ // Only modal forms host progress; the non-modal chatbot must stay above it.
  return createPortal(<aside className="upload-progress-panel" aria-label="File And Save Progress">
   {operations.map(operation=>{
    const percent=progressPercent(operation);
