@@ -63,7 +63,7 @@ A prebuilt `dist/` folder can also be served by any static web host. `npm run bu
 
 ### Background Uploads And Saves
 
-Uploads and record saves continue while you navigate the app. Busy import and property dialogs minimize automatically; the progress panel offers **View Form** or **Return To Form** to reopen the retained draft. Follow-up, manager, and owner editors keep their drafts when you switch views or reporting months. A completed background import does not redirect you away from your current page.
+Uploads and record saves continue while you navigate the app. File selection, reading, configuration, and review stay visible. Import and property dialogs minimize automatically only after a database save starts; the header?s minimize icon lets you minimize a form manually, and the progress panel offers **View Form** or **Return To Form** to reopen the retained draft. Follow-up, manager, and owner editors keep their drafts when you switch views or reporting months. A completed background import does not redirect you away from your current page.
 
 Saves run one at a time, rereading and validating against the latest records before writing. Repeated clicks on the same pending submission share one write. A conflict waits for **View Task** before asking for review; errors keep the form available, and unconfirmed writes are not automatically replayed. Measured percentages describe the current byte, row, page, or save stage; stages without a known total remain indeterminate.
 

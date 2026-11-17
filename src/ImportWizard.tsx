@@ -14,6 +14,7 @@ import ManagerSelect from './ManagerSelect';
 import {useConfirmation} from './Confirmation';
 import {runProgress,type ReportProgress} from './operation-progress';
 import {useBackgroundForm} from './BackgroundWork';
+import FormWindowControls from './FormWindowControls';
 
 const PAGE_SIZE = 30;
 const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto', airbnbRecipient: '' };
@@ -45,7 +46,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
   }
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const background=useBackgroundForm('Import Spreadsheets',loading||saving);
+  const background=useBackgroundForm('Import Spreadsheets',loading||saving,saving);
   useEffect(()=>{
     const dialog=dialogRef.current;
     if(background.minimized)dialog?.close();else if(dialog&&!dialog.open)dialog.showModal();
@@ -169,8 +170,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
       <header className="import-header">
         <div className="import-header-icon"><FileSpreadsheet size={23} aria-hidden="true" /></div>
         <div><p className="import-eyebrow">EXCEL IMPORT</p><h2 id="import-title">Bring your amounts in</h2><p id="import-description">Import into {month.label}. Choose one property for all files, then review every change.</p></div>
-        <button type="button" className="import-button import-button-secondary" onClick={background.minimize}>Continue Browsing</button>
-        <button className="import-icon-button" aria-label="Close import" onClick={onClose} disabled={saving||loading}><X size={21} aria-hidden="true" /></button>
+        <FormWindowControls onMinimize={background.minimize} onClose={onClose} closeDisabled={saving||loading}/>
       </header>
 
       <ol className="import-steps" aria-label="Import progress">

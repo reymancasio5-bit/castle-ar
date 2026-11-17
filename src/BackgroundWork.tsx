@@ -2,15 +2,15 @@ import {useCallback,useEffect,useId,useLayoutEffect,useRef,useState,type ReactNo
 import {removeBackgroundPanel,updateBackgroundPanel} from './background-panels.ts';
 
 /** A minimized form stays mounted until its owner explicitly closes it. */
-export function useBackgroundForm(title:string,busy:boolean){
+export function useBackgroundForm(title:string,busy:boolean,autoMinimize:boolean=busy){
  const id=useId();const [minimized,setMinimized]=useState(false);
- const previousBusy=useRef(false);
+ const previouslyAutomatic=useRef(false);
  const restore=useCallback(()=>setMinimized(false),[]);
  const minimize=useCallback(()=>setMinimized(true),[]);
  useEffect(()=>{
-  if(busy&&!previousBusy.current)setMinimized(true);
-  previousBusy.current=busy;
- },[busy]);
+  if(autoMinimize&&!previouslyAutomatic.current)setMinimized(true);
+  previouslyAutomatic.current=autoMinimize;
+ },[autoMinimize]);
  useEffect(()=>{
   if(minimized)updateBackgroundPanel({id,title,busy,open:restore});else removeBackgroundPanel(id);
   return()=>removeBackgroundPanel(id);

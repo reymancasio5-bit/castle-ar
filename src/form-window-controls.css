@@ -1,0 +1,7 @@
+.form-window-controls{display:flex;align-items:center;gap:4px;margin-left:auto;flex:0 0 auto;align-self:flex-start}
+.form-window-controls .form-window-button{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;margin:0;border:1px solid transparent;border-radius:6px;background:transparent;color:#65766d;cursor:pointer;transition:background .15s,color .15s}
+.form-window-controls .form-window-button:hover:not(:disabled){background:#edf1ee;color:#263d30}
+.form-window-controls .form-window-button:focus-visible{outline:2px solid #508363;outline-offset:2px}
+.form-window-controls .form-window-button:disabled{opacity:.4;cursor:not-allowed}
+.dialog-header>div:first-child,.import-header>div:nth-child(2){min-width:0}
+@media(max-width:640px){.form-window-controls{gap:2px}.form-window-controls .form-window-button{width:32px;height:32px}}

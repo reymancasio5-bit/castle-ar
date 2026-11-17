@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Upload, X, CheckCircle2 } from 'lucide-react';
+import { FileText, Upload, CheckCircle2 } from 'lucide-react';
 import type { Change, Month, Snapshot } from './types';
 import { matchStatement, parseStatement, type BankDeposit } from './bank-statement';
 import { money, balance } from './domain';
@@ -10,13 +10,14 @@ import './bank-statement.css';
 import {BankImportReviewRequired,prepareFreshBankImport,remapBankAllocationDrafts} from './import-save.ts';
 import {runProgress,type ReportProgress} from './operation-progress';
 import {useBackgroundForm} from './BackgroundWork';
+import FormWindowControls from './FormWindowControls';
 export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,snapshot:initialSnapshot}:{snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
  const [snapshot,setReviewSnapshot]=useState(initialSnapshot);
  const month=snapshot?.months.find(m=>m.id===initialMonth.id)??initialMonth;
  const dialog=useRef<HTMLDialogElement>(null),input=useRef<HTMLInputElement>(null);
  const [deposits,setDeposits]=useState<BankDeposit[]>([]),[warnings,setWarnings]=useState<string[]>([]);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[reviewed,setReviewed]=useState(false);
- const background=useBackgroundForm('Import Bank Statement',busy||saving);
+ const background=useBackgroundForm('Import Bank Statement',busy||saving,saving);
  useEffect(()=>{const el=dialog.current;if(background.minimized)el?.close();else if(el&&!el.open)el.showModal();},[background.minimized]);
  const [allocations,setAllocations]=useState<Record<number,Record<string,string>>>({}),[skipped,setSkipped]=useState<Record<number,boolean>>({});
  const ownerRows=useMemo(()=>matchOwnerDeposits(deposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[],snapshot?.ownerAllocationSchema===1?snapshot.months:[month]),[deposits,month,snapshot]);
@@ -72,7 +73,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
  async function save(){setSaving(true);setError('');try{if(hasUnresolved)throw new Error('Allocate or skip each owner deposit before saving.');await onApply(changes,snapshot?latest=>prepareFreshBankImport(snapshot,changes,latest):undefined);}catch(e){if(e instanceof BankImportReviewRequired&&snapshot){setAllocations(current=>remapBankAllocationDrafts(snapshot,e.snapshot,current));setReviewSnapshot(e.snapshot);}setError((e as Error).message);}finally{setSaving(false);}}
  return <dialog ref={dialog} className="import-modal bank-statement-modal" aria-labelledby="bank-import-title" onCancel={e=>{e.preventDefault();if(!busy&&!saving)onClose();}}>
-  <header className="import-header"><div className="import-header-icon"><FileText size={23}/></div><div><p className="import-eyebrow">BANK RECONCILIATION</p><h2 id="bank-import-title">Import Bank Statement</h2><p>Match Airbnb and owner deposits to {month.label} records.</p></div><button type="button" className="import-button import-button-secondary" onClick={background.minimize}>Continue Browsing</button><button className="import-icon-button" onClick={onClose} disabled={busy||saving} aria-label="Close bank statement import"><X size={21}/></button></header>
+  <header className="import-header"><div className="import-header-icon"><FileText size={23}/></div><div><p className="import-eyebrow">BANK RECONCILIATION</p><h2 id="bank-import-title">Import Bank Statement</h2><p>Match Airbnb and owner deposits to {month.label} records.</p></div><FormWindowControls onMinimize={background.minimize} onClose={onClose} closeDisabled={busy||saving}/></header>
   <div className="import-content" aria-busy={busy||saving}>
    {error&&<div className="import-alert" role="alert">{error}</div>}
    {!supported&&<div className="import-warning">Update the Google Apps Script deployment with the supplied Code.gs to enable bank statement verification.</div>}

@@ -44,6 +44,19 @@ test('a busy form minimizes and remains recoverable after processing ends',async
  await act(async()=>root.unmount());assert.equal(panels.getBackgroundPanels().length,0);
 });
 
+test('file preparation stays visible and only the database save minimizes the form',async()=>{
+ let state:any,root:any;
+ function Form({reading,saving}:{reading:boolean;saving:boolean}){state=useBackgroundForm('Import Files',reading||saving,saving);return React.createElement('input',{value:'configuration'});}
+ await act(async()=>{root=TestRenderer.create(React.createElement(Form,{reading:false,saving:false}));});
+ await act(async()=>root.update(React.createElement(Form,{reading:true,saving:false})));
+ assert.equal(state.minimized,false);assert.equal(panels.getBackgroundPanels().length,0);
+ await act(async()=>root.update(React.createElement(Form,{reading:false,saving:false})));
+ assert.equal(state.minimized,false);
+ await act(async()=>root.update(React.createElement(Form,{reading:false,saving:true})));
+ assert.equal(state.minimized,true);
+ await act(async()=>root.unmount());
+});
+
 test('clean visited views are released while explicitly retained drafts stay mounted',async()=>{
  let root:any;
  await act(async()=>{root=TestRenderer.create(React.createElement(RetainedWorkspace,{activeKey:'draft',retainKeys:['draft']},React.createElement('textarea',{defaultValue:'Keep'})));});
@@ -53,6 +66,18 @@ test('clean visited views are released while explicitly retained drafts stay mou
  assert.equal(root.root.findAllByType('p').length,0);assert.equal(root.root.findAllByType('textarea').length,1);
  await act(async()=>root.update(React.createElement(RetainedWorkspace,{activeKey:'next',retainKeys:[]},React.createElement('button',null,'Next page'))));
  assert.equal(root.root.findAllByType('textarea').length,0);
+ await act(async()=>root.unmount());
+});
+
+test('header window controls minimize without submitting or closing the form',async()=>{
+ const {default:Controls}=await server.ssrLoadModule('/src/FormWindowControls.tsx');
+ let minimized=0,closed=0,root:any;
+ await act(async()=>{root=TestRenderer.create(React.createElement(Controls,{onMinimize:()=>minimized++,onClose:()=>closed++,closeDisabled:true}));});
+ const minimize=root.root.findByProps({'aria-label':'Minimize Form'});
+ assert.equal(minimize.props.type,'button');assert.equal(minimize.props.title,'Minimize Form');
+ await act(async()=>minimize.props.onClick());
+ assert.equal(minimized,1);assert.equal(closed,0);
+ assert.equal(root.root.findByProps({'aria-label':'Close Form'}).props.disabled,true);
  await act(async()=>root.unmount());
 });
 

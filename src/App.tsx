@@ -1,5 +1,6 @@
 import BundleMatching from './BundleMatching';
 import {RetainedWorkspace,useBackgroundForm} from './BackgroundWork';
+import FormWindowControls from './FormWindowControls';
 import {openBackgroundPanel} from './background-panels';
 import {createSaveQueue} from './save-queue';
 import {runProgress} from './operation-progress';
@@ -308,7 +309,7 @@ export function Dialog({ title, onClose, children, className = '', busy = false,
     if (event.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first.focus(); }
   }
-  return <div style={background.minimized?{display:'none'}:undefined} className={`modal-backdrop ${className === 'drawer' ? 'drawer-backdrop' : ''}`} data-exiting={exiting} onMouseDown={event => { if (event.target === event.currentTarget && !busy && !exiting) onClose(); }}><div className={`dialog ${className}`} ref={ref} inert={exiting} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}><div className="dialog-header"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{busy&&<button type="button" className="button secondary compact" onClick={background.minimize}>Continue Browsing</button>}<button className="icon-button" aria-label="Close dialog" onClick={onClose} disabled={busy || exiting}><X size={21} /></button></div>{children}</div></div>;
+  return <div style={background.minimized?{display:'none'}:undefined} className={`modal-backdrop ${className === 'drawer' ? 'drawer-backdrop' : ''}`} data-exiting={exiting} onMouseDown={event => { if (event.target === event.currentTarget && !busy && !exiting) onClose(); }}><div className={`dialog ${className}`} ref={ref} inert={exiting} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKeyDown}><div className="dialog-header"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><FormWindowControls onMinimize={busy?background.minimize:undefined} onClose={onClose} closeDisabled={busy||exiting}/></div>{children}</div></div>;
 }
 
 function PropertyDrawer({ property, monthLabel, configured, managers, editingSupported, onClose, onSave }: { managers:AccountManager[]; editingSupported:boolean; property: Property; monthLabel: string; configured: boolean; onClose: () => void; onSave: (changes: Change[]) => Promise<void> }) {
