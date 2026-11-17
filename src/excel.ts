@@ -1,3 +1,4 @@
+import {runProgress,readFileBytes,yieldToBrowser,type ReportProgress} from './operation-progress.ts';
 import {systemStatus, collected} from './domain.ts';
 import {bankReport} from './bank-details.ts';
 import type { Snapshot } from './types.ts';
@@ -33,27 +34,34 @@ function getSheetJS(): SheetJS {
   return window.XLSX;
 }
 
-export async function readSpreadsheet(file: File): Promise<ImportSheet[]> {
+export function readSpreadsheet(file:File,onProgress?:ReportProgress):Promise<ImportSheet[]> {
+ return runProgress(file.name,report=>readSpreadsheetMeasured(file,report),onProgress);
+}
+async function readSpreadsheetMeasured(file:File,report:ReportProgress):Promise<ImportSheet[]> {
   if (!/\.(xlsx|xls|csv)$/i.test(file.name)) throw new Error('Choose an .xlsx, .xls, or .csv file.');
   if (file.size > MAX_FILE_BYTES) throw new Error('This file exceeds 10 MB. Save a smaller workbook and try again.');
   if (file.size === 0) throw new Error('This file is empty.');
   const xlsx = getSheetJS();
   let workbook: Workbook;
   try {
-    workbook = xlsx.read(await file.arrayBuffer(), { raw: true, cellFormula: true, cellHTML: false, cellNF: true, cellDates: true, sheetRows: 10001 });
+    const bytes=await readFileBytes(file,report);
+    report({label:'Opening Workbook'});await yieldToBrowser();
+    workbook = xlsx.read(bytes, { raw: true, cellFormula: true, cellHTML: false, cellNF: true, cellDates: true, sheetRows: 10001 });
   } catch {
     throw new Error('Unable to read this workbook. Make sure it is a valid spreadsheet and remove password protection before importing.');
   }
   if (!workbook.SheetNames.length) throw new Error('No worksheets were found in this file.');
-  return workbook.SheetNames.map(name => {
+  const sheets:ImportSheet[]=[];
+  for(const name of workbook.SheetNames) {
     const worksheet = workbook.Sheets[name];
     const fullRef = worksheet?.['!fullref'] ?? worksheet?.['!ref'];
-    if (typeof fullRef !== 'string') return { name, rows: [] };
+    if (typeof fullRef !== 'string') {sheets.push({ name, rows: [] });continue;}
     const range = xlsx.utils.decode_range(fullRef);
-    if (range.e.r >= 10000) return { name, rows: [], error: 'This worksheet exceeds 10,000 rows. Split it into smaller files.' };
-    if ((range.e.r + 1) * (range.e.c + 1) > 500000) return { name, rows: [], error: 'This worksheet is too wide. Remove unused columns and try again.' };
+    if (range.e.r >= 10000) {sheets.push({ name, rows: [], error: 'This worksheet exceeds 10,000 rows. Split it into smaller files.' });continue;}
+    if ((range.e.r + 1) * (range.e.c + 1) > 500000) {sheets.push({ name, rows: [], error: 'This worksheet is too wide. Remove unused columns and try again.' });continue;}
     const rows: ImportCell[][] = [];
     for (let r = 0; r <= range.e.r; r++) {
+      if(r%250===0){report({label:'Reading Worksheet: '+name,completed:r,total:range.e.r+1,unit:'rows'});await yieldToBrowser();}
       const cells: ImportCell[] = [];
       for (let c = 0; c <= range.e.c; c++) {
         const cell = worksheet[xlsx.utils.encode_cell({ r, c })] as SpreadsheetCell | undefined;
@@ -65,8 +73,10 @@ export async function readSpreadsheet(file: File): Promise<ImportSheet[]> {
       }
       rows.push(cells);
     }
-    return { name, rows };
-  });
+    report({label:'Reading Worksheet: '+name,completed:rows.length,total:range.e.r+1,unit:'rows'});
+    sheets.push({ name, rows });
+  }
+  return sheets;
 }
 
 export function createExportSheets(snapshot: Snapshot, monthId: string) {

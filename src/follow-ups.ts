@@ -1,3 +1,4 @@
+import {runProgress,readFileBytes,yieldToBrowser,type ReportProgress} from './operation-progress.ts';
 ﻿import type {Change, FollowUpAttachment, FollowUpStatus, Property} from './types.ts';
 export const followUpStatuses: {value: FollowUpStatus; label: string}[] = [
  {value:'not_contacted',label:"Not Contacted"}, {value:'contact_attempted',label:"Contact Attempted"},
@@ -26,11 +27,16 @@ export function buildFollowUpChange(propertyId:string,draft:FollowUpDraft):Chang
  validateFollowUpDraft(draft);
  return {kind:'updateFollowUp',propertyId,manager:draft.manager.trim(),status:draft.status,note:draft.note,attachments:draft.attachments.map(a=>({...a}))};
 }
-export async function prepareScreenshot(file:File):Promise<FollowUpAttachment> {
+export function prepareScreenshot(file:File,onProgress?:ReportProgress):Promise<FollowUpAttachment> {
+ return runProgress(file.name,report=>prepareScreenshotMeasured(file,report),onProgress);
+}
+async function prepareScreenshotMeasured(file:File,report:ReportProgress):Promise<FollowUpAttachment> {
  if(!['image/png','image/jpeg','image/webp'].includes(file.type)) throw new Error('Choose a PNG, JPEG, or WebP screenshot.');
  if(file.size>10*1024*1024) throw new Error('Each source screenshot must be 10 MB or smaller.');
  if(!file.size) throw new Error('This screenshot is empty.');
- const bitmap=await createImageBitmap(file).catch(()=>{throw new Error('This image could not be decoded. Choose another screenshot.');});
+ const bytes=await readFileBytes(file,report);
+ report({label:'Preparing Image'});await yieldToBrowser();
+ const bitmap=await createImageBitmap(new Blob([bytes],{type:file.type})).catch(()=>{throw new Error('This image could not be decoded. Choose another screenshot.');});
  try {
   if(!bitmap.width || !bitmap.height) throw new Error('This screenshot has no image dimensions.');
   const canvas=document.createElement('canvas');const context=canvas.getContext('2d');

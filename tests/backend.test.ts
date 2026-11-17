@@ -4,6 +4,19 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
+test('save progress exposes validated work without claiming an unconfirmed write completed',()=>{
+ const app=harness();
+ const api=app.context as any;
+ api.castleStore('progress-test',{fingerprint:'test',state:'pending',at:Date.now()});
+ const reply=api.castleStatus('progress-test');
+ assert.equal(reply.pending,true);
+ assert.equal(reply.saveProgress.completed,1);
+ assert.equal(reply.saveProgress.total,3);
+ assert.equal(reply.snapshot,undefined);
+ api.castleStore('progress-test',{fingerprint:'test',state:'error',at:Date.now(),result:{ok:false,error:{code:'WRITE_UNCONFIRMED'}}});
+ assert.equal(api.castleStatus('progress-test').saveProgress,undefined);
+});
+
 test('owner-received payouts persist as reference amounts and are excluded from AR formulas',()=>{
  const app=harness(),before=app.read().snapshot;
  const saved=app.post({requestId:'recipient-new',revision:before.revision,changes:[{kind:'addProperty',monthId:'0',name:'Owner Direct',manager:'TeamB',totalCents:2311,initialPayments:[{index:0,amountCents:29104,receivedBy:'owner'}]}]});

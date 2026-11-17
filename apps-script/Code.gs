@@ -1003,7 +1003,7 @@ function castleStatus(requestId) {
     catch (_) { return castleError('SAVED_REFRESH_FAILED', 'Your changes were saved, but the sheet could not be refreshed. Reload later to view the saved values.'); }
   }
   if (Date.now() - record.at > 7 * 60 * 1000) return castleError('WRITE_UNCONFIRMED', 'This save has no final confirmation. Refresh the sheet and check the values before submitting another save.');
-  return { ok: true, pending: true };
+  return { ok: true, pending: true, saveProgress: { label: 'Saving Records', completed: 1, total: 3, unit: 'steps' } };
 }
 
 function castleCacheResult(requestId, result) {

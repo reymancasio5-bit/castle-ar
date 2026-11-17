@@ -1,3 +1,4 @@
+import {runProgress,readFileBytes,yieldToBrowser,type ReportProgress} from './operation-progress.ts';
 import type {AccountManager} from './types.ts';
 import {isSafeScreenshot} from './follow-ups.ts';
 
@@ -13,10 +14,15 @@ export function managerProfile(manager:Pick<AccountManager,'name'|'profileImage'
  const value=manager.profileImage??defaultManagerProfile(manager.name);
  return isValidManagerProfile(value)?value:'';
 }
-export async function prepareManagerProfile(file:File):Promise<string> {
+export function prepareManagerProfile(file:File,onProgress?:ReportProgress):Promise<string> {
+ return runProgress(file.name,report=>prepareManagerProfileMeasured(file,report),onProgress);
+}
+async function prepareManagerProfileMeasured(file:File,report:ReportProgress):Promise<string> {
  if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw new Error('Choose a PNG, JPEG, or WebP profile image.');
  if(!file.size||file.size>5*1024*1024)throw new Error('Choose a profile image up to 5 MB.');
- const bitmap=await createImageBitmap(file).catch(()=>{throw new Error('This profile image could not be opened. Choose another image.');});
+ const bytes=await readFileBytes(file,report);
+ report({label:'Preparing Image'});await yieldToBrowser();
+ const bitmap=await createImageBitmap(new Blob([bytes],{type:file.type})).catch(()=>{throw new Error('This profile image could not be opened. Choose another image.');});
  try {
   if(!bitmap.width||!bitmap.height)throw new Error('This profile image has no dimensions.');
   const canvas=document.createElement('canvas'),context=canvas.getContext('2d');

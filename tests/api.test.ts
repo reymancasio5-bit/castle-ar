@@ -28,3 +28,21 @@ test('an opaque submitted POST without acknowledgement never counts as saved',as
  const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>({ok:true,pending:true}),pause:async()=>{}});
  await assert.rejects(api.save('old',[]),/not confirmed/);
 });
+
+test('save reports measured server steps and completes only after confirmation',async()=>{
+ const progress:any[]=[];let calls=0;
+ const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>++calls===1?{ok:true,pending:true,saveProgress:{completed:1,total:3,label:'Saving Records'}}:{ok:true,snapshot:sampleSnapshot},pause:async()=>{}});
+ await api.save('old',[],p=>progress.push(p));
+ assert.equal(progress[0].total,undefined);
+ assert.equal(progress[1].completed,1);
+ assert.equal(progress[1].total,3);
+ assert.equal(progress.at(-1).completed,3);
+});
+
+test('save without server measurements never fabricates a percentage on failure',async()=>{
+ const progress:any[]=[];
+ const api=createApi('https://script.google.com/macros/s/A/exec',{post:()=>()=>{},get:async()=>({ok:true,pending:true}),pause:async()=>{}});
+ await assert.rejects(api.save('old',[],p=>progress.push(p)),/not confirmed/);
+ assert.ok(progress.length>0);
+ assert.ok(progress.every(p=>p.total===undefined));
+});

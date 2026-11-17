@@ -1,6 +1,7 @@
 import type { Change, Snapshot } from './types.ts';
 import type {AssistantRequest,AssistantReply} from './assistant-types.ts';
-type Reply = {ok:boolean; snapshot?:Snapshot; assistant?:AssistantReply; progress?:string; pending?:boolean; error?:{code:string;message:string}};
+import {runProgress,type Progress,type ReportProgress} from './operation-progress.ts';
+type Reply = {ok:boolean; snapshot?:Snapshot; assistant?:AssistantReply; progress?:string; saveProgress?:Progress; pending?:boolean; error?:{code:string;message:string}};
 type Payload = {requestId:string; revision:string; changes:Change[]} | (AssistantRequest & {requestId:string;operation:'assistant'});
 type Transport = {get:(params:Record<string,string>)=>Promise<Reply>;post:(payload:Payload)=>()=>void;pause:(ms:number)=>Promise<void>};
 export function validateEndpoint(input:string):string {
@@ -52,16 +53,19 @@ export function createApi(input:string, transport?:Transport) {
     throw new Error('The assistant timed out. No record changes were applied. Check your Apps Script deployment before retrying.');
    } finally {cleanup()}
   },
-  save:async(revision:string,changes:Change[])=>{
+  save:async(revision:string,changes:Change[],onProgress?:ReportProgress)=>runProgress('Saving To Google Sheets',async report=>{
+   const update=report;
+   update({label:'Sending Data · Waiting For Server'});
    const requestId=crypto.randomUUID();const cleanup=io.post({requestId,revision,changes});
    try {
     for(let attempt=0;attempt<30;attempt++) {
      await io.pause(attempt===0?700:1500);
      const reply=await io.get({action:'status',requestId});
-     if(!reply.pending) return checked(reply);
+     if(reply.pending&&reply.saveProgress)update(reply.saveProgress);
+     if(!reply.pending){const snapshot=checked(reply);update({label:'Save Confirmed',completed:3,total:3,unit:'steps'});return snapshot;}
     }
     throw new Error('Save was not confirmed. It may have completed; refresh Google Sheets before trying again.');
    } finally {cleanup()}
-  }
+  },onProgress)
  };
 }

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import UploadProgress from './UploadProgress';
 import {ConfirmationProvider} from './Confirmation';
 import { createApi, validateEndpoint } from './api.ts';
 import { createPreviewApi } from './preview-api.ts';
@@ -21,6 +22,6 @@ function Root(){
  const [endpoint]=useState(storedEndpoint);
  const api=useMemo(()=>{try{return endpoint?createApi(endpoint):createPreviewApi(import.meta.env.DEV && new URLSearchParams(window.location.search).get('ownerDemo')==='1')}catch{return createPreviewApi()}},[endpoint]);
  const valid=(()=>{try{return !!endpoint&&!!validateEndpoint(endpoint)}catch{return false}})();
- return <ConfirmationProvider><App api={api} configured={valid}/></ConfirmationProvider>;
+ return <ConfirmationProvider><App api={api} configured={valid}/><UploadProgress/></ConfirmationProvider>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><Root/></React.StrictMode>);

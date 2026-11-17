@@ -12,6 +12,7 @@ import { useExiting } from './Presence';
 import './import.css';
 import ManagerSelect from './ManagerSelect';
 import {useConfirmation} from './Confirmation';
+import {runProgress,type ReportProgress} from './operation-progress';
 
 const PAGE_SIZE = 30;
 const initialOptions: PropertyImportOptions = { headerRow: 0, nameColumn: 0, amountColumn: 1, destination: 'Airbnb1', sumDuplicates: false, propertyName: '', manager: '', total: '', airbnbSlot: 'auto', airbnbRecipient: '' };
@@ -90,10 +91,15 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
   const pageRows = visibleRows.slice(activePage * PAGE_SIZE, (activePage + 1) * PAGE_SIZE);
 
   async function chooseFiles(selected: FileList | File[] | null) {
+    if (!selected?.length || loading || saving) return;
+    await runProgress(`Reading ${selected.length} File${selected.length===1?'':'s'}`,report=>readSelectedFiles(selected,report)).catch(()=>{});
+  }
+  async function readSelectedFiles(selected: FileList | File[], report:ReportProgress) {
     if (!selected?.length) return;
     const uploads = Array.from(selected);
     if (uploads.length > 50 || uploads.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) {
-      setError('Choose up to 50 files, with a combined size of at most 50 MB.'); return;
+      const message='Choose up to 50 files, with a combined size of at most 50 MB.';
+      setError(message);throw new Error(message);
     }
     const request = ++requestRef.current;
     setLoading(true);
@@ -102,13 +108,13 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
       const nextFiles: ImportFile[] = [];
       for (const file of uploads) {
         let nextSheets: ImportSheet[];
-        try { nextSheets = await readSpreadsheet(file); }
+        try { nextSheets = await readSpreadsheet(file,progress=>report({...progress,label:`File ${nextFiles.length+1} Of ${uploads.length}: ${file.name} · ${progress.label}`})); }
         catch (cause) { throw new Error(`${file.name}: ${cause instanceof Error ? cause.message : 'The file could not be read.'}`); }
-        if (request !== requestRef.current) return;
+        if (request !== requestRef.current) throw new Error('File reading was cancelled.');
         const nextIndex = Math.max(0, nextSheets.findIndex(candidate => !candidate.error && candidate.rows.length));
         nextFiles.push({ name: file.name, sheets: nextSheets, sheetIndex: nextIndex, options: { ...initialOptions, ...inferColumns(nextSheets[nextIndex]) } });
       }
-      if (request !== requestRef.current) return;
+      if (request !== requestRef.current) throw new Error('File reading was cancelled.');
       setFiles(nextFiles);
       setFileIndex(0);
       setStep(2);
@@ -116,6 +122,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
       setRowFilter('all');
     } catch (cause) {
       if (request === requestRef.current) setError(cause instanceof Error ? cause.message : 'The file could not be read.');
+      throw cause;
     } finally {
       if (request === requestRef.current) setLoading(false);
       if (fileRef.current) fileRef.current.value = '';

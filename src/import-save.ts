@@ -4,19 +4,23 @@ import {isAirbnbSheet} from './property-import.ts';
 import {parseMoney} from './domain.ts';
 import type {Change,Month,Payment,Property,Snapshot} from './types.ts';
 import {transferKey} from './owners.ts';
+import {runProgress,type ReportProgress} from './operation-progress.ts';
 
 export class ImportReviewRequired extends Error {
   month:Month;
   constructor(message:string,month:Month){super(message+' Your files and choices are kept. Review the updated preview, then confirm again.');this.name='ImportReviewRequired';this.month=month;}
 }
-type ImportApi={read:()=>Promise<Snapshot>;save:(revision:string,changes:Change[])=>Promise<Snapshot>};
+type ImportApi={read:()=>Promise<Snapshot>;save:(revision:string,changes:Change[],onProgress?:ReportProgress)=>Promise<Snapshot>};
 /** Only retry server replies that guarantee the attempted write was rejected. */
 export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=>Change[]|Promise<Change[]>,pause:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),busyMessage='Other users are still saving. Your files and choices are kept; click Confirm Import again in a moment.'):Promise<Snapshot>{
+ return runProgress('Saving Records',async report=>{
   for(let attempt=0;attempt<4;attempt++){
+    report({label:attempt?'Refreshing Records Before Retry':'Checking Latest Records'});
     const latest=await api.read();
+    report({label:'Validating Changes'});
     const changes=await prepare(latest);
     if(!changes.length)return latest;
-    try{return await api.save(latest.revision,changes);}
+    try{return await api.save(latest.revision,changes,report);}
     catch(error){
       const code=(error as {code?:string})?.code;
       if(code!=='CONFLICT'&&code!=='BUSY')throw error;
@@ -25,6 +29,7 @@ export async function saveRebuiltImport(api:ImportApi,prepare:(latest:Snapshot)=
     }
   }
   throw new Error('Import could not be saved.');
+ });
 }
 const signature=(payment:Payment)=>JSON.stringify(Object.entries(payment).filter(([key])=>key!=='id').sort(([a],[b])=>a.localeCompare(b)));
 const emptyPayment=(p:Payment)=>p.amountCents===null&&p.bundleCents===null&&!p.payoutDate&&!p.bankDetails&&p.bankCents===null&&!p.bankDate&&!p.verifiedBySystem&&!p.verifiedByDaisy;

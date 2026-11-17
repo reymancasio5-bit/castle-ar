@@ -8,6 +8,7 @@ import OwnerPaymentReview, {allocationDraft, parseAllocations} from './OwnerPaym
 import './import.css';
 import './bank-statement.css';
 import {BankImportReviewRequired,prepareFreshBankImport,remapBankAllocationDrafts} from './import-save.ts';
+import {runProgress,type ReportProgress} from './operation-progress';
 export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,snapshot:initialSnapshot}:{snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
  const [snapshot,setReviewSnapshot]=useState(initialSnapshot);
  const month=snapshot?.months.find(m=>m.id===initialMonth.id)??initialMonth;
@@ -41,25 +42,29 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  useEffect(()=>{const el=dialog.current;el?.showModal();return()=>el?.close();},[]);
  async function files(files:FileList|File[]|null){
   if(!files?.length||busy||saving)return;
+  await runProgress(`Reading ${files.length} Bank File${files.length===1?'':'s'}`,report=>readFiles(files,report)).catch(()=>{});
+ }
+ async function readFiles(files:FileList|File[],report:ReportProgress){
   setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});
   try{
    if(files.length>10||Array.from(files).reduce((n,f)=>n+f.size,0)>50*1024*1024)throw new Error('Choose up to 10 bank files, totaling no more than 50 MB.');
    const all:BankDeposit[]=[],notes:string[]=[];
-   for(const file of Array.from(files)){
+   for(const [index,file] of Array.from(files).entries()){
+    const fileProgress:ReportProgress=progress=>report({...progress,label:`File ${index+1} Of ${files.length}: ${file.name} · ${progress.label}`});
     try{
      let parsed:{deposits:BankDeposit[];warnings:string[]};
      if(/\.pdf$/i.test(file.name)){
       const {extractStatementText}=await import('./bank-pdf');
-      parsed=parseStatement(await extractStatementText(file),file.name);
+      parsed=parseStatement(await extractStatementText(file,fileProgress),file.name);
      }else if(/\.(xlsx|xls|csv)$/i.test(file.name)){
       const [{readSpreadsheet},{parseBankSpreadsheet}]=await Promise.all([import('./excel'),import('./bank-spreadsheet')]);
-      parsed=parseBankSpreadsheet(await readSpreadsheet(file),file.name);
+      parsed=parseBankSpreadsheet(await readSpreadsheet(file,fileProgress),file.name);
      }else throw new Error('Choose a PDF bank statement or an RBC Excel/CSV transaction export.');
      all.push(...parsed.deposits);notes.push(...parsed.warnings);
     }catch(error){throw new Error(`${file.name}: ${error instanceof Error?error.message:'Could not read this bank file.'}`);}
    }
    setDeposits(all);setWarnings(notes);setReviewed(true);
-  }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');}finally{setBusy(false);if(input.current)input.current.value='';}
+  }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');throw e;}finally{setBusy(false);if(input.current)input.current.value='';}
  }
  useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
  async function save(){setSaving(true);setError('');try{if(hasUnresolved)throw new Error('Allocate or skip each owner deposit before saving.');await onApply(changes,snapshot?latest=>prepareFreshBankImport(snapshot,changes,latest):undefined);}catch(e){if(e instanceof BankImportReviewRequired&&snapshot){setAllocations(current=>remapBankAllocationDrafts(snapshot,e.snapshot,current));setReviewSnapshot(e.snapshot);}setError((e as Error).message);}finally{setSaving(false);}}
