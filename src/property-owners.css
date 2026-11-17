@@ -3,3 +3,11 @@
 .owner-property-search{display:flex;align-items:center;gap:10px;margin-bottom:12px;border:1px solid #d6dfd2;border-radius:7px;padding:0 12px;background:white;color:var(--muted)}.owner-property-search svg{flex-shrink:0}.am-form .owner-property-search input{border:0;background:transparent;padding:12px 0;border-radius:0}.owner-property-search:focus-within{outline:2px solid #8aa58d;outline-offset:2px}.am-form .owner-property-search input:focus{outline:none;box-shadow:none}
 
 .owner-allocation-result{grid-column:1 / -1;margin-top:-8px}.owner-history p small{margin-right:auto}.owner-payment-review .owner-allocation{row-gap:8px}
+
+/* Keep owner actions together and let the header adapt to narrower panels. */
+.owner-workspace .am-profile{flex-wrap:wrap}
+.owner-workspace .am-profile-title{flex:1 1 240px}
+.owner-workspace .am-profile-title>div{min-width:0;overflow-wrap:anywhere}
+.owner-profile-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-left:auto}
+.owner-profile-actions .button{min-height:36px;white-space:nowrap}
+@media(max-width:560px){.owner-profile-actions{width:100%;margin-left:0;justify-content:flex-start}.owner-profile-actions .button{flex:1 1 auto}}
