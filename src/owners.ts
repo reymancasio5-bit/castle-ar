@@ -3,6 +3,14 @@ import type {BankDeposit} from './bank-statement.ts';
 import {balance} from './domain.ts';
 
 export const ownerKey=(value:string)=>value.trim().replace(/\s+/g,' ').toLowerCase();
+export const ownerBankNames=(value:string)=>value.split(/\r?\n/).map(name=>name.trim()).filter(Boolean);
+function cleanBankNames(value:string){
+ if(typeof value!=='string'||value.length>4000)throw new Error('Enter up to 20 bank statement names, one per line.');
+ const names=ownerBankNames(value).map(name=>clean(name,'statement name'));
+ if(!names.length||names.length>20)throw new Error('Enter between 1 and 20 bank statement names.');
+ if(new Set(names.map(ownerKey)).size!==names.length)throw new Error('Enter each bank statement name only once.');
+ return names.join('\n');
+}
 // Compare address text, not just its street number; never fuzzy-match owners.
 const addressKey=(value:string)=>ownerKey(value).replace(/^.*?(?=\d)/,'').replace(/\b(?:street|st|road|rd|avenue|ave|drive|dr)\.?$/,'').replace(/[^a-z0-9]+/g,' ').trim();
 export const transferKey=(account:string,reference:string)=>JSON.stringify([account.replace(/[\s-]/g,'').toLowerCase(),reference.trim().toLowerCase()]);
@@ -19,7 +27,7 @@ export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{ki
  const account=clean(c.account,'bank account'),reference=clean(c.reference,'transaction reference');
  if(!/^\d{4}$/.test(account)||!/^[a-z0-9]+$/i.test(reference))throw new Error('Enter a valid account and transaction reference.');
  if(snapshot.ownerTransfers?.some(t=>transferKey(t.account,t.reference)===transferKey(account,reference)))throw new Error('This owner transfer has already been imported.');
- const bankName=clean(c.bankName,'statement name');if(ownerKey(bankName)!==ownerKey(owner.bankName))throw new Error('Statement name does not match this owner.');
+ const bankName=clean(c.bankName,'statement name');if(!ownerBankNames(owner.bankName).some(name=>ownerKey(name)===ownerKey(bankName)))throw new Error('Statement name does not match this owner.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(c.date)||c.date<'1900-01-01'||!Number.isFinite(Date.parse(c.date))||new Date(c.date).toISOString().slice(0,10)!==c.date)throw new Error('Enter a valid bank date.');
  if(!positive(c.amountCents)||!Array.isArray(c.allocations)||!c.allocations.length||c.allocations.length>500)throw new Error('Enter a positive deposit and allocations.');
  const seen=new Set<string>(),names=new Set<string>();
@@ -41,10 +49,11 @@ export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
  if(c.kind==='saveOwner'){
   const input=c.owner;if(!input||typeof input.active!=='boolean'||!Array.isArray(input.propertyNames)||input.propertyNames.length>1000)throw new Error('Enter a valid owner profile.');
   if(typeof input.id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(input.id))throw new Error('Enter a valid owner ID.');
-  const owner:PropertyOwner={id:clean(input.id,'owner ID'),name:clean(input.name,'owner name'),bankName:clean(input.bankName,'statement name'),email:clean(input.email,'email',240,false),notes:clean(input.notes,'notes',4000,false,true),active:input.active,propertyNames:[]};
+  const owner:PropertyOwner={id:clean(input.id,'owner ID'),name:clean(input.name,'owner name'),bankName:cleanBankNames(input.bankName),email:clean(input.email,'email',240,false),notes:clean(input.notes,'notes',4000,false,true),active:input.active,propertyNames:[]};
   for(const name of input.propertyNames){const normalized=clean(name,'property name');if(owner.propertyNames.some(n=>ownerKey(n)===ownerKey(normalized)))throw new Error('Choose each property only once.');owner.propertyNames.push(normalized);}
   if(owner.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner.email))throw new Error('Enter a valid email.');
-  if(snapshot.owners?.some(o=>o.id!==owner.id&&ownerKey(o.bankName)===ownerKey(owner.bankName)))throw new Error('This statement name belongs to another owner.');
+  const names=new Set(ownerBankNames(owner.bankName).map(ownerKey));
+  if(snapshot.owners?.some(o=>o.id!==owner.id&&ownerBankNames(o.bankName).some(name=>names.has(ownerKey(name)))))throw new Error('This statement name belongs to another owner.');
   const existing=snapshot.owners?.findIndex(o=>o.id===owner.id)??-1;
   snapshot.owners??=[];if(existing<0)snapshot.owners.push(owner);else snapshot.owners[existing]=owner;
   return;
@@ -80,7 +89,7 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
  }
  const outstanding=new Map(allocationMonths.flatMap(m=>m.properties.map(p=>[p.id,balance(p)] as const)));
  return deposits.filter(d=>d.kind==='owner').map(deposit=>{
-  const candidates=owners.filter(o=>ownerKey(o.bankName)===ownerKey(deposit.ownerName??''));
+  const candidates=owners.filter(o=>ownerBankNames(o.bankName).some(name=>ownerKey(name)===ownerKey(deposit.ownerName??'')));
   const owner=candidates.length===1?candidates[0]:undefined;
   const properties=owner?allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label,monthKey:m.month}))):[];
   const key=transferKey(deposit.account,deposit.reference),duplicate=!!deposit.reference&&(seen.has(key)||conflicts.has(key));

@@ -206,8 +206,6 @@ export default function App({ api, configured }: { api: Api; configured: boolean
     <Presence present={mobileNav}>{exiting => <button className="nav-scrim" data-exiting={exiting} aria-label="Close navigation" onClick={() => setMobileNav(false)} disabled={exiting} />}</Presence>
     <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`}>
       <a className="brand" href="#overview" onClick={event => { event.preventDefault(); navigate('overview'); }} aria-label="Castle Overview"><CastleWordmark/></a>
-      <div className="workspace"><span className="workspace-icon"><Building2 size={18} /></span><span><strong>Castle Portfolio</strong><small>Monthly Accounts Receivable</small></span><span className="workspace-dot" /></div>
-      <p className="nav-label">WORKSPACE</p>
       <nav aria-label="Main navigation" >
         <button className={view === 'overview' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('overview')}><LayoutDashboard size={19} /><span>Overview</span>{view === 'overview' && <span className="nav-active-dot" />}</button>
         <button className={view === 'bundles' ? 'nav-item active' : 'nav-item'} onClick={() => navigate('bundles')}><Wallet size={19}/><span>Bundle Matching</span></button>

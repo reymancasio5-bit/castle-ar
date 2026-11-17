@@ -9,6 +9,21 @@ const snapshot=():Snapshot=>({revision:'1',updatedAt:'',spreadsheetUrl:'',owners
 const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
 const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
 
+test('multiple statement names save, match independently and preserve the actual transfer name',()=>{
+ const s=snapshot();applyOwnerChange(s,{kind:'saveOwner',owner:{...owner,bankName:'Jane Smith\n JANE   BUSINESS '}});
+ assert.equal(s.owners![0].bankName,'Jane Smith\nJANE BUSINESS');
+ const row=matchOwnerDeposits([{...deposit(),ownerName:'jane business'}],s.months[0],s.owners!,[])[0];
+ assert.equal(row.owner?.id,owner.id);assert.equal(row.allocations.length,1);
+ applyOwnerChange(s,{...change(),bankName:'jane business',allocations:row.allocations});
+ assert.equal(s.ownerTransfers![0].bankName,'jane business');
+ assert.throws(()=>applyOwnerChange(s,{kind:'saveOwner',owner:{...owner,id:'other',bankName:'Other Name\nJane Business'}}),/another owner/);
+});
+test('invalid and repeated statement aliases are rejected',()=>{
+ for(const bankName of ['Jane\njane','Jane\n=unsafe','\n','Jane\n'+'x'.repeat(161)]){
+  assert.throws(()=>applyOwnerChange(snapshot(),{kind:'saveOwner',owner:{...owner,bankName}}));
+ }
+});
+
 test('a unique exact combination splits the deposit and reserves those balances for subsequent deposits',()=>{
  const s=snapshot();
  const rows=matchOwnerDeposits([{...deposit(),amountCents:30000},{...deposit('SECOND'),amountCents:30000}],s.months[0],s.owners!,[]);

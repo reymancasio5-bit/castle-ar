@@ -5,7 +5,7 @@ import { validateFollowUpDraft } from './follow-ups.ts';
 import {applyOwnerChange} from './owners.ts';
 export function createPreviewApi(ownerDemo=false) {
  let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.recordEditingSchema=1;
- state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerSchema=1;state.owners=[];state.ownerTransfers=[];
+ state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerSchema=1;state.ownerBankNamesSchema=1;state.owners=[];state.ownerTransfers=[];
  if(ownerDemo){
   const propertyName='Mtl 404 Le Bijou';
   state.owners=[{id:'demo-owner',name:'Bijou Demo Owner',bankName:'BIJOU DEMO OWNER',email:'',notes:'Fictional owner for testing statement allocation.',active:true,propertyNames:[propertyName]}];

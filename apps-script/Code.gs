@@ -323,7 +323,7 @@ function castleRead() {
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
     managerData: managerData, ownerData: ownerData,
-    snapshot: { airbnbRecipientSchema: 1, ownerAllocationSchema: 1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    snapshot: { airbnbRecipientSchema: 1, ownerBankNamesSchema: 1, ownerAllocationSchema: 1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -1149,10 +1149,16 @@ function castleOwnerText(value,label,max,required){
  return value.trim();
 }
 function castleOwnerId(value){if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,100}$/.test(value))castleThrow('VALIDATION','Invalid owner record ID.');return value;}
+function castleOwnerBankNames(value){
+ if(typeof value!=='string'||value.length>4000)castleThrow('VALIDATION','Enter up to 20 bank statement names, one per line.');
+ var names=value.split(/\r?\n/).map(function(name){return name.trim();}).filter(Boolean),seen=Object.create(null);
+ if(!names.length||names.length>20)castleThrow('VALIDATION','Enter between 1 and 20 bank statement names.');
+ return names.map(function(name){name=castleName(name,'Bank statement name').replace(/\s+/g,' ');castleUnique(seen,castleManagerName(name));return name;});
+}
 function castleOwnerValidate(owner){
  if(!owner||typeof owner!=='object'||Array.isArray(owner))castleThrow('VALIDATION','An owner profile is required.');
  castleKeys(owner,CASTLE_OWNER_TABLES.owners.fields);castleOwnerId(owner.id);
- owner.name=castleName(owner.name,'Owner name');owner.bankName=castleName(owner.bankName,'Bank statement name');
+ owner.name=castleName(owner.name,'Owner name');owner.bankName=castleOwnerBankNames(owner.bankName).join('\n');
  owner.email=castleOwnerText(owner.email,'Email',240,false);
  if(typeof owner.notes!=='string'||owner.notes.length>4000||/^[=+@-]/.test(owner.notes.trim())||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(owner.notes))castleThrow('VALIDATION','Notes must be safe text up to 4000 characters.');owner.notes=owner.notes.trim();
  if(owner.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner.email))castleThrow('VALIDATION','Invalid owner email.');
@@ -1196,7 +1202,7 @@ function castleReadOwners(book,source){
    }catch(error){castleThrow('SOURCE_DATA',d.title+': invalid row '+(i+2)+'. '+error.message);}
   });
  });
- var banks=Object.create(null),transfers=Object.create(null);tables.owners.records.forEach(function(o){if(banks[castleManagerName(o.bankName)])castleThrow('SOURCE_DATA','Duplicate owner bank statement name.');banks[castleManagerName(o.bankName)]=true;});
+ var banks=Object.create(null),transfers=Object.create(null);tables.owners.records.forEach(function(o){castleOwnerBankNames(o.bankName).forEach(function(name){if(banks[castleManagerName(name)])castleThrow('SOURCE_DATA','Duplicate owner bank statement name.');banks[castleManagerName(name)]=true;});});
  tables.transfers.records.forEach(function(t){var key=castleOwnerTransferKey(t);if(transfers[key])castleThrow('SOURCE_DATA','Duplicate owner transfer.');transfers[key]=true;if(!tables.owners.records.some(function(o){return o.id===t.ownerId;}))castleThrow('SOURCE_DATA','Owner transfer has an unknown owner.');});
  return tables;
 }
@@ -1204,14 +1210,14 @@ function castlePrepareOwners(changes,current){
  var tables=JSON.parse(JSON.stringify(current.ownerData)),remaining=[],payments=[],seen=Object.create(null),changed=false;
  // Profile changes are validated first so an import may use a profile saved in this batch.
  changes.forEach(function(c){if(!c||c.kind!=='saveOwner')return;castleKeys(c,['kind','owner']);var owner=JSON.parse(JSON.stringify(c.owner));castleOwnerValidate(owner);castleUnique(seen,owner.id);var index=tables.owners.records.findIndex(function(o){return o.id===owner.id;});if(index<0)tables.owners.records.push(owner);else tables.owners.records[index]=owner;changed=true;});
- var banks=Object.create(null);tables.owners.records.forEach(function(o){var key=castleManagerName(o.bankName);if(banks[key])castleThrow('VALIDATION','This bank statement name already belongs to another owner, including inactive owners.');banks[key]=true;});
+ var banks=Object.create(null);tables.owners.records.forEach(function(o){castleOwnerBankNames(o.bankName).forEach(function(name){var key=castleManagerName(name);if(banks[key])castleThrow('VALIDATION','This bank statement name already belongs to another owner, including inactive owners.');banks[key]=true;});});
  var imported=Object.create(null);tables.transfers.records.forEach(function(t){imported[castleOwnerTransferKey(t)]=true;});
  changes.forEach(function(original){
   if(original&&original.kind==='saveOwner')return;
   if(!original||original.kind!=='importOwnerTransfer'){remaining.push(original);return;}
   var c=JSON.parse(JSON.stringify(original));castleKeys(c,['kind','ownerId','monthId','account','date','reference','source','bankName','amountCents','allocations']);castleOwnerTransferValidate(c,false);
   var key=castleOwnerTransferKey(c);if(imported[key])castleThrow('VALIDATION','This owner transfer was already imported (duplicate account and reference).');imported[key]=true;
-  var owner=tables.owners.records.filter(function(o){return o.id===c.ownerId;})[0];if(!owner||castleManagerName(owner.bankName)!==castleManagerName(c.bankName))castleThrow('VALIDATION','Choose the owner matching the bank statement name.');
+  var owner=tables.owners.records.filter(function(o){return o.id===c.ownerId;})[0];if(!owner||!castleOwnerBankNames(owner.bankName).some(function(name){return castleManagerName(name)===castleManagerName(c.bankName);}))castleThrow('VALIDATION','Choose the owner matching the bank statement name.');
   var month=current.months[c.monthId];if(!month||month.bundleOnly)castleThrow('VALIDATION','Choose an AR month for owner payments.');
   var allocationNames=Object.create(null);
   var allocations=c.allocations.map(function(a){var allocationMonth=a.monthId===undefined?c.monthId:a.monthId;var target=current.properties[a.propertyId];if(!current.months[allocationMonth]||!target||String(target.sheetId)!==allocationMonth||target.property.bundleOnly||!owner.propertyNames.some(function(name){return castleManagerName(name)===castleManagerName(target.property.name);}))castleThrow('VALIDATION','Allocate only to mapped AR properties in the selected month.');

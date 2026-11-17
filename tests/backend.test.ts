@@ -1252,6 +1252,18 @@ test('bundle properties get enclosing borders on create, append and subsequent i
  assert.equal(snapshot.months[0].properties.find((p:any)=>p.name==='Border first').payments.length,3);
 });
 
+test('multiple owner bank names persist and accept transfers under an alternate name',()=>{
+ const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ const before=app.read().snapshot;
+ const owner={id:'aliases',name:'Owner',bankName:'JOHN OWNER\nJOHN BUSINESS',email:'',notes:'',active:true,propertyNames:[before.months[0].properties[0].name]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'ALIAS123',source:'statement.pdf',bankName:'John Business',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const saved=app.post({requestId:'aliases-save',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});
+ assert.equal(saved.ok,true,saved.error?.message);
+ const loaded=app.read().snapshot;
+ assert.equal(loaded.owners[0].bankName,owner.bankName);assert.equal(loaded.ownerTransfers[0].bankName,'John Business');
+ const conflict=app.post({requestId:'aliases-conflict',revision:loaded.revision,changes:[{kind:'saveOwner',owner:{...owner,id:'other',bankName:'Another\njohn business'}}]});
+ assert.equal(conflict.ok,false);assert.match(conflict.error.message,/another owner/);
+});
 test('owner profiles and split transfers persist atomically with global duplicate protection',()=>{
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  const before=app.read().snapshot;assert.equal(before.ownerSchema,1);
