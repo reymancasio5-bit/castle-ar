@@ -7,6 +7,21 @@ import type {Month,PropertyOwner} from '../src/types.ts';
 const item=(str:string,x:number,y:number)=>({str,transform:[1,0,0,1,x,y]});
 const header='Wells Fargo Everyday Checking\nOctober 31, 2026 Page 2 of 6\nAccount number: 0000008713 (primary account)\nBeginning balance on 10/1 $100.00\nEnding balance on 10/31 $200.00\n';
 const incoming='10/5 Zelle From Sample Owner on 10/05 Ref # ABC123 09/2026\t\t330.25\t900.00\nService Fee for Unit 1400 Speedway';
+
+test('real memo formats resolve September without interpreting years as street addresses',()=>{
+ const cases=[
+  ['2123 Victory Way Service Fee for September','2123 Victory Way'],
+  ['636 Heron Creek Sept Management Fee','636 Heron Creek'],
+  ['Airbnbseptember 2026 Cohost Management Ser',undefined],
+  ['PM Managment Fee SEP.26 Extra Service',undefined],
+  ['Service Fee for SEP',undefined],
+ ];
+ for(const [memo,property] of cases){
+  const row=parseStatement(header+`10/5 Zelle From Sample Owner on 10/05 Ref # ABC123 ${memo}\t\t330.25\t900.00`).deposits[0];
+  assert.equal(row.serviceMonth,'2026-09',memo);assert.equal(row.propertyReference,property,memo);
+  assert.equal(row.description,memo);assert.equal(row.amountCents,33025);
+ }
+});
 test('Wells Fargo columns preserve credits and exclude Zelle To and debit amounts',()=>{
  const text=statementPageText([item('Deposits/',403,700),item('Withdrawals/',458,700),item('Ending daily',525,700),item('Date',62,690),item('Description',150,690),item('Additions',403,690),item('Subtractions',462,690),item('balance',540,690),item('10/5',62,680),item('Zelle From Sample Owner on 10/05 Ref # ABC123 09/2026',150,680),item('330.25',411,680),{...item('104,344.88',528,680),width:36},item('Service Fee for Unit 1400 Speedway',150,670),item('10/6',62,660),item('Zelle To Someone on 10/06 Ref # OUT123',150,660),item('50.00',480,660),item('850.00',540,660)]);
  const result=parseStatement(header+text);assert.equal(result.deposits.length,1);
@@ -44,4 +59,8 @@ test('statement dates resolve December deposits in a January statement and rejec
  const result=parseStatement(rollover+'12/31 Zelle From Sample Owner on 12/30 Ref # YEAR123\t\t10.00\t100.00');
  assert.equal(result.deposits[0].date,'2026-12-31');
  assert.throws(()=>parseStatement(header+'Account number: 9999991234\n'+incoming),/single Wells Fargo account/);
+ const memo=parseStatement(rollover+'12/31 Zelle From Sample Owner on 12/30 Ref # YEAR123 Service Fee for November\t\t10.00\t100.00').deposits[0];
+ assert.equal(memo.serviceMonth,'2026-11');
+ const january=header.replaceAll('October 31, 2026','January 31, 2027').replace('10/1','1/1').replace('10/31','1/31');
+ assert.equal(parseStatement(january+'1/5 Zelle From Sample Owner on 1/05 Ref # YEAR123 Service Fee for December\t\t10.00\t100.00').deposits[0].serviceMonth,'2026-12');
 });
