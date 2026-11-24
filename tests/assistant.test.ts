@@ -28,6 +28,25 @@ test('editor setup preserves existing properties and cancellation writes nothing
  replies=[];e.ctx.castleConfigureAssistant();assert.equal(e.props.get('OPENAI_API_KEY'),'sk-new-test-key');
 });
 test('assistant refuses unrelated requests without a model call',()=>{const e=engine();const r=e.ctx.castleAiRun({message:'Write a recipe for pancakes',monthId:'m',history:[]});assert.match(r.text,/Castle/i);assert.equal(e.calls(),0);});
+
+const bankSample={source:'bank.xlsx',sheet:'Checking',rows:[['When','Memo','Value'],['2026-11-23','AIRBNB PAYMENTS 000000346979007','25']],totalRows:2};
+const bankMapping={headerRow:0,date:0,description:1,amount:2,account:null,description2:null,debit:null,reference:null,status:null};
+test('bank interpretation uses a read-only constrained tool with app rules and untrusted source context',()=>{
+ const e=engine();let payload:any;e.ctx.castleBuildRequests=()=>{throw Error('must not write');};
+ e.ctx.UrlFetchApp.fetch=(_url:string,options:any)=>{payload=JSON.parse(options.payload);return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'function_call',name:'map_bank_columns',arguments:JSON.stringify(bankMapping)}]})};};
+ const result=e.ctx.castleAiRun({task:'bankMapping',bankSample,monthId:'m'});
+ assert.equal(result.bankMapping.amount,2);assert.equal(result.proposal,undefined);
+ assert.equal(payload.tools.length,1);assert.equal(payload.tools[0].name,'map_bank_columns');
+ assert.match(payload.instructions,/untrusted/i);assert.match(payload.instructions,/duplicate/i);assert.match(payload.instructions,/copy D to I/i);assert.match(payload.instructions,/user submits/i);
+ assert.equal(payload.store,false);assert.equal(payload.tool_choice.name,'map_bank_columns');
+});
+test('bank interpretation rejects oversized input before paying and malformed model coordinates',()=>{
+ const e=engine();assert.throws(()=>e.ctx.castleAiRun({task:'bankMapping',bankSample:{...bankSample,rows:Array(61).fill(['x'])},monthId:'m'}),/sample/i);assert.equal(e.calls(),0);
+ for(const mapping of [{...bankMapping,amount:99},{...bankMapping,amount:0},{...bankMapping,changes:[]},{...bankMapping,headerRow:1}]){
+  e.ctx.UrlFetchApp.fetch=()=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify({output:[{type:'function_call',name:'map_bank_columns',arguments:JSON.stringify(mapping)}]})});
+  assert.throws(()=>e.ctx.castleAiRun({task:'bankMapping',bankSample,monthId:'m'}),/mapping/i);
+ }
+});
 test('record summaries distinguish received and bank amounts, calculated in cents',()=>{const e=engine();const r=e.ctx.castleAiQuery(e.ctx.castleRead().snapshot,{monthId:'m',search:'',offset:0});assert.equal(r.summary.receivedCents,3500);assert.equal(r.summary.bankCents,3000);assert.equal(r.summary.outstandingCents,6500);});
 test('proposals cannot bypass bank verification or change unknown records',()=>{const e=engine();const s=e.ctx.castleRead();assert.throws(()=>e.ctx.castleAiProposal([{kind:'reconcileBank',paymentId:'pay'}],s),/allowed/i);assert.throws(()=>e.ctx.castleAiProposal([{kind:'updatePayment',paymentId:'pay',fields:{verifiedBySystem:true}}],s),/verification/i);assert.throws(()=>e.ctx.castleAiProposal([{kind:'deletePayment',paymentId:'unknown'}],s),/record/i);});
 test('daily budget is enforced before another paid request',()=>{const e=engine();e.props.set('CASTLE_AI_DAILY_LIMIT','1');const b={message:'Report on Castle payments',monthId:'m',history:[]};e.ctx.castleAiRun(b);assert.throws(()=>e.ctx.castleAiRun(b),/limit/i);assert.equal(e.calls(),1);});

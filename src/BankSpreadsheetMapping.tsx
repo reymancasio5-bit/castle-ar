@@ -1,25 +1,16 @@
-import {detectBankColumns, type BankColumnMapping} from './bank-spreadsheet';
-import type {ImportSheet} from './import';
+﻿import type {PreparedBankSheet} from './bank-ai';
 
-export interface BankSheetDraft {source:string; sheet:ImportSheet; mapping:BankColumnMapping; account:string; skip:boolean}
-const fields: [Exclude<keyof BankColumnMapping,'headerRow'>,string,boolean][] = [
- ['date','Transaction Date',true],['description','Description',true],['description2','Additional Description',false],
- ['amount','Amount / Credit',true],['debit','Debit',false],['account','Account Number',false],
- ['reference','Transaction Reference',false],['status','Transaction Status',false],
-];
-export default function BankSpreadsheetMapping({drafts,onChange,onReview,disabled}:{drafts:BankSheetDraft[];onChange:(drafts:BankSheetDraft[])=>void;onReview:()=>void;disabled:boolean}) {
- const update=(index:number,patch:Partial<BankSheetDraft>)=>onChange(drafts.map((draft,i)=>i===index?{...draft,...patch}:draft));
- return <section className="bank-mapping"><h3>Map Transaction Columns</h3><p>Confirm the columns for each worksheet. Amounts stay in the source currency; no conversion is applied. Use a signed amount (positive for deposits) or a credit column with its debit column. Dates can be Excel dates, YYYY-MM-DD, or MM/DD/YYYY. Skip worksheets that contain no transactions.</p>
+export default function BankSpreadsheetMapping({drafts,reviewed,onChange,onReview,onRetry,disabled}:{drafts:PreparedBankSheet[];reviewed:boolean;onChange:(drafts:PreparedBankSheet[])=>void;onReview:()=>void;onRetry?:()=>void;disabled:boolean}) {
+ const update=(index:number,account:string)=>onChange(drafts.map((draft,i)=>i===index?{...draft,account}:draft));
+ return <section className="bank-mapping"><h3>Automatic Transaction Preparation</h3><p>The app interprets columns and applies its transaction validation and matching rules. Resolve any exceptions below. Nothing is saved until you submit the reviewed payment rows.</p>
  {drafts.map((draft,index)=><fieldset key={index} disabled={disabled} className="bank-mapping-sheet"><legend>{draft.source} / {draft.sheet.name}</legend>
-  <label><input type="checkbox" checked={draft.skip} onChange={e=>update(index,{skip:e.target.checked})}/> Skip This Worksheet</label>
-  {!draft.skip&&<><div className="bank-mapping-fields"><label>Header Row<input type="number" min={1} max={draft.sheet.rows.length} value={draft.mapping.headerRow+1} onChange={e=>{const row=Number(e.target.value)-1;if(Number.isInteger(row)&&row>=0&&row<draft.sheet.rows.length)update(index,{mapping:detectBankColumns(draft.sheet,row)});}}/></label>
-   {fields.map(([key,label,required])=><label key={key}>{label}{required?' *':''}<select value={draft.mapping[key]??-1} onChange={e=>update(index,{mapping:{...draft.mapping,[key]:Number(e.target.value)<0?(required?-1:undefined):Number(e.target.value)}})}>
-    <option value={-1}>{required?'Choose A Column':'Not In File'}</option>
-    {draft.sheet.rows[draft.mapping.headerRow]?.map((cell,i)=><option key={i} value={i}>{i+1}: {String(cell.value??'Empty Heading')}</option>)}
-   </select></label>)}
-   {draft.mapping.account===undefined&&<label>Bank Account / Last Four Digits *<input value={draft.account} inputMode="numeric" placeholder="Enter the source account" onChange={e=>update(index,{account:e.target.value})}/></label>}
-  </div><p>First transaction row:</p><div className="import-table-scroll"><table className="import-table"><thead><tr>{draft.sheet.rows[draft.mapping.headerRow]?.map((cell,i)=><th key={i}>{String(cell.value??'')}</th>)}</tr></thead><tbody><tr>{draft.sheet.rows[draft.mapping.headerRow+1]?.map((cell,i)=><td key={i}>{cell.formatted??String(cell.value??'')}</td>)}</tr></tbody></table></div></>}
+  {draft.issue?<><p role="alert">{draft.issue}</p><label><input type="checkbox" checked={!!draft.excluded} onChange={e=>onChange(drafts.map((d,i)=>i===index?{...d,excluded:e.target.checked}:d))}/> Exclude This Worksheet</label><p>Exclude only a worksheet you do not want imported, such as notes or a summary. Its transactions will not be saved.</p></>:<><strong>{draft.method==='ai'?'AI-Assisted Interpretation':'Automatic Format Recognition'}</strong><p>{draft.note}</p></>}
+  {!draft.issue&&draft.mapping.account===undefined&&<details open={!reviewed}><summary>{draft.account?`Account ${draft.account} · Review Or Correct`:'Account Needed'}</summary>
+   <p>{draft.account?'This account will be used for this worksheet.':'The file does not identify its account, and the app could not establish one uniquely. Enter only the missing account to continue.'}</p>
+   <div className="bank-mapping-fields"><label>Bank Account / Last Four Digits<input value={draft.account} inputMode="numeric" placeholder="Enter the source account" onChange={e=>update(index,e.target.value)}/></label></div>
+  </details>}
  </fieldset>)}
- <button className="import-button import-button-primary" disabled={disabled} onClick={onReview}>Review Mapped Transactions</button>
+ {drafts.some(d=>d.issue&&!d.excluded)&&onRetry&&<button className="import-button import-button-secondary" disabled={disabled} onClick={onRetry}>Retry Interpretation</button>}
+ {!reviewed&&<button className="import-button import-button-primary" disabled={disabled||drafts.some(d=>!d.excluded&&(d.issue||d.mapping.account===undefined&&(!/^\d[\d -]*$/.test(d.account.trim())||d.account.replace(/\D/g,'').length<4)))} onClick={onReview}>Continue To Review</button>}
  </section>;
 }

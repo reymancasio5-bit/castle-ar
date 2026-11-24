@@ -61,3 +61,15 @@ Use the paperclip or paste a screenshot into the message box. Supported attachme
 Ask to import an attached original bank PDF or Excel/CSV file. The model supplies a Review import button that opens the existing importer with that file already loaded. Users still review matching/mapping and apply explicitly. Screenshots support analysis and reviewed field-edit proposals, not bank verification or bulk import. Attachments remain selected for follow-up questions until removed. Attached content is untrusted evidence; the model is instructed not to follow instructions inside files or images.
 
 Deploy the rebuilt public/Code.gs (includes the embedded assistant) and the rebuilt frontend to enable these additions. The API key remains in Script Properties.
+
+## Automatic bank spreadsheet imports
+
+The bank import screen now calls a dedicated `bankMapping` assistant task automatically after reading each nonempty worksheet. Users review prepared matches and submit; they do not select columns. The task receives a bounded worksheet sample (up to 60 rows and 60 columns, under 24,000 serialized characters) and the selected reporting month. The original workbook stays in the browser; the full source rows are parsed locally after interpretation.
+
+The model has one read-only tool that returns header/column coordinates. Its instructions describe the existing Airbnb bundle/account checks, owner-name and reference matching, exact allocations, reporting-month hints, duplicate handling, source currency, and the D/F/G/H/I/J/K rules. File contents and workspace names are explicitly untrusted evidence. Both the backend and frontend reject invalid coordinates; the frontend also rejects mappings that drop recognized controls or skip a recognized header. The model cannot supply transaction values or save changes.
+
+Known layouts still process automatically when AI is unavailable or returns an invalid answer; the preparation note discloses that fallback. Unfamiliar layouts stop with an error so the user can retry after configuration is corrected. No nonempty worksheet is silently dropped. All original rows still pass through the existing parser, matching, review, duplicate protections, and fresh-snapshot save validation.
+
+When an account column is absent, the app checks explicit account metadata. Otherwise it may suggest an account only when at least two distinct Airbnb bundle amounts intersect to exactly one account in the selected month's records. Conflicting or insufficient evidence requires only the missing account, not manual column mapping. The suggested account is disclosed and can be corrected before submission. No currency conversion occurs.
+
+Deploy the updated `public/Code.gs` and frontend together. This task reuses `OPENAI_API_KEY`, `CASTLE_AI_MODEL`, and the shared AI budget; each worksheet interpretation consumes a request. Tests use simulated model responses and exercise the real parser and review/save boundary. They do not establish live model quality or a deployed backend connection.
