@@ -6,6 +6,15 @@ const sheet=(rows:unknown[][]):ImportSheet=>({name:'Checking',rows:rows.map(r=>r
 const month:Month={id:'m',month:'2026-11',label:'November',properties:[{id:'p',name:'Home',manager:'',totalCents:0,payments:[1000,2000].map((amountCents,i)=>({id:String(i),type:'Airbnb',amountCents,bundleCents:amountCents,bankDetails:'Checking 1234',bankDate:'',bankCents:null,payoutDate:'',verifiedByDaisy:false}))}]};
 const source=sheet([['DATE','DESCRIPTION','AMOUNT','STATUS'],['2026-11-23','AIRBNB PAYMENTS 000000346979007',10,'Posted'],['2026-11-24','AIRBNB PAYMENTS 000000346979008',20,'Posted']]);
 
+test('recognized exports never call AI, including missing accounts and invalid source values',async()=>{
+ const {prepareBankSheet}=await import('../src/bank-ai.ts');let calls=0;
+ const ask=async()=>{calls++;throw Error('AI must not run for recognized files');};
+ for(const input of [source,{...source,rows:source.rows.slice(0,2)},sheet([['DATE','DESCRIPTION','AMOUNT'],['invalid','ZELLE FROM JANE ON 11/23 REF # ABC123',10]])]){
+  assert.equal((await prepareBankSheet(input,'bank.xlsx',month,ask)).method,'automatic');
+ }
+ assert.equal(calls,0);
+});
+
 test('automatic interpretation resolves missing account only with independent exact bundle evidence',async()=>{
  const {prepareBankSheet}=await import('../src/bank-ai.ts');
  const result=await prepareBankSheet(source,'bank.xlsx',month);

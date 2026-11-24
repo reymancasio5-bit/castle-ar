@@ -2,11 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {statementPageText} from '../src/bank-pdf-layout.ts';
 import {parseStatement} from '../src/bank-statement.ts';
+import {parseBankSpreadsheet} from '../src/bank-spreadsheet.ts';
 import {matchOwnerDeposits,applyOwnerChange} from '../src/owners.ts';
 import type {Month,PropertyOwner} from '../src/types.ts';
 const item=(str:string,x:number,y:number)=>({str,transform:[1,0,0,1,x,y]});
 const header='Wells Fargo Everyday Checking\nOctober 31, 2026 Page 2 of 6\nAccount number: 0000008713 (primary account)\nBeginning balance on 10/1 $100.00\nEnding balance on 10/31 $200.00\n';
 const incoming='10/5 Zelle From Sample Owner on 10/05 Ref # ABC123 09/2026\t\t330.25\t900.00\nService Fee for Unit 1400 Speedway';
+
+test('Excel and PDF Zelle transactions produce identical owner evidence and allocation results',()=>{
+ const description='Zelle From Sample Owner on 10/05 Ref # ABC123 09/2026 Service Fee for Unit 1400 Speedway';
+ const pdf=parseStatement(header+`10/5 ${description}\t\t330.25\t900.00`,'bank');
+ const excel=parseBankSpreadsheet([{name:'Checking',rows:[['DATE','DESCRIPTION','AMOUNT','CHECK #','STATUS'],['2026-10-05',description,330.25,'','Posted'],['2026-10-06','Zelle To Someone on 10/06 Ref # OUT123',-50,'','Posted']].map(row=>row.map(value=>({value})))}],'bank',{account:'8713'});
+ assert.deepEqual(excel.deposits,pdf.deposits);
+ const exactSept=structuredClone(sept);exactSept.properties[0].totalCents=33025;
+ assert.deepEqual(matchOwnerDeposits(excel.deposits,oct,[owner],[],[exactSept,oct]),matchOwnerDeposits(pdf.deposits,oct,[owner],[],[exactSept,oct]));
+});
 
 test('real memo formats resolve September without interpreting years as street addresses',()=>{
  const cases=[

@@ -83,18 +83,15 @@ function bundleAccount(sheet:ImportSheet,mapping:BankColumnMapping,month:Month):
 
 export async function prepareBankSheet(sheet:ImportSheet,source:string,month:Month,ask?:BankMappingAssistant,onProgress?:(label:string)=>void):Promise<PreparedBankSheet> {
  if(sheet.error)throw new Error(sheet.error);
- let mapping:BankColumnMapping|undefined,method:'ai'|'automatic'='automatic',note='Columns recognized automatically.';
- let aiError='';
- if(ask){
+ let mapping:BankColumnMapping,method:'ai'|'automatic'='automatic',note='Columns recognized automatically. No AI was used.';
+ try{mapping=validateBankMapping(sheet,detectBankColumns(sheet));}
+ catch(localError){
+  if(!ask)throw new Error(`${source} / ${sheet.name}: The app could not recognize this layout. Connect the configured AI backend to assist with this format, then retry.`);
   try{
+   onProgress?.('Automatic Recognition Failed · Trying AI Assistance');
    const reply=await ask({task:'bankMapping',bankSample:bankMappingSample(sheet,source),monthId:month.id,message:'Interpret bank transaction columns for the existing import workflow.',history:[]},onProgress);
-   mapping=validateBankMapping(sheet,reply.bankMapping);method='ai';note='AI interpreted the columns; the app validates the original transaction values.';
-  }catch(error){aiError=error instanceof Error?error.message:'AI interpretation was unavailable.';}
- }
- if(!mapping){
-  try{mapping=validateBankMapping(sheet,detectBankColumns(sheet));}
-  catch{throw new Error(`${source} / ${sheet.name}: ${aiError||'This layout needs AI interpretation. Connect the configured AI backend and retry.'}`);}
-  if(aiError)note=`${aiError} Recognized columns were processed automatically instead.`;
+   mapping=validateBankMapping(sheet,reply.bankMapping);method='ai';note='Automatic column recognition failed, so AI assisted with the layout. The app validates the original transaction values.';
+  }catch(error){throw new Error(`${source} / ${sheet.name}: Automatic recognition failed (${localError instanceof Error?localError.message:'Unknown layout'}). AI assistance also failed: ${error instanceof Error?error.message:'Unavailable'}`);}
  }
  let account='';
  if(mapping.account===undefined){
