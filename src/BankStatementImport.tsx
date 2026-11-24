@@ -11,11 +11,15 @@ import {BankImportReviewRequired,prepareFreshBankImport,remapBankAllocationDraft
 import {runProgress,type ReportProgress} from './operation-progress';
 import {useBackgroundForm} from './BackgroundWork';
 import FormWindowControls from './FormWindowControls';
+import BankSpreadsheetMapping, {type BankSheetDraft} from './BankSpreadsheetMapping';
+import {detectBankColumns,parseBankSpreadsheet} from './bank-spreadsheet';
 export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,snapshot:initialSnapshot}:{snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
  const [snapshot,setReviewSnapshot]=useState(initialSnapshot);
  const month=snapshot?.months.find(m=>m.id===initialMonth.id)??initialMonth;
  const dialog=useRef<HTMLDialogElement>(null),input=useRef<HTMLInputElement>(null);
  const [deposits,setDeposits]=useState<BankDeposit[]>([]),[warnings,setWarnings]=useState<string[]>([]);
+ const [sheetDrafts,setSheetDrafts]=useState<BankSheetDraft[]>([]);
+ const [pdfResult,setPdfResult]=useState<{deposits:BankDeposit[];warnings:string[]}>({deposits:[],warnings:[]});
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[saving,setSaving]=useState(false),[reviewed,setReviewed]=useState(false);
  const background=useBackgroundForm('Import Bank Statement',busy||saving,saving);
  useEffect(()=>{const el=dialog.current;if(background.minimized)el?.close();else if(el&&!el.open)el.showModal();},[background.minimized]);
@@ -52,9 +56,11 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  }
  async function readFiles(files:FileList|File[],report:ReportProgress){
   setBusy(true);setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});setDepositEdits({});
+  setSheetDrafts([]);setPdfResult({deposits:[],warnings:[]});
   try{
    if(files.length>10||Array.from(files).reduce((n,f)=>n+f.size,0)>50*1024*1024)throw new Error('Choose up to 10 bank files, totaling no more than 50 MB.');
    const all:BankDeposit[]=[],notes:string[]=[];
+   const drafts:BankSheetDraft[]=[];
    for(const [index,file] of Array.from(files).entries()){
     const fileProgress:ReportProgress=progress=>report({...progress,label:`File ${index+1} Of ${files.length}: ${file.name} · ${progress.label}`});
     try{
@@ -63,23 +69,42 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
       const {extractStatementText}=await import('./bank-pdf');
       parsed=parseStatement(await extractStatementText(file,fileProgress),file.name);
      }else if(/\.(xlsx|xls|csv)$/i.test(file.name)){
-      const [{readSpreadsheet},{parseBankSpreadsheet}]=await Promise.all([import('./excel'),import('./bank-spreadsheet')]);
-      parsed=parseBankSpreadsheet(await readSpreadsheet(file,fileProgress),file.name);
-     }else throw new Error('Choose a PDF bank statement or an RBC Excel/CSV transaction export.');
+      const {readSpreadsheet}=await import('./excel');
+      for(const sheet of await readSpreadsheet(file,fileProgress)){
+       if(sheet.error)throw new Error(`${sheet.name}: ${sheet.error}`);
+       if(!sheet.rows.some(row=>row.some(cell=>cell.value!=null&&String(cell.value).trim()||cell.formula||cell.error)))continue;
+       drafts.push({source:file.name,sheet,mapping:detectBankColumns(sheet),account:'',skip:false});
+      }
+      parsed={deposits:[],warnings:[]};
+     }else throw new Error('Choose a PDF bank statement or an Excel/CSV transaction export.');
      all.push(...parsed.deposits);notes.push(...parsed.warnings);
     }catch(error){throw new Error(`${file.name}: ${error instanceof Error?error.message:'Could not read this bank file.'}`);}
    }
-   setDeposits(all);setWarnings(notes);setReviewed(true);
+   setPdfResult({deposits:all,warnings:notes});setSheetDrafts(drafts);
+   if(!drafts.length){setDeposits(all);setWarnings(notes);setReviewed(true);}
   }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');throw e;}finally{setBusy(false);if(input.current)input.current.value='';}
  }
  useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
+ function reviewMapped(){
+  setError('');setReviewed(false);setDeposits([]);setWarnings([]);setAllocations({});setSkipped({});setDepositEdits({});
+  try{
+   const all=[...pdfResult.deposits],notes=[...pdfResult.warnings];
+   for(const draft of sheetDrafts){
+    if(draft.skip){notes.push(`${draft.source} / ${draft.sheet.name}: Worksheet skipped by selection.`);continue;}
+    const parsed=parseBankSpreadsheet([draft.sheet],draft.source,{mapping:draft.mapping,account:draft.account});
+    all.push(...parsed.deposits);notes.push(...parsed.warnings);
+   }
+   setDeposits(all);setWarnings(notes);setReviewed(true);
+  }catch(e){setError(e instanceof Error?e.message:'Review the transaction mapping.');}
+ }
  async function save(){setSaving(true);setError('');try{if(hasUnresolved)throw new Error('Allocate or skip each owner deposit before saving.');await onApply(changes,snapshot?latest=>prepareFreshBankImport(snapshot,changes,latest):undefined);}catch(e){if(e instanceof BankImportReviewRequired&&snapshot){setAllocations(current=>remapBankAllocationDrafts(snapshot,e.snapshot,current));setReviewSnapshot(e.snapshot);}setError((e as Error).message);}finally{setSaving(false);}}
  return <dialog ref={dialog} className="import-modal bank-statement-modal" aria-labelledby="bank-import-title" onCancel={e=>{e.preventDefault();if(!busy&&!saving)onClose();}}>
   <header className="import-header"><div className="import-header-icon"><FileText size={23}/></div><div><p className="import-eyebrow">BANK RECONCILIATION</p><h2 id="bank-import-title">Import Bank Statement</h2><p>Match Airbnb and owner deposits to {month.label} records.</p></div><FormWindowControls onMinimize={background.minimize} onClose={onClose} closeDisabled={busy||saving}/></header>
   <div className="import-content" aria-busy={busy||saving}>
    {error&&<div className="import-alert" role="alert">{error}</div>}
    {!supported&&<div className="import-warning">Update the Google Apps Script deployment with the supplied Code.gs to enable bank statement verification.</div>}
-   <div className="import-dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void files(e.dataTransfer.files);}}><div className="import-upload-icon"><Upload size={28}/></div><h3>Bring Your Bank Deposits In</h3><p>Choose RBC or Wells Fargo PDF statements, or RBC Excel/CSV transaction exports. RBC imports match Airbnb bundles and owner e-Transfer deposits. Wells Fargo imports match incoming Zelle From owner payments; outgoing Zelle To payments are excluded.</p><input ref={input} className="import-hidden-input" type="file" accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" aria-label="Choose Bank Files" multiple onChange={e=>void files(e.target.files)}/><button className="import-button import-button-primary" disabled={busy||saving} onClick={()=>input.current?.click()}>{busy?'Reading Bank Files…':'Choose Bank Files'}</button><small>PDF, XLSX, XLS or CSV · Up to 10 files / 50 MB total · PDF: 20 MB each · Excel/CSV: 10 MB each · Read locally in your browser</small></div>
+   <div className="import-dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void files(e.dataTransfer.files);}}><div className="import-upload-icon"><Upload size={28}/></div><h3>Bring Your Bank Deposits In</h3><p>Choose RBC or Wells Fargo PDF statements, or bank Excel/CSV transaction exports. Map spreadsheet columns to match Airbnb bundles and incoming owner e-Transfer or Zelle payments. Outgoing payments are excluded.</p><input ref={input} className="import-hidden-input" type="file" accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" aria-label="Choose Bank Files" multiple onChange={e=>void files(e.target.files)}/><button className="import-button import-button-primary" disabled={busy||saving} onClick={()=>input.current?.click()}>{busy?'Reading Bank Files…':'Choose Bank Files'}</button><small>PDF, XLSX, XLS or CSV · Up to 10 files / 50 MB total · PDF: 20 MB each · Excel/CSV: 10 MB each · Read locally in your browser</small></div>
+   {sheetDrafts.length>0&&<BankSpreadsheetMapping drafts={sheetDrafts} disabled={busy||saving} onChange={drafts=>{setSheetDrafts(drafts);setReviewed(false);setDeposits([]);setWarnings([]);}} onReview={reviewMapped}/>}
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Bank Deposits Before Saving</strong><p>Airbnb deposits match payout bundles and bank accounts. Owner deposits are applied directly to their properties, with exact amounts and the bank transaction date.</p></div></div>
    {warnings.length>0&&<div className="import-warning"><p>Review {warnings.length} import note{warnings.length===1?'':'s'} before saving.</p><details><summary>View Import Notes</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details></div>}
    {reviewed&&<><div className="import-section-heading"><h3>Review Matches</h3><span>{deposits.length} deposits · {rowCount} rows to update</span></div>{!deposits.length?<p>No readable Airbnb or owner deposits found. Check the PDF statement or Excel/CSV transaction export.</p>:result.rows.length>0?<div className="import-table-scroll import-review-scroll"><table className="import-table"><thead><tr><th>Statement / Bank</th><th>Bank Date</th><th>Statement Bundle / F Match</th><th>Matched Rows / D To I</th><th>Result</th></tr></thead><tbody>{result.rows.map((row,i)=><tr key={i}><td>{row.deposit.source}<small>Checking {row.deposit.account} {row.deposit.reference&&`· ${row.deposit.reference}`}</small></td><td>{row.deposit.date}</td><td>{money(row.deposit.amountCents)}</td><td>{row.payments.map(({property,payment})=><div key={payment.id}>{property}<small>Row {payment.id.split(':').at(-1)} · {money(payment.amountCents)}</small></div>)}</td><td><span className={`import-status import-status-${row.status==='Ready'?'ready':'skipped'}`}>{row.status}</span></td></tr>)}</tbody></table></div>:null}</>}

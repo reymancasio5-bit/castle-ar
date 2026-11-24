@@ -21,17 +21,7 @@ export function parseWellsFargoStatement(text:string,source:string):{deposits:Ba
   if(!match||!p.date||p.debit.trim()||!/^\d[\d,]*\.\d{2}$/.test(p.credit.trim())){warnings.push('An incoming Zelle payment had an unreadable reference, date, or deposit amount and was skipped.');return;}
   const amountCents=Math.round(Number(p.credit.replace(/,/g,''))*100);
   if(!Number.isSafeInteger(amountCents)||amountCents<=0){warnings.push('An incoming Zelle payment had an invalid deposit amount and was skipped.');return;}
-  const description=(match[3]??'').replace(/\\/g,' ').replace(/\s+/g,' ').trim();
-  // Preserve the original memo, but separate joined words and remove month/year tokens
-  // before looking for an address ("SEP.26 Extra" is not "26 Extra" street).
-  const memo=description.replace(/\bAirbnb(?=(?:January|February|March|April|May|June|July|August|September|October|November|December)\b)/i,'Airbnb ');
-  const numericMonth=memo.match(/\b(0?[1-9]|1[0-2])\/(20\d{2})\b/);
-  const namedMonth=memo.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:[.\s]+(20\d{2}|\d{2})\b)?\b/i);
-  const namedIndex=namedMonth?monthNames.indexOf(namedMonth[1].slice(0,3).toLowerCase())+1:0;
-  const namedYear=namedMonth?.[2]?Number(namedMonth[2].length===2?'20'+namedMonth[2]:namedMonth[2]):+p.date.slice(0,4)-(namedIndex>+p.date.slice(5,7)?1:0);
-  const serviceMonth=numericMonth?`${numericMonth[2]}-${numericMonth[1].padStart(2,'0')}`:namedMonth?`${namedYear}-${String(namedIndex).padStart(2,'0')}`:undefined;
-  const addressMemo=memo.replace(numericMonth?.[0]??/^(?!)$/,' ').replace(namedMonth?.[0]??/^(?!)$/,' ');
-  const propertyReference=addressMemo.match(/\b(?:Unit\s+)?(\d+[A-Za-z]?\s+(?!(?:Management|Service|Fee|Airbnb|Cohost|Extra)\b)[A-Za-z][A-Za-z0-9 .'-]*?)(?=\s+(?:Service|Management|Fee)\b|$)/i)?.[1]?.trim();
+  const {description,propertyReference,serviceMonth}=zelleMemo(match[3]??'',p.date);
   deposits.push({kind:'owner',ownerName:match[1].trim(),account,date:p.date,amountCents,reference:match[2],source,...(description?{description}:{}),...(propertyReference?{propertyReference}:{}),...(serviceMonth?{serviceMonth}:{})});
  };
  for(const raw of text.split(/\r?\n/)){
@@ -48,4 +38,19 @@ export function parseWellsFargoStatement(text:string,source:string):{deposits:Ba
  flush();
  warnings.push('Wells Fargo import includes incoming Zelle From payments only. Zelle To, Airbnb deposits, and other transactions are not imported by this format.');
  return {deposits,warnings};
+}
+
+export function zelleMemo(raw:string,date:string){
+  const description=raw.replace(/\\/g,' ').replace(/\s+/g,' ').trim();
+  // Preserve the original memo, but separate joined words and remove month/year tokens
+  // before looking for an address ("SEP.26 Extra" is not "26 Extra" street).
+  const memo=description.replace(/\bAirbnb(?=(?:January|February|March|April|May|June|July|August|September|October|November|December)\b)/i,'Airbnb ');
+  const numericMonth=memo.match(/\b(0?[1-9]|1[0-2])\/(20\d{2})\b/);
+  const namedMonth=memo.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:[.\s]+(20\d{2}|\d{2})\b)?\b/i);
+  const namedIndex=namedMonth?monthNames.indexOf(namedMonth[1].slice(0,3).toLowerCase())+1:0;
+  const namedYear=namedMonth?.[2]?Number(namedMonth[2].length===2?'20'+namedMonth[2]:namedMonth[2]):+date.slice(0,4)-(namedIndex>+date.slice(5,7)?1:0);
+  const serviceMonth=numericMonth?`${numericMonth[2]}-${numericMonth[1].padStart(2,'0')}`:namedMonth?`${namedYear}-${String(namedIndex).padStart(2,'0')}`:undefined;
+  const addressMemo=memo.replace(numericMonth?.[0]??/^(?!)$/,' ').replace(namedMonth?.[0]??/^(?!)$/,' ');
+  const propertyReference=addressMemo.match(/\b(?:Unit\s+)?(\d+[A-Za-z]?\s+(?!(?:Management|Service|Fee|Airbnb|Cohost|Extra)\b)[A-Za-z][A-Za-z0-9 .'-]*?)(?=\s+(?:Service|Management|Fee)\b|$)/i)?.[1]?.trim();
+ return {description,propertyReference,serviceMonth};
 }

@@ -53,12 +53,47 @@ test('invalid account, date, amount, formula, or error cells warn with row locat
  assert.match(result.warnings[0],/broken.xlsx.*Transactions.*2/);
 });
 
-test('rejects unsupported currency, duplicate or missing columns and oversized-sheet reader errors', () => {
- const usd=sheet(row());usd.rows[0][6].value='USD$';
+test('rejects duplicate or missing columns and oversized-sheet reader errors', () => {
  const duplicate=sheet(row());duplicate.rows[0].push({value:'CAD$'});
- for(const s of [usd,duplicate,{name:'Wrong',rows:[[{value:'Property'},{value:'Amount'}]]},{name:'Large',rows:[],error:'This worksheet exceeds 10,000 rows.'}]) {
+ for(const s of [duplicate,{name:'Wrong',rows:[[{value:'Property'},{value:'Amount'}]]},{name:'Large',rows:[],error:'This worksheet exceeds 10,000 rows.'}]) {
   assert.throws(()=>parseBankSpreadsheet([s],'wrong.xlsx'),/wrong.xlsx/i);
  }
+});
+
+test('maps US exports with an explicit account, incoming Zelle and Airbnb only', () => {
+ const s:ImportSheet={name:'Checking (1)',rows:[['DATE','DESCRIPTION','AMOUNT','CHECK #','STATUS'],
+ [46349,'AIRBNB 4977 AIRBNB NOV 20 M-2PKA6WWZSM5J2 TRN*1*M-2PKA6WWZSM5J2\\',70.39,'','Posted'],
+ [46349,'ZELLE FROM JANE SMITH ON 11/21 REF # WFCT22XBHPXR OCT 26',210.03,'','Posted'],
+ [46349,'ZELLE TO JANE SMITH ON 11/21 REF # WFCT22XBHPXR',-210.03,'','Posted'],
+ [46349,'AIRBNB PAYMENTS 000000346979007',100,'','Pending']].map(r=>r.map(value=>({value})))};
+ assert.throws(()=>parseBankSpreadsheet([s],'arbitrary.xlsx'),/account/i);
+ const result=parseBankSpreadsheet([s],'arbitrary.xlsx',{account:'1234'});
+ assert.equal(result.deposits.length,2);
+ assert.equal(result.deposits[0].reference,'M-2PKA6WWZSM5J2');
+ assert.equal(result.deposits[1].ownerName,'JANE SMITH');
+ assert.equal(result.deposits[1].reference,'WFCT22XBHPXR');
+ assert.equal(result.deposits[1].serviceMonth,'2026-10');
+ assert.ok(result.deposits.every(d=>d.account==='1234'&&d.date==='2026-11-23'));
+});
+
+test('explicit mapping rejects reused columns and does not override invalid source accounts', () => {
+ const s=sheet(row(undefined,10,46349,'invalid'));
+ assert.equal(parseBankSpreadsheet([s],'bank.xlsx',{account:'1234'}).deposits.length,0);
+ assert.throws(()=>parseBankSpreadsheet([s],'bank.xlsx',{account:'1234',mapping:{headerRow:0,date:2,description:4,amount:2}}),/distinct/);
+ const noAccount:ImportSheet={name:'Data',rows:[['Date','Description','Amount'],['2026-11-23','AIRBNB PAYMENTS 000000346979007',10]].map(r=>r.map(value=>({value})))};
+ assert.throws(()=>parseBankSpreadsheet([noAccount],'bank.xlsx',{account:'12'}),/account/i);
+});
+
+test('explicit column mapping supports unfamiliar labels and split credit/debit columns', () => {
+ const s:ImportSheet={name:'Custom',rows:[['When','Memo','In','Out'],['2026-11-23','AIRBNB PAYMENTS 000000346979007',10,''],['2026-11-23','AIRBNB PAYMENTS 000000346979008',20,5]].map(r=>r.map(value=>({value})))};
+ const result=parseBankSpreadsheet([s],'renamed.csv',{account:'1234',mapping:{headerRow:0,date:0,description:1,amount:2,debit:3}});
+ assert.equal(result.deposits.length,1);assert.equal(result.deposits[0].amountCents,1000);
+ assert.equal(result.warnings.length,1);
+});
+
+test('USD headers and optional second descriptions do not restrict ingestion', () => {
+ const s=sheet(row());s.rows[0][6].value='USD$';
+ assert.equal(parseBankSpreadsheet([s],'usd.xlsx').deposits.length,1);
 });
 
 test('supports ISO and explicitly US-formatted text dates without using upload month', () => {
