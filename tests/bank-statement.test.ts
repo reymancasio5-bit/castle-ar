@@ -29,20 +29,20 @@ test('never treats an Airbnb debit as a deposit',()=>{
  assert.equal(parseStatement(header+'09 Sep AIRBNB PAYMENTS\t100.00\t\t20,000.00').deposits.length,0);
 });
 test('matches same-account bundle rows and copies each row amount, not the bundle',()=>{
- const statement=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t6,824.51\t');
+ const statement=parseStatement(header+'Currency: CAD\n09 Sep AIRBNB PAYMENTS\n000000000123\t\t6,824.51\t');
  const result=matchStatement(statement.deposits,month(payment('a'),payment('b',{amountCents:568630}),payment('wrong',{bankDetails:'Checking 7524'})));
  assert.equal(result.changes.length,2);
  assert.equal(result.rows[0].payments[0].payment.amountCents,113821);
- assert.deepEqual(result.changes[0],{kind:'reconcileBank',paymentId:'a',account:'5864',bundleCents:682451,bankDate:'2026-09-09'});
+ assert.deepEqual(result.changes[0],{kind:'reconcileBank',paymentId:'a',account:'5864',bundleCents:682451,bankDate:'2026-09-09',receipt:{accountIdentity:'004091035864',platform:'Airbnb',description:statement.deposits[0].sourceDescription,sourceRow:statement.deposits[0].sourceRow,reference:'000000000123',source:'Pasted statement',currency:'CAD'}});
 });
-test('blocks repeated deposits and conflicting existing bank values',()=>{
- const s=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t6,824.51\t');
- assert.equal(matchStatement([...s.deposits,...s.deposits],month(payment('a'))).changes.length,0);
+test('counts repeated evidence once and blocks conflicting existing bank values',()=>{
+ const s=parseStatement(header+'Currency: CAD\n09 Sep AIRBNB PAYMENTS\n000000000123\t\t6,824.51\t');
+ assert.equal(matchStatement([...s.deposits,...s.deposits],month(payment('a'))).changes.length,1);
 
  assert.equal(matchStatement(s.deposits,month(payment('a',{bankCents:500}))).changes.length,0);
 });
 test('reimport is a no-op',()=>{
- const s=parseStatement(header+'09 Sep AIRBNB PAYMENTS\t\t6,824.51\t');
+ const s=parseStatement(header+'Currency: CAD\n09 Sep AIRBNB PAYMENTS\n000000000123\t\t6,824.51\t');
  assert.equal(matchStatement(s.deposits,month(payment('a',{bankCents:113821,bankDate:'2026-09-09',verifiedBySystem:true}))).changes.length,0);
 
 });
@@ -58,7 +58,7 @@ test('unpositioned numbers and split dates cannot become verified deposit eviden
 
 
 test('944.03 bank deposit matches F regardless of E and previews D 594.20 for I',()=>{
- const statement=parseStatement(header+'10 Sep AIRBNB PAYMENTS\t\t944.03\t');
+ const statement=parseStatement(header+'Currency: CAD\n10 Sep AIRBNB PAYMENTS\n000000000123\t\t944.03\t');
  const result=matchStatement(statement.deposits,month(payment('116',{amountCents:59420,bundleCents:94403,payoutDate:'2026-09-17'}),payment('other',{amountCents:34983,bundleCents:94403,payoutDate:''}),payment('wrong-F',{amountCents:94403,bundleCents:59420}),payment('wrong-bank',{bundleCents:94403,bankDetails:'Checking 7524'})));
  assert.equal(result.rows[0].status,'Ready');assert.deepEqual(result.changes.map(c=>c.paymentId),['116','other']);assert.equal(result.rows[0].payments[0].payment.amountCents,59420);
 });

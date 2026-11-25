@@ -1,4 +1,5 @@
-import type {Month,OwnerChange,OwnerTransfer,PropertyOwner,Snapshot} from './types.ts';
+import {sameBankReference,validSourceAccount} from './bank-account.ts';
+import type {BankReceipt,Month,OwnerChange,OwnerTransfer,PropertyOwner,Snapshot} from './types.ts';
 import type {BankDeposit} from './bank-statement.ts';
 import {balance} from './domain.ts';
 
@@ -29,7 +30,9 @@ export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{ki
  const month=snapshot.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');
  const account=clean(c.account,'bank account'),reference=clean(c.reference,'transaction reference');
  if(!/^\d{4}$/.test(account)||!/^[a-z0-9]+$/i.test(reference))throw new Error('Enter a valid account and transaction reference.');
- if(snapshot.ownerTransfers?.some(t=>transferKey(t.account,t.reference)===transferKey(account,reference)))throw new Error('This owner transfer has already been imported.');
+ if(!validSourceAccount(account,c.accountIdentity)||!c.currency||!['CAD','USD'].includes(c.currency))throw new Error('Confirm the full bank account and currency from the statement.');
+ if(snapshot.bankReceipts?.some(r=>sameBankReference(r,c)))throw new Error('This reference was used for a platform receipt.');
+ if(snapshot.ownerTransfers?.some(t=>sameBankReference(t,{...c,reference,account})))throw new Error('This owner transfer has already been imported.');
  const bankName=clean(c.bankName,'statement name');if(!ownerBankNames(owner.bankName).some(name=>ownerKey(name)===ownerKey(bankName)))throw new Error('Statement name does not match this owner.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(c.date)||c.date<'1900-01-01'||!Number.isFinite(Date.parse(c.date))||new Date(c.date).toISOString().slice(0,10)!==c.date)throw new Error('Enter a valid bank date.');
  if(!positive(c.amountCents)||!Array.isArray(c.allocations)||!c.allocations.length||c.allocations.length>500)throw new Error('Enter a positive deposit and allocations.');
@@ -46,7 +49,7 @@ export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{ki
   return {propertyName:p.name,monthId:allocationMonth.id,amountCents:a.amountCents};
  });
  if(allocations.reduce((sum,a)=>sum+a.amountCents,0)!==c.amountCents)throw new Error('Allocations must equal the deposit exactly.');
- return {id:crypto.randomUUID(),ownerId:owner.id,ownerName:owner.name,bankName,account,date:c.date,reference,source:clean(c.source,'statement source',240),amountCents:c.amountCents,monthId:month.id,allocations};
+ return {id:crypto.randomUUID(),ownerId:owner.id,ownerName:owner.name,bankName,account,accountIdentity:c.accountIdentity,currency:c.currency,...(c.description?{description:c.description}:{}),...(c.sheet?{sheet:c.sheet}:{}),...(c.sourceRow!==undefined?{sourceRow:c.sourceRow}:{}),date:c.date,reference,source:clean(c.source,'statement source',240),amountCents:c.amountCents,monthId:month.id,allocations};
 }
 export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
  if(c.kind==='saveOwner'){
@@ -83,19 +86,32 @@ function exactOwnerSplit(candidates:{propertyId:string;amountCents:number}[],tar
  const match=sums.get(target);
  return match?.count===1?{status:'Ready',items:match.items}:{status:match?'Multiple exact combinations — allocate manually':'No exact balance combination — allocate manually',items:[]};
 }
-export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[],allocationMonths:Month[]=[month]){
- const seen=new Set(transfers.map(t=>transferKey(t.account,t.reference)));
+export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[],allocationMonths:Month[]=[month],receipts:BankReceipt[]=[]){
+ const seen=new Set<string>();
+ const stored=new Map<string,OwnerTransfer[]>(),platforms=new Map<string,Array<BankDeposit|BankReceipt>>();
+ for(const t of transfers){const key=transferKey(t.account,t.reference),list=stored.get(key)??[];list.push(t);stored.set(key,list);}
+ for(const p of [...receipts,...deposits.filter(d=>d.kind!=='owner')]){const key=transferKey(p.account,p.reference),list=platforms.get(key)??[];list.push(p);platforms.set(key,list);}
  const signatures=new Map<string,string>(),conflicts=new Set<string>();
  for(const d of deposits.filter(d=>d.kind==='owner'&&d.reference)){
-  const key=transferKey(d.account,d.reference),signature=JSON.stringify([d.date,d.amountCents,ownerKey(d.ownerName??''),d.propertyReference??'',d.serviceMonth??'']);
+  const key=transferKey(d.accountIdentity||d.account,d.reference),signature=JSON.stringify([d.currency,d.date,d.amountCents,ownerKey(d.ownerName??''),d.propertyReference??'',d.serviceMonth??'']);
   if(signatures.has(key)&&signatures.get(key)!==signature)conflicts.add(key);else signatures.set(key,signature);
  }
+ const byName=new Map<string,PropertyOwner[]>();
+ for(const owner of owners)for(const name of ownerBankNames(owner.bankName)){const key=ownerKey(name),matches=byName.get(key)??[];matches.push(owner);byName.set(key,matches);}
+ const propertiesByOwner=new Map<string,Array<Month['properties'][number]&{monthId:string;monthLabel:string;monthKey:string}>>();
  const outstanding=new Map(allocationMonths.flatMap(m=>m.properties.map(p=>[p.id,balance(p)] as const)));
  return deposits.filter(d=>d.kind==='owner').map(deposit=>{
-  const candidates=owners.filter(o=>ownerBankNames(o.bankName).some(name=>ownerKey(name)===ownerKey(deposit.ownerName??'')));
+  const candidates=byName.get(ownerKey(deposit.ownerName??''))??[];
   const owner=candidates.length===1?candidates[0]:undefined;
-  const properties=owner?allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&owner.propertyNames.some(n=>ownerKey(n)===ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label,monthKey:m.month}))):[];
-  const key=transferKey(deposit.account,deposit.reference),duplicate=!!deposit.reference&&(seen.has(key)||conflicts.has(key));
+  if(owner&&!propertiesByOwner.has(owner.id)){
+   const names=new Set(owner.propertyNames.map(ownerKey));
+   propertiesByOwner.set(owner.id,allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&names.has(ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label,monthKey:m.month}))));
+  }
+  const properties=owner?propertiesByOwner.get(owner.id)!:[];
+  const key=transferKey(deposit.accountIdentity||deposit.account,deposit.reference),suffixKey=transferKey(deposit.account,deposit.reference);
+  const previous=stored.get(suffixKey)?.find(t=>sameBankReference(t,deposit));
+  if(platforms.get(suffixKey)?.some(p=>sameBankReference(p,deposit))||(previous&&(previous.date!==deposit.date||previous.amountCents!==deposit.amountCents||ownerKey(previous.bankName)!==ownerKey(deposit.ownerName??'')||(previous.currency&&previous.currency!==deposit.currency))))conflicts.add(key);
+  const duplicate=!!deposit.reference&&(!!previous||seen.has(key)||conflicts.has(key));
   if(deposit.reference)seen.add(key);
   const allocations:{propertyId:string;amountCents:number}[]=[];
   let status='Needs manual allocation';

@@ -6,8 +6,8 @@ import type {Snapshot,OwnerChange,PropertyOwner} from '../src/types.ts';
 import {balance} from '../src/domain.ts';
 const owner:PropertyOwner={id:'o',name:'Jane',bankName:'Jane Smith',email:'',notes:'',active:true,propertyNames:[' House ','Other']};
 const snapshot=():Snapshot=>({revision:'1',updatedAt:'',spreadsheetUrl:'',owners:[structuredClone(owner)],ownerTransfers:[],months:[{id:'m',label:'Month',month:'2026-09',properties:[{id:'p',name:'House',manager:'',totalCents:10000,payments:[]},{id:'q',name:'Other',manager:'',totalCents:20000,payments:[]}]}]});
-const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
-const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
+const change=():Extract<OwnerChange,{kind:'importOwnerTransfer'}>=>({kind:'importOwnerTransfer',ownerId:'o',monthId:'m',account:'5864',accountIdentity:'10005864',currency:'CAD' as const,date:'2026-09-09',reference:'CA123456',source:'bank.pdf',bankName:'Jane Smith',amountCents:10000,allocations:[{propertyId:'p',amountCents:10000}]});
+const deposit=(reference='CA123456')=>({kind:'owner' as const,ownerName:' Jane   Smith ',account:'5864',accountIdentity:'10005864',currency:'CAD' as const,date:'2026-09-09',reference,source:'bank.pdf',amountCents:10000});
 
 test('unmatched owner deposits default to skipped while exact matches remain included; manual choices override defaults',()=>{
  const s=snapshot();
@@ -64,8 +64,8 @@ test('owner fee settlement clears 23.11 without verifying the landlord Airbnb pa
  const s=snapshot(),p=s.months[0].properties[0];p.totalCents=2311;
  p.payments=[{id:'airbnb',type:'Airbnb',amountCents:null,payoutDate:'',bundleCents:29104,bankDetails:'Checking 4305',bankDate:'',bankCents:null,verifiedByDaisy:false}];
  const before=structuredClone(p.payments[0]);
- const row=matchOwnerDeposits([{...deposit(),account:'7524',amountCents:2311}],s.months[0],s.owners!,[])[0];
- applyOwnerChange(s,{...change(),account:'7524',amountCents:2311,allocations:row.allocations});
+ const row=matchOwnerDeposits([{...deposit(),account:'7524',accountIdentity:'10007524',amountCents:2311}],s.months[0],s.owners!,[])[0];
+ applyOwnerChange(s,{...change(),account:'7524',accountIdentity:'10007524',amountCents:2311,allocations:row.allocations});
  assert.equal(balance(p),0);assert.deepEqual(p.payments[0],before);
 });
 

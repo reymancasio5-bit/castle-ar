@@ -30,7 +30,7 @@ export function extractStatementText(file:File,onProgress?:ReportProgress):Promi
  return runProgress(file.name,report=>extractStatementTextMeasured(file,report),onProgress);
 }
 async function extractStatementTextMeasured(file:File,report:ReportProgress):Promise<string> {
- if(file.size>20*1024*1024)throw new Error('Choose a PDF smaller than 20 MB.');
+ if(file.size>20*1024*1024)throw new Error('Choose a PDF no larger than 20 MB.');
  const bytes=await readFileBytes(file,report);
  report({label:'Opening PDF'});await yieldToBrowser();
  const task=getDocument({data:new Uint8Array(bytes)});
@@ -42,10 +42,10 @@ async function extractStatementTextMeasured(file:File,report:ReportProgress):Pro
    report({label:'Reading PDF Pages',completed:n-1,total:pdf.numPages,unit:'pages'});await yieldToBrowser();
    const page=await pdf.getPage(n),content=await page.getTextContent();
    const items=content.items.filter((i):i is import('pdfjs-dist/types/src/display/api').TextItem=>'str' in i && !!i.str.trim());
-   pages.push(statementPageText(items));page.cleanup();
+   pages.push(`===== PAGE ${n} =====\n${statementPageText(items)}`);page.cleanup();
   }
   const text=pages.join('\n');
-  if(text.trim().length<40)throw new Error('This PDF has no readable text. Use a text-based bank statement, or run OCR on the PDF before importing it.');
+  if(text.replace(/^===== PAGE \d+ =====$/gm,'').trim().length<40)throw new Error('This PDF has no readable text. Use a text-based bank statement, or run OCR on the PDF before importing it.');
   return text;
  } finally { await task.destroy(); }
 }

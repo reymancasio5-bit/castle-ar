@@ -39,7 +39,7 @@ test('owner allocation backend preserves month identity and rejects mismatched m
  current.months['oct']={...current.months['0']};
  current.properties['oct:4']={...original,sheetId:'oct',property:{...original.property,id:'oct:4'}};
  const owner={id:'owner-months',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:[original.property.name]};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'7524',date:'2026-11-04',reference:'MONTHS123',source:'statement.xlsx',bankName:'Owner',amountCents:3311,allocations:[{propertyId:'0:4',monthId:'0',amountCents:2311},{propertyId:'oct:4',monthId:'oct',amountCents:1000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'7524',accountIdentity:'10007524',currency:'CAD',date:'2026-11-04',reference:'MONTHS123',source:'statement.xlsx',bankName:'Owner',amountCents:3311,allocations:[{propertyId:'0:4',monthId:'0',amountCents:2311},{propertyId:'oct:4',monthId:'oct',amountCents:1000}]};
  const prepared=api.castlePrepareOwners([{kind:'saveOwner',owner},transfer],current);
  assert.equal(prepared.payments.length,2);
  assert.deepEqual(Array.from(prepared.payments,(p:any)=>p.propertyId),['0:4','oct:4']);
@@ -1108,7 +1108,7 @@ test('bank reconciliation copies D to I, writes H date and J TRUE, preserves Dai
  app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  Object.assign(app.state.data[20],{3:1138.21,4:'2026-09-09',5:6824.51,6:'Checking 5864',10:true});
  const before=app.read();assert.equal(before.ok,true,before.error?.message);
- const change={kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:682451,bankDate:'2026-09-09'};
+ const change={kind:'reconcileBank',paymentId:'0:21',account:'5864',receipt:{accountIdentity:'10005864',reference:'BANKREF',source:'fixture.pdf',currency:'CAD',platform:'Airbnb'},bundleCents:682451,bankDate:'2026-09-09'};
  const bad=app.post({requestId:'bank-mismatch-01',revision:before.snapshot.revision,changes:[{...change,bundleCents:10}]});assert.equal(bad.ok,false);assert.equal(app.state.writes,0);
  const saved=app.post({requestId:'bank-reconcile-01',revision:before.snapshot.revision,changes:[change]});assert.equal(saved.ok,true,saved.error?.message);
  assert.equal(app.state.data[20][8],1138.21);assert.equal(app.state.data[20][9],true);assert.equal(app.state.data[20][10],true);assert.equal(saved.snapshot.months[0].properties[2].payments[0].bankDate,'2026-09-09');
@@ -1120,7 +1120,7 @@ test('editing account after bank reconciliation invalidates J even for a single-
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  Object.assign(app.state.data[20],{3:100,4:'2026-09-09',5:100,6:'Checking 5864'});
  const before=app.read().snapshot;
- const saved=app.post({requestId:'bank-invalidate-init',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:10000,bankDate:'2026-09-09'}]});assert.equal(saved.ok,true);
+ const saved=app.post({requestId:'bank-invalidate-init',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',receipt:{accountIdentity:'10005864',reference:'BANKREF',source:'fixture.pdf',currency:'CAD',platform:'Airbnb'},bundleCents:10000,bankDate:'2026-09-09'}]});assert.equal(saved.ok,true);
  const edited=app.post({requestId:'bank-invalidate-edit',revision:saved.snapshot.revision,changes:[{kind:'updatePayment',paymentId:'0:21',fields:{bankDetails:'Checking 7524'}}]});assert.equal(edited.ok,true,edited.error?.message);
  assert.equal(app.state.data[20][9],false);assert.equal(app.state.formulas[20][9],'');
 });
@@ -1189,7 +1189,7 @@ test('bank reconciliation matches F and G, ignores later or blank E, copies D in
   const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
   Object.assign(app.state.data[20],{3:594.20,4:payoutDate,5:944.03,6:'Checking 5864'});
   const before=app.read().snapshot;
-  const saved=app.post({requestId:'bank-ignore-platform-date',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',bundleCents:94403,bankDate:'2026-09-10'}]});
+  const saved=app.post({requestId:'bank-ignore-platform-date',revision:before.revision,changes:[{kind:'reconcileBank',paymentId:'0:21',account:'5864',receipt:{accountIdentity:'10005864',reference:'BANKREF',source:'fixture.pdf',currency:'CAD',platform:'Airbnb'},bundleCents:94403,bankDate:'2026-09-10'}]});
   assert.equal(saved.ok,true,saved.error?.message);assert.equal(app.state.data[20][8],594.20);assert.equal(app.state.data[20][9],true);assert.equal(app.state.data[20][4],payoutDate);assert.equal(app.state.data[20][5],944.03);assert.equal(saved.snapshot.months[0].properties[2].payments[0].bankDate,'2026-09-10');
  }
 });
@@ -1204,7 +1204,7 @@ test('bundle-only import creates a companion sheet without AR and round-trips ba
  assert.deepEqual(app.state.data,original);
  const table=[...app.tables.values()].find(t=>t.name==='Nov, 2026 - Bundle Matching')!;assert.ok(table);
  assert.ok(!table.data.some(row=>row[2]==='AR'||row[2]==='Total Payment'));
- const matched=app.post({requestId:'bundle-match-001',revision:saved.snapshot.revision,changes:[{kind:'reconcileBank',paymentId:property.payments[0].id,account:'5864',bundleCents:50000,bankDate:'2026-11-06'}]});
+ const matched=app.post({requestId:'bundle-match-001',revision:saved.snapshot.revision,changes:[{kind:'reconcileBank',paymentId:property.payments[0].id,account:'5864',receipt:{accountIdentity:'10005864',reference:'BANKREF',source:'fixture.pdf',currency:'CAD',platform:'Airbnb'},bundleCents:50000,bankDate:'2026-11-06'}]});
  assert.equal(matched.ok,true,matched.error?.message);
  assert.equal(matched.snapshot.months[0].properties.find((p:any)=>p.bundleOnly).payments[0].verifiedBySystem,true);
  const rejected=app.post({requestId:'bundle-total-001',revision:matched.snapshot.revision,changes:[{kind:'setTotal',propertyId:property.id,amountCents:10}]});assert.equal(rejected.ok,false);
@@ -1256,7 +1256,7 @@ test('multiple owner bank names persist and accept transfers under an alternate 
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  const before=app.read().snapshot;
  const owner={id:'aliases',name:'Owner',bankName:'JOHN OWNER\nJOHN BUSINESS',email:'',notes:'',active:true,propertyNames:[before.months[0].properties[0].name]};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'ALIAS123',source:'statement.pdf',bankName:'John Business',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'ALIAS123',source:'statement.pdf',bankName:'John Business',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
  const saved=app.post({requestId:'aliases-save',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});
  assert.equal(saved.ok,true,saved.error?.message);
  const loaded=app.read().snapshot;
@@ -1268,7 +1268,7 @@ test('owner profiles and split transfers persist atomically with global duplicat
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  const before=app.read().snapshot;assert.equal(before.ownerSchema,1);
  const owner={id:'owner-1',name:'John Owner',bankName:'JOHN OWNER',email:'',notes:'',active:false,propertyNames:before.months[0].properties.slice(0,2).map((p:any)=>p.name)};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:30000,allocations:[{propertyId:'0:4',amountCents:10000},{propertyId:'0:12',amountCents:20000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:30000,allocations:[{propertyId:'0:4',amountCents:10000},{propertyId:'0:12',amountCents:20000}]};
  const saved=app.post({requestId:'owners-split-first',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(saved.ok,true,saved.error?.message);
  assert.equal(saved.snapshot.owners[0].active,false);assert.equal(saved.snapshot.ownerTransfers.length,1);assert.equal(saved.snapshot.ownerTransfers[0].allocations[0].propertyName,owner.propertyNames[0]);
  const paid=saved.snapshot.months[0].properties[0].payments.at(-1);assert.equal(paid.type,'Owner');assert.equal(paid.amountCents,10000);assert.equal(paid.bankCents,10000);assert.equal(paid.bankDate,'2026-11-04');assert.equal(paid.bankDetails,'Checking 1234');assert.equal(paid.bundleCents,null);assert.equal(paid.verifiedBySystem,true);assert.equal(paid.verifiedByDaisy,false);
@@ -1280,7 +1280,7 @@ test('owner validations reject ambiguous bank names, unsafe fields and invalid a
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  const before=app.read().snapshot;
  const owner={id:'owner-1',name:'John Owner',bankName:'JOHN OWNER',email:'',notes:'',active:true,propertyNames:before.months[0].properties.slice(0,2).map((p:any)=>p.name)};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
  const invalid=[{...transfer,account:'12345'},{...transfer,reference:'REF-123'},{...transfer,reference:''},{...transfer,date:'2026-02-30'},{...transfer,amountCents:10001},{...transfer,allocations:[{propertyId:'0:20',amountCents:10000}]},{...transfer,allocations:[{propertyId:'0:4',amountCents:0}]},{...transfer,account:'=SUM(A1)'},{...transfer,monthId:'999'},{...transfer,bankName:'Other Person'}];
  invalid.forEach((change,i)=>{const result=app.post({requestId:'owners-invalid-'+i,revision:before.revision,changes:[{kind:'saveOwner',owner},change]});assert.equal(result.ok,false,JSON.stringify(change));});
  const duplicate=app.post({requestId:'owners-ambiguous',revision:before.revision,changes:[{kind:'saveOwner',owner},{kind:'saveOwner',owner:{...owner,id:'other',active:false,bankName:' john   owner '}}]});assert.equal(duplicate.ok,false);
@@ -1291,7 +1291,7 @@ test('owner ledger deduplicates across months and revisions include owner tables
  const app=harness();app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
  const initial=app.read().snapshot, name=initial.months[0].properties[0].name;
  const owner={id:'owner-global',name:'Global Owner',bankName:'Global Owner',email:'',notes:'',active:true,propertyNames:['  '+name.toUpperCase().replaceAll(' ','   ')+'  ']};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'GLOBALREF',source:'statement.pdf',bankName:'Global Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'GLOBALREF',source:'statement.pdf',bankName:'Global Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
  const saved=app.post({requestId:'owner-global-init',revision:initial.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(saved.ok,true,saved.error?.message);
  const ledger=[...app.tables.values()].find(t=>t.name==='Owner Transfers')!;
  ledger.data[1][9]='previous-month-id';
@@ -1306,7 +1306,7 @@ test('owner ledger deduplicates across months and revisions include owner tables
 test('owner imports coexist with Airbnb insertion and reject legacy layout and bundle allocations',()=>{
  const app=harness();let before=app.read().snapshot;
  const owner={id:'owner-mixed',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:before.months[0].properties.map((p:any)=>p.name)};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'MIXEDREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'MIXEDREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
  const legacy=app.post({requestId:'owner-legacy-reject',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(legacy.ok,false);assert.match(legacy.error.message,/Bank Details/);assert.equal(app.batches.length,0);
  app.state.data.forEach((r:any[],i:number)=>{r.splice(6,0,i===2||i===10||i===18?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;before=app.read().snapshot;
  const saved=app.post({requestId:'owner-mixed-import',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer,{kind:'appendPayments',propertyId:'0:4',payments:[{type:'Airbnb',amountCents:2345}]}]});assert.equal(saved.ok,true,saved.error?.message);
@@ -1334,10 +1334,100 @@ test('owner allocations reject normalized property-name collisions before writin
  app.state.data[3][1]='House A';app.state.data[11][1]='House  A';
  const before=app.read();assert.equal(before.ok,true,before.error?.message);
  const owner={id:'owner-ambiguous',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:['House A']};
- const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',date:'2026-11-04',reference:'AMBIGUOUSREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:4000},{propertyId:'0:12',amountCents:6000}]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'AMBIGUOUSREF',source:'statement.pdf',bankName:'Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:4000},{propertyId:'0:12',amountCents:6000}]};
  const rejected=app.post({requestId:'owner-ambiguous-allocation',revision:before.snapshot.revision,changes:[{kind:'saveOwner',owner},transfer]});
  assert.equal(rejected.ok,false);assert.equal(rejected.error.code,'VALIDATION');assert.match(rejected.error.message,/ambiguous.*property names/i);assert.equal(app.batches.length,0);
  const after=app.read();assert.equal(after.ok,true,after.error?.message);assert.equal(after.snapshot.revision,before.snapshot.revision);assert.equal(after.snapshot.ownerTransfers.length,0);
  const saved=app.post({requestId:'owner-unambiguous-allocation',revision:after.snapshot.revision,changes:[{kind:'saveOwner',owner},{...transfer,allocations:[{propertyId:'0:4',amountCents:10000}]}]});
  assert.equal(saved.ok,true,saved.error?.message);const reread=app.read();assert.equal(reread.ok,true,reread.error?.message);assert.equal(reread.snapshot.ownerTransfers.length,1);assert.equal(reread.snapshot.ownerTransfers[0].allocations[0].propertyName,'House A');
+});
+
+function receiptHarness(amount=60) {
+ const app=harness();app.state.data.forEach((row:any[],i:number)=>{row.splice(6,0,[2,10,18].includes(i)?'Bank Details':'');app.state.formulas[i].splice(6,0,'');});app.state.maxColumns=11;
+ Object.assign(app.state.data[20],{3:amount,4:'2026-11-01',5:100,6:'Checking 10000123'});
+ app.tables.set(42,{name:'October 2026',data:structuredClone(app.state.data),maxRows:100,maxColumns:11});
+ return app;
+}
+const receiptChange=(paymentId:string)=>({kind:'reconcileBank',paymentId,account:'0123',bundleCents:10000,bankDate:'2026-11-02',receipt:{accountIdentity:'10000123',currency:'CAD',reference:'SOURCEA',source:'fixture.csv',platform:'Airbnb'}});
+test('receipt allocations survive separate sessions, reject cross-month overuse atomically and allow exact partial splits',()=>{
+ for(const second of [60,40]){
+  const app=receiptHarness();app.tables.get(42)!.data[20][3]=second;
+  const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+  const first=save('receipt-month-one',[receiptChange('0:21')]);assert.equal(first.ok,true,first.error?.message);
+  assert.equal(first.snapshot.bankReceiptSchema,1);assert.equal(first.snapshot.bankReceipts[0].allocations[0].amountCents,6000);
+  const next=save('receipt-month-two',[receiptChange('42:21')]);assert.equal(next.ok,second===40,next.error?.message);
+  const receipt=app.read().snapshot.bankReceipts[0];assert.equal(receipt.amountCents,10000);
+  assert.equal(receipt.allocations.reduce((n:number,a:any)=>n+a.amountCents,0),second===40?10000:6000);
+  if(second===60)assert.equal(app.batches.length,1);
+  const replay=save('receipt-replayed',[receiptChange('0:21')]);assert.equal(replay.ok,true,replay.error?.message);
+  assert.equal(app.read().snapshot.bankReceipts[0].allocations.length,second===40?2:1);
+ }
+});
+test('server rejects contradictory receipt evidence, wrong full account, and missing receipt data before writing',()=>{
+ const app=receiptHarness(),change=receiptChange('0:21');
+ for(const [i,replacement] of [undefined,{...change.receipt,accountIdentity:'20000123'},{...change.receipt,reference:''}].entries()){
+  const result=app.post({requestId:'receipt-invalid-'+i,revision:app.read().snapshot.revision,changes:[{...change,receipt:replacement}]});assert.equal(result.ok,false);assert.equal(app.batches.length,0);
+ }
+ const result=app.post({requestId:'receipt-conflict',revision:app.read().snapshot.revision,changes:[change,{...receiptChange('42:21'),receipt:{...change.receipt,currency:'USD'}}]});
+ assert.equal(result.ok,false);assert.equal(app.batches.length,0);
+});
+
+test('receipt history survives payment edits and unrelated row moves and prevents deletion or renaming of its property',()=>{
+ const app=receiptHarness(40);
+ const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+ const first=save('receipt-guard-create',[receiptChange('0:21')]);assert.equal(first.ok,true,first.error?.message);
+ const property=first.snapshot.months[0].properties.find((p:any)=>p.payments.some((r:any)=>r.id==='0:21'));
+ for(const [i,c] of [{kind:'deletePayment',paymentId:'0:21'},{kind:'deleteProperty',propertyId:property.id},{kind:'updateProperty',propertyId:property.id,manager:property.manager,name:'Renamed'}].entries()){
+  const block=save('receipt-guard-'+i,[c]);assert.equal(block.ok,false);assert.match(block.error.message,/receipt/i);
+ }
+ assert.equal(save('receipt-unrelated-delete',[{kind:'deletePayment',paymentId:'0:5'}]).ok,true);
+ const moved=save('receipt-moved-replay',[receiptChange('0:20')]);assert.equal(moved.ok,true,moved.error?.message);
+ const edited=save('receipt-guard-edit',[{kind:'updatePayment',paymentId:'0:20',fields:{amountCents:5000}}]);assert.equal(edited.ok,true,edited.error?.message);
+ const reuse=save('receipt-edited-reuse',[receiptChange('0:20')]);assert.equal(reuse.ok,false);
+ assert.equal(app.read().snapshot.bankReceipts[0].allocations[0].amountCents,4000);
+});
+
+test('statement coordinates and the original description persist for each platform credit',()=>{
+ const app=receiptHarness(),c=receiptChange('0:21');
+ const provenance={description:'Original  incoming memo',sheet:'Transactions',sourceRow:3};
+ const saved=app.post({requestId:'receipt-context',revision:app.read().snapshot.revision,changes:[{...c,receipt:{...c.receipt,...provenance}}]});
+ assert.equal(saved.ok,true,saved.error?.message);const r=saved.snapshot.bankReceipts[0];
+ assert.deepEqual([r.description,r.sheet,r.sourceRow],[provenance.description,provenance.sheet,provenance.sourceRow]);
+});
+
+test('owner transfers preserve source identity and context, and a legacy suffix blocks duplicate allocations during migration',()=>{
+ const app=receiptHarness();
+ const initial=app.read().snapshot,name=initial.months[0].properties[0].name;
+ const owner={id:'owner-hist',name:'Example',bankName:'Example',email:'',notes:'',active:true,propertyNames:[name]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'0123',accountIdentity:'10000123',currency:'CAD',reference:'OWNERTEST',date:'2026-10-04',source:'fixture.pdf',description:'Original  owner memo',sheet:'PDF',sourceRow:7,bankName:owner.bankName,amountCents:1000,allocations:[{propertyId:'0:4',amountCents:1000}]};
+ const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+ const first=save('owner-context-first',[{kind:'saveOwner',owner},transfer]);assert.equal(first.ok,true,first.error?.message);
+ assert.deepEqual([first.snapshot.ownerTransfers[0].accountIdentity,first.snapshot.ownerTransfers[0].description,first.snapshot.ownerTransfers[0].sourceRow],['10000123','Original  owner memo',7]);
+ const distinct=save('owner-context-second',[{...transfer,accountIdentity:'20000123'}]);assert.equal(distinct.ok,true,distinct.error?.message);
+ const table=[...app.tables.values()].find(t=>t.name==='Owner Transfers')!;
+ table.data=table.data.slice(0,2).map(row=>row.slice(0,11));table.maxColumns=11;
+ const legacy=app.read().snapshot;assert.equal(legacy.ownerTransfers[0].accountIdentity,undefined);
+ const duplicate=save('owner-context-third',[{...transfer,accountIdentity:'30000123'}]);assert.equal(duplicate.ok,false);assert.match(duplicate.error.message,/duplicate/i);
+ const migrated=save('owner-context-fourth',[{...transfer,reference:'NEWOWNERREF'}]);assert.equal(migrated.ok,true,migrated.error?.message);
+ assert.equal(migrated.snapshot.ownerTransfers[0].accountIdentity,undefined);assert.equal(migrated.snapshot.ownerTransfers[1].accountIdentity,'10000123');
+});
+test('platform and owner classifications cannot spend the same credit in either order',()=>{
+ for(const ownerFirst of [false,true]){
+  const app=receiptHarness(40),initial=app.read().snapshot;
+  const owner={id:'owner-same',name:'Example',bankName:'Example',email:'',notes:'',active:true,propertyNames:[initial.months[0].properties[0].name]};
+  const c=receiptChange('0:21'),transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:c.account,accountIdentity:c.receipt.accountIdentity,currency:c.receipt.currency,reference:c.receipt.reference,date:c.bankDate,source:'fixture.pdf',bankName:owner.bankName,amountCents:c.bundleCents,allocations:[{propertyId:'0:4',amountCents:c.bundleCents}]};
+  const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+  const together=save('receipt-mixed-both',[c,{kind:'saveOwner',owner},transfer]);assert.equal(together.ok,false);assert.equal(app.batches.length,0);
+  const first=save('receipt-mixed-first',ownerFirst?[{kind:'saveOwner',owner},transfer]:[c]);assert.equal(first.ok,true,first.error?.message);
+  const second=save('receipt-mixed-next',ownerFirst?[{...c,paymentId:'0:22'}]:[{kind:'saveOwner',owner},transfer]);
+  assert.equal(second.ok,false);assert.match(second.error.message,/reference/i);assert.equal(app.batches.length,1);
+ }
+});
+
+test('backend checks visible prefix and internal digits on masked payout accounts',()=>{
+ for(const [account,allowed] of [['99******2222',false],['11**88**2222',false],['11**77**2222',true],['****2222',true]] as const){
+  const app=receiptHarness();app.state.data[20][6]='Checking '+account+' (CAD)';
+  const c=receiptChange('0:21'),result=app.post({requestId:'masked-identity-test',revision:app.read().snapshot.revision,changes:[{...c,account:'2222',receipt:{...c.receipt,accountIdentity:'117777772222'}}]});
+  assert.equal(result.ok,allowed,account);assert.equal(app.batches.length,allowed?1:0);
+ }
 });

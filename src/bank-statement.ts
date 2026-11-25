@@ -1,77 +1,152 @@
-import type { Change, Month } from './types.ts';
 import {parseWellsFargoStatement} from './wells-fargo.ts';
-export interface BankDeposit { kind?: 'owner'; ownerName?: string; description?: string; propertyReference?: string; serviceMonth?: string; account: string; date: string; amountCents: number; reference: string; source: string }
-const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-const cents = (s: string) => Math.round(Number(s.replace(/,/g,''))*100);
+import {appendPdfLine,isoBankDate,readPdfCredit,startPdfTransaction,statementDate,statementIdentity,statementLines,statementMonths,validBankDate,type PdfTransaction} from './bank-pdf-transactions.ts';
+import {payoutReference} from './bank-transaction-reference.ts';
+import {extractRbcOwnerReference,isRbcOwnerReference} from './rbc-reference.ts';
+export interface BankDeposit {
+ kind?: 'owner';
+ ownerName?: string;
+ description?: string;
+ sourceDescription?: string;
+ propertyReference?: string;
+ serviceMonth?: string;
+ account: string;
+ accountIdentity?: string;
+ currency?: 'CAD' | 'USD';
+ platform?: 'Airbnb' | 'Vrbo';
+ date: string;
+ amountCents: number;
+ reference: string;
+ source: string;
+ sheet?: string;
+ sourceRow?: number;
+}
+export interface BankImportExclusion {
+ source: string;
+ sheet?: string;
+ sourceRow?: number;
+ date?: string;
+ amountCents: number | null;
+ currency?: 'CAD' | 'USD';
+ account?: string;
+ accountIdentity?: string;
+ description: string;
+ reference?: string;
+ reason: string;
+ reviewable?: boolean;
+}
+export interface BankImportResult {
+ deposits: BankDeposit[];
+ warnings: string[];
+ excluded?: BankImportExclusion[];
+}
+
+const rbcPeriod = /([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})\s+to\s+([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})/gi;
+const accountsPattern = /Account number\s*:\s*([\d -]+)/gi;
+const dayPattern = /^(\d{1,2})\s+([A-Za-z]{3})(?:\s+|$)/;
+const ownerPattern = /^e-Transfer\s*[-\u2013]\s*Autodeposit\b\s*/i;
+const airbnbPattern = /^(?:Account Payable Pmt\s+)?AIRBNB\s+PAYMENTS\b/i;
+const vrboPattern = /^(?:Misc(?:ellaneous)? Payment\s+)?VRBO\b/i;
+const outgoingPattern = /^(?:e-Transfer sent|Zelle to|Withdrawal)\b/i;
+const tableBoundary = /^(?:Business Account Statement|Account number\s*:|Account Activity Details|Date Description|(?:Opening|Closing) balance|Account Fees:|\d+\s+of\s+\d+$)/i;
+const payoutContinuation = /^(?:\d{10,}$|(?:Ref(?:erence)?\s*[:#]|TRN\*1\*)\s*[A-Za-z0-9-]+[\\]?$)/i;
+const transactionWords = /\b(?:credit|deposit|fee|interest|withdrawal|payment|balance|transfer|purchase|refund|adjustment|reversal)\b/i;
+
 export function bankAccount(value: string): string {
- const match=value.match(/(?:checking|chequing|savings)\s+([\d -]+)/i);
- return match ? match[1].replace(/\D/g,'').slice(-4) : '';
+ const account = value.match(/(?:checking|chequing|savings)\s+([\d -]+)/i)?.[1];
+ return account?.replace(/\D/g,'').slice(-4) ?? '';
 }
-export function parseStatement(text: string, source = 'Pasted statement'): { deposits: BankDeposit[]; warnings: string[] } {
- if(/^\s*Wells\s+Fargo\b/im.test(text)) return parseWellsFargoStatement(text,source);
- const period=text.match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})\s+to\s+([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})/i);
- const accountMatch=text.match(/Account number\s*:\s*([\d -]+)/i);
- if(!period || !accountMatch) throw new Error('Include the statement period and account number from the PDF header.');
- const accounts=[...text.matchAll(/Account number\s*:\s*([\d -]+)/gi)].map(m=>m[1].replace(/\D/g,''));
- const periods=[...text.matchAll(/([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})\s+to\s+([A-Za-z]+)\s+(\d{1,2}),?\s+(20\d{2})/gi)].map(m=>m.slice(1).join('|').toLowerCase());
- if(new Set(accounts).size>1||new Set(periods).size>1)throw new Error('Paste one statement at a time; different accounts or periods cannot be combined.');
- const startMonth=months.indexOf(period[1].slice(0,3).toLowerCase()),endMonth=months.indexOf(period[4].slice(0,3).toLowerCase());
- if(startMonth<0||endMonth<0)throw new Error('Unrecognized statement period.');
- const iso=(y:number,m:number,d:number)=>`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
- const start=iso(+period[3],startMonth,+period[2]),end=iso(+period[6],endMonth,+period[5]);
- const account=accountMatch[1].replace(/\D/g,'').slice(-4);
- if(account.length!==4)throw new Error('Cannot identify the bank account.');
- const deposits:BankDeposit[]=[],warnings:string[]=[];
- let date='',pending:{date:string;reference:string;amount:number|null;ownerName?:string}|null=null;
- const flush=()=>{if(pending){if(pending.date&&pending.amount!==null&&pending.amount>0)deposits.push({account,date:pending.date,amountCents:pending.amount,reference:pending.reference,source,...(pending.ownerName!==undefined?{kind:'owner' as const,ownerName:pending.ownerName}:{})});else warnings.push('A bank entry had no readable deposit amount or date and was skipped.');pending=null;}};
- for(const raw of text.split(/\r?\n/)){
-  const line=raw.trim();
-  if(!line)continue;
-  if(/^\d{1,2}$/.test(line)){flush();date='';continue;}
-  const day=line.match(/^(\d{1,2})\s+([A-Za-z]{3})\b/);
-  if(day){
-   flush();const m=months.indexOf(day[2].toLowerCase());
-   const possibilities=[...new Set([+period[3],+period[6]])].map(y=>iso(y,m,+day[1])).filter(d=>m>=0&&d>=start&&d<=end&&new Date(d+'T00:00:00Z').toISOString().slice(0,10)===d);
-   date=possibilities.length===1?possibilities[0]:'';
-  }
-  const airbnb=/\bAIRBNB\s+PAYMENTS\b/i.test(line);
-  const owner=raw.split('\t')[0].match(/e-Transfer\s*[-–]\s*Autodeposit\b\s*(.*)/i);
-  const ownerRef=raw.split('\t')[0].trim().match(/(?:^|\s)(?:Ref(?:erence)?[:#]?\s*)?([A-Za-z0-9]{6,})\s*$/i);
-  const validOwnerRef=ownerRef&&/\d/.test(ownerRef[1])?ownerRef[1]:'';
-  const description=raw.split('\t')[0].trim();
-  const referenceOnly=!!validOwnerRef&&/^(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]+$/i.test(description);
-  const ownerNameContinuation=!day&&!airbnb&&!owner&&pending?.ownerName===''&&!/\b(?:fee|withdrawal|payment|balance|transfer|purchase)\b/i.test(description);
-  if(airbnb||owner){flush();pending={date,reference:'',amount:null,...(owner?{ownerName:owner[1].replace(/(?:\s+|^)(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]*\d[A-Za-z0-9]*\s*$/i,'').trim()}:{} )};}
-  else if(pending&&ownerNameContinuation)pending.ownerName=description.replace(/(?:\s+|^)(?:Ref(?:erence)?[:#]?\s*)?[A-Za-z0-9]*\d[A-Za-z0-9]*\s*$/i,'').trim();
-  else if(pending && /[A-Za-z]/.test(line) && !(pending.ownerName!==undefined&&referenceOnly) && !/^(?:\d{1,2}\s+[A-Za-z]{3}\s*)?\d[\d,.\s]*$/.test(line)){flush();}
-  if(!pending)continue;
-  const ref=line.match(/\b\d{10,}\b/);if(ref)pending.reference=ref[0];
-  if(pending.ownerName!==undefined&&validOwnerRef)pending.reference=validOwnerRef;
-  // PDF extraction emits description, debit, credit and balance as tab-separated cells.
-  const columns=raw.split('\t');
-  const amountText=columns.length>=3?columns[2] : (line.match(/\bCredit:\s*([\d,.]+)/i)?.[1]??'');
-  const amount=amountText.trim().match(/^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$/);
-  if(amount)pending.amount=cents(amount[0]);
+
+export function parseStatement(text: string, source = 'Pasted statement'): BankImportResult {
+ if (/^\s*Wells\s+Fargo\b/im.test(text)) return parseWellsFargoStatement(text,source);
+ const accounts = [...text.matchAll(accountsPattern)].map(match => match[1].replace(/\D/g,''));
+ const periods = [...text.matchAll(rbcPeriod)];
+ if (!accounts.length || !periods.length) throw new Error('Include the statement period and account number from the PDF header.');
+ if (new Set(accounts).size > 1 || new Set(periods.map(match => match.slice(1).join('|').toLowerCase())).size > 1) {
+  throw new Error('Paste one statement at a time; different accounts or periods cannot be combined.');
  }
- flush();return {deposits,warnings};
-}
-export function matchStatement(deposits: BankDeposit[], month: Month) {
- deposits=deposits.filter(d=>d.kind!=='owner');
- const changes: Change[]=[];
- const all=month.properties.flatMap(property=>property.payments.map(payment=>({property:property.name,payment})));
- const rows=deposits.map(deposit=>{
-  let payments=all.filter(({payment:p})=>p.type==='Airbnb'&&p.receivedBy!=='owner'&&p.bundleCents===deposit.amountCents&&bankAccount(p.bankDetails??'')===deposit.account);
-  let status='Ready';
-  if(deposits.filter(d=>d.account===deposit.account&&d.amountCents===deposit.amountCents).length>1)status='Ambiguous: repeated deposit amount';
-  else if(!payments.length)status='No matching bundle in this month';
-  else if(payments.reduce((sum,{payment:p})=>sum+(p.amountCents??0),0)>deposit.amountCents)status='Needs review: matched payments exceed the bundle';
-  else if(payments.some(({payment:p})=>p.amountCents===null||p.amountCents<=0||(p.bankCents!==null&&p.bankCents!==p.amountCents)||(p.bankDate!==''&&p.bankDate!==deposit.date)))status='Needs review: existing bank values or missing payment amount';
-  else {
-   const pending=payments.filter(({payment:p})=>!(p.verifiedBySystem&&p.bankCents===p.amountCents&&p.bankDate===deposit.date));
-   if(!pending.length)status='Already verified';
-   else pending.forEach(({payment:p})=>changes.push({kind:'reconcileBank',paymentId:p.id,account:deposit.account,bundleCents:deposit.amountCents,bankDate:deposit.date}));
+ if (accounts[0].length < 4) throw new Error('Cannot identify the bank account.');
+ const [,startName,startDay,startYear,endName,endDay,endYear] = periods[0];
+ const start = isoBankDate(+startYear,statementMonths.indexOf(startName.slice(0,3).toLowerCase())+1,+startDay);
+ const end = isoBankDate(+endYear,statementMonths.indexOf(endName.slice(0,3).toLowerCase())+1,+endDay);
+ if (!validBankDate(start) || !validBankDate(end) || start > end) throw new Error('Unrecognized statement period.');
+ const identity = statementIdentity(text,source,accounts[0]);
+ const deposits: BankDeposit[] = [];
+ const excluded: BankImportExclusion[] = [];
+ let postingDate: string | undefined;
+ let pending: PdfTransaction | undefined;
+
+ const flush = () => {
+  if (!pending) return;
+  const transaction = pending;
+  pending = undefined;
+  const head = transaction.lines[0] ?? '';
+  const owner = ownerPattern.test(head);
+  const platform = airbnbPattern.test(head) ? 'Airbnb' : vrboPattern.test(head) ? 'Vrbo' : undefined;
+  const credit = readPdfCredit(transaction,identity,owner || !!platform);
+  if (!credit) return;
+  if ('invalid' in credit) {
+   excluded.push({...credit.evidence,reason:credit.invalid});
+   return;
   }
-  return {deposit,payments,status};
- });
- return {rows,changes};
+  const {evidence} = credit;
+  const {date,amountCents,description,sourceRow,sheet} = evidence;
+  const base = {...identity,date,amountCents,description,sourceDescription:description,sourceRow,...(sheet ? {sheet} : {})};
+  if (owner) {
+   const detail = transaction.lines.join(' ').replace(ownerPattern,'');
+   const {ownerName,reference} = extractRbcOwnerReference(detail);
+   deposits.push({...base,kind:'owner',ownerName,reference});
+  } else if (platform) {
+   const reference = payoutReference(description.replace(airbnbPattern,'').replace(vrboPattern,''),platform === 'Airbnb');
+   if (platform === 'Vrbo' && !reference) {
+    excluded.push({...evidence,reason:'The VRBO credit has no unambiguous payout reference.',reviewable:true});
+   } else {
+    deposits.push({...base,platform,reference});
+   }
+  } else {
+   excluded.push({...evidence,reason:'Unsupported incoming transaction description.',reviewable:!!head && !payoutContinuation.test(head) && !outgoingPattern.test(head)});
+  }
+ };
+
+ for (const line of statementLines(text)) {
+  const {description,credit,debit,pageBreak} = line;
+  if (pageBreak || tableBoundary.test(description) || /^\d{1,2}$/.test(description)) {
+   flush();
+   postingDate = undefined;
+   continue;
+  }
+  const day = description.match(dayPattern);
+  if (day) {
+   flush();
+   const rest = description.slice(day[0].length);
+   // PDF extraction can repeat the first posting date on a continuation page.
+   const duplicate = rest.match(dayPattern);
+   const repeats = duplicate && +duplicate[1] === +day[1] && duplicate[2].toLowerCase() === day[2].toLowerCase();
+   postingDate = !duplicate || repeats ? statementDate(start,end,statementMonths.indexOf(day[2].toLowerCase())+1,+day[1]) : undefined;
+   pending = startPdfTransaction(line,repeats ? rest.slice(duplicate[0].length) : rest,postingDate);
+   continue;
+  }
+
+  const head = pending?.lines[0] ?? '';
+  const ownerContinued = ownerPattern.test(head) && (
+   isRbcOwnerReference(description) ||
+   (/^Ref(?:erence)?\s*[:#]/i.test(description) && !!extractRbcOwnerReference(description).reference) ||
+   (!head.replace(ownerPattern,'').trim() && !transactionWords.test(description))
+  );
+  const amountContinued = pending && !pending.credit && !pending.debit && payoutContinuation.test(description);
+  const payoutContinued = (airbnbPattern.test(head) || vrboPattern.test(head)) && payoutContinuation.test(description);
+  const newRecognized = ownerPattern.test(description) || airbnbPattern.test(description) || vrboPattern.test(description);
+  const continuation = !newRecognized && (ownerContinued || payoutContinued || amountContinued || !description);
+  if (pending && continuation && !(credit && pending.credit) && !(debit && pending.debit)) {
+   appendPdfLine(pending,line);
+   continue;
+  }
+  flush();
+  if (postingDate || credit || debit || newRecognized) {
+   pending = startPdfTransaction(line,description,postingDate);
+  }
+ }
+ flush();
+ return {deposits,warnings:[],excluded};
 }
+
+export {matchStatement} from './bank-reconciliation.ts';

@@ -1,4 +1,16 @@
 import {extractBankDetails} from './bank-details.ts';
+
+function payoutBankDetails(value:unknown,currency:string){
+ const account=extractBankDetails(value);
+ if(!account)return '';
+ const sourceCurrency=String(value).match(/\(([A-Z]{3})\)\s*$/i)?.[1].toUpperCase();
+ if(sourceCurrency&&sourceCurrency!==currency)throw new Error('The receiving bank currency differs from the payout currency. Review the source export.');
+ if(!/^[A-Z]{3}$/.test(currency))throw new Error('Enter a valid source payout currency.');
+ return account+' ('+currency+')';
+}
+function samePayoutAccount(existing:string|undefined,current:string){
+ return !current||existing===current||!!existing&&current.replace(/ \([A-Z]{3}\)$/,'')===existing;
+}
 import { parseMoney } from './domain.ts';
 import { buildImportPreview, normalizePropertyName, isTotal, MAX_IMPORT_ROWS } from './import.ts';
 import type { ImportCell, ImportOptions, ImportPreview, ImportSheet, PreviewRow } from './import.ts';
@@ -153,7 +165,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
     if (!currency || currency !== text(parent[columns.currency]?.value).toUpperCase()) throw new Error(`Row ${sourceRow}: payout and payment currencies must match.`);
     currencies.add(currency);
     if (currencies.size > 1) throw new Error('Import one currency at a time.');
-    const bankDetails = extractBankDetails(parent[columns.details]?.value);
+    const bankDetails = payoutBankDetails(parent[columns.details]?.value,currency);
     const fields = {
       ...(options.airbnbRecipient?{receivedBy:options.airbnbRecipient}:{}),
       amountCents: amount(cells[columns.amount], `Row ${sourceRow} payment`),
@@ -163,7 +175,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
     };
     // Consume each matching saved row once so equal-value reservations remain
     // separate, while repeating the same upload remains idempotent.
-    const duplicate = payments.findIndex((payment, slot) => !usedSlots.has(slot) && (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || !payment.bankDetails || payment.bankDetails === bankDetails));
+    const duplicate = payments.findIndex((payment, slot) => !usedSlots.has(slot) && (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!payment.bankDetails || samePayoutAccount(payment.bankDetails,bankDetails)));
     let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
     const append = slot < 0 || !payments[slot];
     if (append) {
@@ -171,7 +183,7 @@ function airbnbReservationPreview(property: Property, sheet: ImportSheet, option
       payments.push({ id: `reservation-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
     }
     const payment = payments[slot];
-    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && (!bankDetails || payment.bankDetails === bankDetails);
+    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === fields.amountCents && payment.payoutDate === fields.payoutDate && payment.bundleCents === fields.bundleCents && samePayoutAccount(payment.bankDetails,bankDetails);
     Object.assign(row, fields, { propertyId: property.id, propertyName: property.name, currentCents: payment.amountCents, proposedCents: fields.amountCents, slot: slot + 1, status: unchanged ? 'skipped' : 'ready', reason: unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}.` });
     usedSlots.add(slot);
     if (!unchanged) {
@@ -198,7 +210,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     if (cells.every(cell => !text(cell.value))) return;
     const type = text(cells[columns.type]?.value).toLowerCase();
     if (type === 'payout') {
-      group = { bankDetails:extractBankDetails(cells[columns.details]?.value), payoutDate: payoutDate(cells[columns['arriving by date']]), bundleCents: amount(cells[columns['paid out']], `Row ${sourceRow} payout bundle`), currency: text(cells[columns.currency]?.value).toUpperCase(), rows: [] };
+      group = { bankDetails:payoutBankDetails(cells[columns.details]?.value,text(cells[columns.currency]?.value).toUpperCase()), payoutDate: payoutDate(cells[columns['arriving by date']]), bundleCents: amount(cells[columns['paid out']], `Row ${sourceRow} payout bundle`), currency: text(cells[columns.currency]?.value).toUpperCase(), rows: [] };
       groups.push(group);
       rows.push({ sourceRow, name: 'Payout bundle', originalAmount: text(cells[columns['paid out']]?.value), status: 'skipped', reason: 'Bundle and arrival date are attached to the following payment; bundle is not added to collected payments.', payoutDate: group.payoutDate, bundleCents: group.bundleCents });
       return;
@@ -225,7 +237,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
     const amountCents = group.rows.reduce((sum, row) => sum + row.amountCents!, 0);
     if (!Number.isSafeInteger(amountCents) || Math.abs(amountCents) > 999999999999) throw new Error('Combined payment amount is too large.');
     const fields = { ...(options.airbnbRecipient?{receivedBy:options.airbnbRecipient}:{}), ...(group.bankDetails?{bankDetails:group.bankDetails}:{}), amountCents, payoutDate: group.payoutDate, bundleCents: group.bundleCents };
-    const duplicate = payments.findIndex(payment => (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||!payment.bankDetails||payment.bankDetails===group.bankDetails));
+    const duplicate = payments.findIndex(payment => (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!payment.bankDetails||samePayoutAccount(payment.bankDetails,group.bankDetails)));
     let slot = explicitSlot === null ? (duplicate >= 0 ? duplicate : payments.findIndex(emptyPayment)) : explicitSlot++;
     const append = slot < 0 || !payments[slot];
     if (append) {
@@ -233,7 +245,7 @@ function airbnbPreview(property: Property, sheet: ImportSheet, options: Property
       payments.push({ id: `import-append-${slot}`, type: 'Airbnb', amountCents: null, payoutDate: '', bundleCents: null, bankDate: '', bankCents: null, verifiedByDaisy: false });
     }
     const payment = payments[slot];
-    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && (!group.bankDetails||payment.bankDetails===group.bankDetails);
+    const unchanged = (payment.receivedBy??'castle')===(options.airbnbRecipient||'castle') && payment.amountCents === amountCents && payment.payoutDate === group.payoutDate && payment.bundleCents === group.bundleCents && samePayoutAccount(payment.bankDetails,group.bankDetails);
     group.rows.forEach(row => { row.currentCents = payment.amountCents; row.proposedCents = amountCents; row.slot = slot + 1; row.status = unchanged ? 'skipped' : 'ready'; row.reason = unchanged ? 'Already imported; unchanged.' : `${append ? 'Append new Airbnb payment row' : 'Airbnb payment'} ${slot + 1}${group.rows.length > 1 ? `; sums ${group.rows.length} detail rows` : ''}.`; });
     if (!unchanged) {
       if (append) {

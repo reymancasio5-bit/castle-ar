@@ -122,9 +122,19 @@ test('Airbnb imports bank details and enriches existing payments without duplica
  const bankData=structuredClone(data);bankData.rows[0].push({value:'Details'});bankData.rows[1].push({value:'Transfer to Xin Hong, Checking 5864 (CAD)'});
  const preview=importer.buildPropertyImportPreview(month,bankData,options);
  const change=preview.changes.find(c=>c.kind==='updatePayment');assert.equal(change?.kind,'updatePayment');if(change?.kind!=='updatePayment')return;
- assert.equal(change.fields.bankDetails,'Checking 5864');
+ assert.equal(change.fields.bankDetails,'Checking 5864 (CAD)');
  const existing=structuredClone(month);Object.assign(existing.properties[0].payments[0],change.fields);delete existing.properties[0].payments[0].bankDetails;
  const backfill=importer.buildPropertyImportPreview(existing,bankData,options);assert.equal(backfill.changes.length,1);assert.equal(backfill.changes[0].kind,'updatePayment');
  Object.assign(existing.properties[0].payments[0],change.fields);assert.equal(importer.buildPropertyImportPreview(existing,bankData,options).changes.length,0);
  bankData.rows[1][7].value='Transfer to Someone, Checking 9999 (CAD)';assert.equal(importer.buildPropertyImportPreview(existing,bankData,options).changes.length,1);
+});
+
+test('payout currency survives an import and a suffix-only historical record reimports without appending or clearing verification',()=>{
+ const bankData=structuredClone(data);bankData.rows[0].push({value:'Details'});bankData.rows[1].push({value:'Transfer to Example, Checking 0123 (CAD)'});
+ const change=importer.buildPropertyImportPreview(month,bankData,options).changes.find(c=>c.kind==='updatePayment')!;
+ assert.equal(change.fields.bankDetails,'Checking 0123 (CAD)');
+ const prior=structuredClone(month);Object.assign(prior.properties[0].payments[0],change.fields,{bankDetails:'Checking 0123',verifiedBySystem:true});
+ assert.equal(importer.buildPropertyImportPreview(prior,bankData,options).changes.length,0);
+ bankData.rows[1].at(-1)!.value='Transfer to Example, Checking 0123 (USD)';
+ assert.throws(()=>importer.buildPropertyImportPreview(month,bankData,options),/currenc/i);
 });

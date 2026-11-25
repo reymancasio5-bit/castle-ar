@@ -35,3 +35,8 @@ test('download creates a readable workbook with matching summary and filtered pa
   assert.equal(roundtrip.Sheets['Payment Records']['!autofilter'].ref,'A1:I3');
  }finally{if(previous===undefined)delete (globalThis as any).window;else (globalThis as any).window=previous;}
 });
+
+test('payout details preserve the complete source account when digits are grouped with spaces',()=>{
+ assert.equal(extractBankDetails('Transfer to Example, Checking 0012 3456 7890 (USD)'),'Checking 001234567890');
+ assert.equal(extractBankDetails('Transfer to Example, Savings 0012-3456-7890, payout 22'),'Savings 0012-3456-7890');
+});

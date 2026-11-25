@@ -40,10 +40,11 @@ test('preview import round-trips bundle routing, bank matching and separate expo
  snapshot=await api.save(snapshot.revision,result.changes);
  const saved=snapshot.months[0].properties.find(p=>p.name===options.propertyName)!;
  assert.equal(saved.bundleOnly,true);
- const match=matchStatement([{account:'5864',date:'2026-11-05',amountCents:50000,reference:'',source:'PDF'}],snapshot.months[0]);
+ const match=matchStatement([{account:'5864',date:'2026-11-05',amountCents:50000,reference:'TESTREF',accountIdentity:'10005864',currency:'CAD',source:'PDF'}],snapshot.months[0]);
  assert.equal(match.changes.length,1);
  snapshot=await api.save(snapshot.revision,match.changes);
  assert.equal(snapshot.months[0].properties.find(p=>p.id===saved.id)!.payments[0].verifiedBySystem,true);
+ assert.equal(snapshot.bankReceipts?.[0].reference,'TESTREF');
  const exported=createExportSheets(snapshot,target.id);
  assert.ok(!exported.records.some(r=>r.Property===saved.name));
  assert.equal(exported.bundleRecords.length,1);

@@ -25,7 +25,7 @@ function imported(input: ImportSheet) {
 test('skips standalone bundles and carries the matching parent details to the reservation',()=>{
  const rows=imported(sheet(payout(100),payout(),reservation(),payout(200)));
  assert.equal(rows.length,1);
- assert.deepEqual([rows[0].amountCents,rows[0].bundleCents,rows[0].payoutDate,rows[0].bankDetails],[43686,304000,'2026-09-21','Checking 5864']);
+ assert.deepEqual([rows[0].amountCents,rows[0].bundleCents,rows[0].payoutDate,rows[0].bankDetails],[43686,304000,'2026-09-21','Checking 5864 (CAD)']);
 });
 test('each D-J value is required, including listing, while numeric zero counts as present',()=>{
  for(let column=3;column<=9;column++) {
@@ -37,7 +37,7 @@ test('each D-J value is required, including listing, while numeric zero counts a
 });
 test('separate reservations retain their amounts and the nearest parent bundle even on the same date',()=>{
  const payments=imported(sheet(payout(),reservation('a',100),reservation('b',100),payout(900,'9999'),reservation('c',200)));
- assert.deepEqual(payments.map(p=>[p.amountCents,p.bundleCents,p.bankDetails]),[[10000,304000,'Checking 5864'],[10000,304000,'Checking 5864'],[20000,90000,'Checking 9999']]);
+ assert.deepEqual(payments.map(p=>[p.amountCents,p.bundleCents,p.bankDetails]),[[10000,304000,'Checking 5864 (CAD)'],[10000,304000,'Checking 5864 (CAD)'],[20000,90000,'Checking 9999 (CAD)']]);
 });
 test('a reservation date must match its own parent rather than an earlier bundle',()=>{
  const wrong=reservation();wrong[0]='09/15/2026';
@@ -56,7 +56,7 @@ test('Resolution Payout permits a blank booking date and retains its parent bund
  for(const prefix of [[],[payout(),reservation()]]) {
   const payments=imported(sheet(...prefix,payout(10),parent,resolution));
   const payment=payments.at(-1)!;
-  assert.deepEqual([payment.amountCents,payment.bundleCents,payment.payoutDate,payment.bankDetails],[2440,201163,'2026-10-06','Checking 5864']);
+  assert.deepEqual([payment.amountCents,payment.bundleCents,payment.payoutDate,payment.bankDetails],[2440,201163,'2026-10-06','Checking 5864 (CAD)']);
  }
 });
 
@@ -89,7 +89,7 @@ test('CSV and Excel uploads persist separate equal payments and repeat imports a
    const after=saved.months.find(m=>m.id===target.id)!;
    const property=after.properties.find(p=>p.name==='Foxglove')!;
    assert.deepEqual(property.payments.map(p=>p.amountCents),[10000,10000,20000,30000]);
-   assert.ok(property.payments.every(p=>p.bundleCents===304000 && p.bankDetails==='Checking 5864' && p.payoutDate==='2026-09-21' && p.bankCents===null && p.bankDate===''));
+   assert.ok(property.payments.every(p=>p.bundleCents===304000 && p.bankDetails==='Checking 5864 (CAD)' && p.payoutDate==='2026-09-21' && p.bankCents===null && p.bankDate===''));
    assert.equal(buildBulkImportPreview(after,[entry]).changes.length,0);
   }
  } finally {

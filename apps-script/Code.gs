@@ -265,6 +265,7 @@ function castleRead() {
   });
   var managerData = castleReadManagers(book, months, source);
   var ownerData = castleReadOwners(book, source);
+  var receiptData = castleReadReceipts(book, source);
   // Keep physical indexes for writes; combine companion tabs only in the public snapshot.
   var logicalMonths = [];
   months.forEach(function(m){if(!monthIndex[m.id].bundleOnly)logicalMonths.push({id:m.id,label:m.label,month:m.month,properties:m.properties.slice()});});
@@ -272,8 +273,8 @@ function castleRead() {
   months=logicalMonths;
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
-    managerData: managerData, ownerData: ownerData,
-    snapshot: { airbnbRecipientSchema: 1, ownerBankNamesSchema: 1, ownerAllocationSchema: 1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    managerData: managerData, ownerData: ownerData, receiptData: receiptData,
+    snapshot: { bankReceiptSchema:1, bankReceipts:receiptData.records, airbnbRecipientSchema: 1, ownerBankNamesSchema: 1, ownerAllocationSchema: 1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -386,11 +387,14 @@ function castleManagerTableRequests(current,tables,definitions) {
 }
 function castleBuildRequests(changes,current) {
   var owners=castlePrepareOwners(changes,current);
+  var bank=castlePrepareReceipts(changes,current,owners.tables.transfers.records);
+  if(bank.replayed.size)owners.changes=owners.changes.filter(function(c){return !bank.replayed.has(c);});
   current=Object.assign({},current,{ownerPayments:owners.payments});
   var bundlePreparation=castlePrepareBundleImports(owners.changes,current);
   changes=bundlePreparation.changes;
   var requests=bundlePreparation.requests.concat(castleBuildPreparedRequests(changes,current));
   if(owners.changed)requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},owners.tables,CASTLE_OWNER_TABLES));
+  if(bank.rows.length)requests=requests.concat(castleWriteReceipts(current,requests,bank.rows));
   return requests;
 }
 
@@ -569,13 +573,12 @@ function castleFinancialRequests(changes, current) {
       castleUnique(targets, 'total:' + change.propertyId);
       requests.push(castleCell(target.sheetId, target.row, 4, change.amountCents / 100));
      } else if (change.kind === 'reconcileBank') {
-      castleKeys(change, ['kind','paymentId','account','bundleCents','bankDate']);
+      castleKeys(change, ['kind','paymentId','account','bundleCents','bankDate','receipt']);
       target = current.payments[change.paymentId];
       if (!target || !target.bankOffset) castleThrow('VALIDATION','Bank reconciliation requires a payment with Bank Details in column G.');
       var p = target.payment;
-      var accountMatch = String(p.bankDetails || '').match(/(?:checking|chequing|savings)\s+([\d -]+)/i);
-      var account = accountMatch ? accountMatch[1].replace(/\D/g,'').slice(-4) : '';
-      if (!/^\d{4}$/.test(change.account) || account !== change.account || p.type !== 'Airbnb' || p.receivedBy==='owner' || p.bundleCents !== change.bundleCents || !(p.amountCents > 0)) castleThrow('VALIDATION','The statement does not match this payment bundle and bank account.');
+      var account = castlePayoutAccount(p.bankDetails).suffix;
+      if (!/^\d{4}$/.test(change.account) || account !== change.account || p.type !== change.receipt.platform || p.receivedBy==='owner' || p.bundleCents !== change.bundleCents || !(p.amountCents > 0)) castleThrow('VALIDATION','The statement does not match this payment bundle and bank account.');
       if (!castleDateValid(change.bankDate)) castleThrow('VALIDATION','The bank transaction date must be a valid YYYY-MM-DD date.');
       if ((p.bankCents !== null && p.bankCents !== p.amountCents) || (p.bankDate && p.bankDate !== change.bankDate)) castleThrow('CONFLICT','Existing bank values conflict with this statement. Review the payment first.');
       ['type','amountCents','payoutDate','bundleCents','bankDetails','bankDate','bankCents'].forEach(function(key){castleUnique(targets,'payment:'+change.paymentId+':'+key);});
@@ -1092,7 +1095,7 @@ function castleBundleBorderRequests(sheetId,firstRow,lastRow,bankOffset){
 // Owner identity and allocations are global; row coordinates are used only while saving.
 var CASTLE_OWNER_TABLES={
  owners:{title:'Property Owners',fields:['id','name','bankName','email','notes','active','propertyNames']},
- transfers:{title:'Owner Transfers',fields:['id','ownerId','ownerName','bankName','account','date','reference','source','amountCents','monthId','allocations']}
+ transfers:{title:'Owner Transfers',fields:['id','ownerId','ownerName','bankName','account','date','reference','source','amountCents','monthId','allocations','accountIdentity','currency','description','sheet','sourceRow']}
 };
 function castleOwnerText(value,label,max,required){
  if(typeof value!=='string'||value.length>max||(required&&!value.trim())||/^[=+@-]/.test(value.trim())||/[\u0000-\u001f\u007f]/.test(value))castleThrow('VALIDATION',label+' must be safe text (maximum '+max+' characters).');
@@ -1120,6 +1123,8 @@ function castleOwnerTransferValidate(t,stored){
  castleOwnerId(t.ownerId);castleOwnerText(t.monthId,'Month ID',100,true);
  t.account=castleOwnerText(t.account,'Bank account',160,true);t.reference=castleOwnerText(t.reference,'Transaction reference',160,true);
  if(!/^\d{4}$/.test(t.account)||!/^[a-z0-9]+$/i.test(t.reference))castleThrow('VALIDATION','Enter a four-digit account and alphanumeric transaction reference.');
+ if(!stored||t.accountIdentity||t.currency)castleSourceIdentity(t);
+ castleReceiptContext(t);
  t.source=castleOwnerText(t.source,'Statement source',240,true);t.bankName=castleName(t.bankName,'Bank statement name');
  if(typeof t.date!=='string'||!castleDateValid(t.date))castleThrow('VALIDATION','A valid transfer date is required.');
  castleCents(t.amountCents,false,true);if(!t.amountCents)castleThrow('VALIDATION','Transfer amounts must be positive.');
@@ -1134,18 +1139,20 @@ function castleOwnerTransferValidate(t,stored){
  if(!Number.isSafeInteger(sum)||sum!==t.amountCents)castleThrow('VALIDATION','Allocations must sum exactly to the transfer amount.');
  if(stored){castleOwnerId(t.id);castleName(t.ownerName,'Owner name');}
 }
-function castleOwnerTransferKey(t){return JSON.stringify([castleManagerName(t.account),castleManagerName(t.reference)]);}
+function castleOwnerTransferKey(t){return JSON.stringify([t.accountIdentity||t.account,castleManagerName(t.reference)]);}
 function castleReadOwners(book,source){
  var tables={};Object.keys(CASTLE_OWNER_TABLES).forEach(function(key){
   var d=CASTLE_OWNER_TABLES[key],sheet=book.getSheetByName(d.title),table={sheetId:sheet?sheet.getSheetId():null,maxRows:sheet?sheet.getMaxRows():0,maxColumns:sheet?sheet.getMaxColumns():0,lastRow:sheet?sheet.getLastRow():0,records:[]};tables[key]=table;
   if(!table.lastRow)return;
   var range=sheet.getRange(1,1,table.lastRow,Math.min(table.maxColumns,d.fields.length)),values=range.getValues(),formulas=range.getFormulas();source.push({id:String(table.sheetId),values:values,formulas:formulas});
-  if(!d.fields.every(function(f,i){return values[0][i]===f&&!formulas[0][i];}))castleThrow('SOURCE_DATA',d.title+': incompatible headers.');
+  var legacy=key==='transfers'&&!values[0][11]&&!values[0][12];
+  if(legacy&&(values.some(function(row){return row.slice(11).some(function(v){return v!==''&&v!==undefined;});})||formulas.some(function(row){return row.slice(11).some(Boolean);})))castleThrow('SOURCE_DATA','Owner Transfers migration columns contain data. Preserve their contents before importing.');
+  if(!(legacy?d.fields.slice(0,11):d.fields).every(function(f,i){return values[0][i]===f&&!formulas[0][i];}))castleThrow('SOURCE_DATA',d.title+': incompatible headers.');
   var seen=Object.create(null);values.slice(1).forEach(function(row,i){
    if(!row.some(function(v){return v!=='';})&&!formulas[i+1].some(Boolean))return;
    try{
     if(formulas[i+1].some(Boolean))throw new Error('Formulas are not supported.');
-    var record={};d.fields.forEach(function(f,j){record[f]=row[j];});castleUnique(seen,record.id);
+    var record={};d.fields.forEach(function(f,j){if(j<11||row[j])record[f]=row[j];});castleUnique(seen,record.id);
     var field=key==='owners'?'propertyNames':'allocations';record[field]=JSON.parse(record[field]);
     if(key==='owners')castleOwnerValidate(record);else{if(record.date instanceof Date)record.date=Utilities.formatDate(record.date,book.getSpreadsheetTimeZone(),'yyyy-MM-dd');castleOwnerTransferValidate(record,true);}
     table.records.push(record);
@@ -1161,12 +1168,12 @@ function castlePrepareOwners(changes,current){
  // Profile changes are validated first so an import may use a profile saved in this batch.
  changes.forEach(function(c){if(!c||c.kind!=='saveOwner')return;castleKeys(c,['kind','owner']);var owner=JSON.parse(JSON.stringify(c.owner));castleOwnerValidate(owner);castleUnique(seen,owner.id);var index=tables.owners.records.findIndex(function(o){return o.id===owner.id;});if(index<0)tables.owners.records.push(owner);else tables.owners.records[index]=owner;changed=true;});
  var banks=Object.create(null);tables.owners.records.forEach(function(o){castleOwnerBankNames(o.bankName).forEach(function(name){var key=castleManagerName(name);if(banks[key])castleThrow('VALIDATION','This bank statement name already belongs to another owner, including inactive owners.');banks[key]=true;});});
- var imported=Object.create(null);tables.transfers.records.forEach(function(t){imported[castleOwnerTransferKey(t)]=true;});
+ var imported=new Map();function indexTransfer(t){var k=JSON.stringify([t.account,t.reference.toLowerCase()]);if(!imported.has(k))imported.set(k,[]);imported.get(k).push(t);}tables.transfers.records.forEach(indexTransfer);
  changes.forEach(function(original){
   if(original&&original.kind==='saveOwner')return;
   if(!original||original.kind!=='importOwnerTransfer'){remaining.push(original);return;}
-  var c=JSON.parse(JSON.stringify(original));castleKeys(c,['kind','ownerId','monthId','account','date','reference','source','bankName','amountCents','allocations']);castleOwnerTransferValidate(c,false);
-  var key=castleOwnerTransferKey(c);if(imported[key])castleThrow('VALIDATION','This owner transfer was already imported (duplicate account and reference).');imported[key]=true;
+  var c=JSON.parse(JSON.stringify(original));castleKeys(c,['kind','ownerId','monthId','account','date','reference','source','bankName','amountCents','allocations','accountIdentity','currency','description','sheet','sourceRow']);castleOwnerTransferValidate(c,false);
+  var key=castleOwnerTransferKey(c);if((imported.get(JSON.stringify([c.account,c.reference.toLowerCase()]))||[]).some(function(t){return castleSameReference(t,c);}))castleThrow('VALIDATION','This owner transfer was already imported (duplicate account and reference).');indexTransfer(c);
   var owner=tables.owners.records.filter(function(o){return o.id===c.ownerId;})[0];if(!owner||!castleOwnerBankNames(owner.bankName).some(function(name){return castleManagerName(name)===castleManagerName(c.bankName);}))castleThrow('VALIDATION','Choose the owner matching the bank statement name.');
   var month=current.months[c.monthId];if(!month||month.bundleOnly)castleThrow('VALIDATION','Choose an AR month for owner payments.');
   var allocationNames=Object.create(null);
@@ -1176,7 +1183,7 @@ function castlePrepareOwners(changes,current){
    allocationNames[propertyNameKey]=true;
    castleValidateBankDetails(c.account,target.bankOffset);
    payments.push({propertyId:a.propertyId,payment:{type:'Owner',amountCents:a.amountCents,bankDetails:'Checking '+c.account,ownerBankDate:c.date}});return {propertyName:target.property.name,monthId:allocationMonth,amountCents:a.amountCents};});
-  tables.transfers.records.push({id:'transfer-'+castleHash(key).slice(0,40),ownerId:owner.id,ownerName:owner.name,bankName:c.bankName,account:c.account,date:c.date,reference:c.reference,source:c.source,amountCents:c.amountCents,monthId:c.monthId,allocations:allocations});changed=true;
+  tables.transfers.records.push({id:'transfer-'+castleHash(key).slice(0,40),ownerId:owner.id,ownerName:owner.name,bankName:c.bankName,account:c.account,accountIdentity:c.accountIdentity,currency:c.currency,description:c.description,sheet:c.sheet,sourceRow:c.sourceRow,date:c.date,reference:c.reference,source:c.source,amountCents:c.amountCents,monthId:c.monthId,allocations:allocations});changed=true;
  });
  if(changed&&remaining.some(function(c){return c&&['updateProperty','deleteProperty','deletePayment'].indexOf(c.kind)>=0;}))castleThrow('VALIDATION','Save owner changes separately from record edits or deletions.');
  return {tables:tables,changes:remaining,payments:payments,changed:changed};
@@ -1422,4 +1429,143 @@ function castleAiBankMapping(body) {
     seen.push(col);
   });
   return {text:'Bank columns interpreted. The app must validate the source rows before submission.',bankMapping:mapping};
+}
+
+
+// One append-only row per allocation keeps past consumption independent of spreadsheet row coordinates.
+var CASTLE_RECEIPT_HEADERS=['accountIdentity','currency','reference','source','platform','account','date','amountCents','monthId','propertyName','bundleOnly','paymentIndex','allocatedCents','description','sheet','sourceRow'];
+function castleReceiptKey(r){return JSON.stringify([r.accountIdentity,r.reference.trim().toLowerCase()]);}
+function castleAllocationKey(a){return JSON.stringify([a.monthId,a.propertyName.trim().toLowerCase(),a.bundleOnly,a.paymentIndex]);}
+function castleSameReference(a,b){
+ return a.account===b.account&&a.reference.trim().toLowerCase()===b.reference.trim().toLowerCase()&&(!a.accountIdentity||!b.accountIdentity||a.accountIdentity===b.accountIdentity);
+}
+function castleSourceIdentity(r){
+ if(typeof r.accountIdentity!=='string'||!/^\d{5,34}$/.test(r.accountIdentity)||r.accountIdentity.slice(-4)!==r.account||['CAD','USD'].indexOf(r.currency)<0)castleThrow('VALIDATION','Confirm the full bank account and CAD or USD currency from the statement.');
+}
+function castleReceiptContext(r){
+ ['description','sheet'].forEach(function(f){if(r[f]!==undefined&&(typeof r[f]!=='string'||r[f].length>(f==='sheet'?240:12000)||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(r[f])))castleThrow('VALIDATION','Invalid source '+f+'.');});
+ if(r.sourceRow!==undefined&&(!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1))castleThrow('VALIDATION','Invalid source row.');
+}
+function castleReceiptValidate(r){
+ castleReceiptContext(r);
+ castleSourceIdentity(r);
+ if(typeof r.reference!=='string'||!r.reference.trim()||r.reference.length>160||/[\u0000-\u001f\u007f]/.test(r.reference))castleThrow('VALIDATION','A valid source transaction reference is required.');
+ if(typeof r.source!=='string'||!r.source.trim()||r.source.length>240||/[\u0000-\u001f\u007f]/.test(r.source))castleThrow('VALIDATION','A valid statement source is required.');
+ if(['Airbnb','Vrbo'].indexOf(r.platform)<0||typeof r.date!=='string'||!castleDateValid(r.date))castleThrow('VALIDATION','Invalid receipt platform or date.');
+ castleCents(r.amountCents,false,true);if(r.amountCents<=0)castleThrow('VALIDATION','A positive receipt is required.');
+}
+function castleEqualReceipt(a,b){return a.currency===b.currency&&a.date===b.date&&a.amountCents===b.amountCents&&a.platform===b.platform;}
+function castleReadReceipts(book,source){
+ var sheet=book.getSheetByName('Bank Receipts'),last=sheet?sheet.getLastRow():0;
+ var table={sheetId:sheet?sheet.getSheetId():null,maxRows:sheet?sheet.getMaxRows():0,maxColumns:sheet?sheet.getMaxColumns():0,lastRow:last,records:[]};if(!last)return table;
+ var range=sheet.getRange(1,1,last,Math.min(CASTLE_RECEIPT_HEADERS.length,table.maxColumns)),values=range.getValues(),formulas=range.getFormulas();
+ source.push({id:String(table.sheetId),values:values,formulas:formulas});
+ if(!CASTLE_RECEIPT_HEADERS.every(function(h,i){return h===values[0][i];})||formulas.some(function(row){return row.some(Boolean);}))castleThrow('SOURCE_DATA','Bank Receipts has incompatible headers or formula cells.');
+ var records=new Map(),slots=new Set(),sums=new Map();
+ values.slice(1).forEach(function(row,i){
+  if(row.every(function(v){return v==='';}))return;
+  try{
+   var r={};CASTLE_RECEIPT_HEADERS.slice(0,8).forEach(function(h,j){r[h]=row[j];});
+   if(r.date instanceof Date)r.date=Utilities.formatDate(r.date,book.getSpreadsheetTimeZone(),'yyyy-MM-dd');
+   ['description','sheet','sourceRow'].forEach(function(f,j){if(row[13+j]!==undefined&&row[13+j]!=='')r[f]=row[13+j];});
+   castleReceiptValidate(r);
+   var a={monthId:String(row[8]),propertyName:row[9],bundleOnly:row[10],paymentIndex:row[11],amountCents:row[12]};
+   if(!a.monthId||typeof a.propertyName!=='string'||!a.propertyName.trim()||typeof a.bundleOnly!=='boolean'||!Number.isSafeInteger(a.paymentIndex)||a.paymentIndex<0||!Number.isSafeInteger(a.amountCents)||a.amountCents<=0)throw new Error('Invalid allocation.');
+   var key=castleReceiptKey(r),previous=records.get(key),slot=castleAllocationKey(a),sum=(sums.get(key)||0)+a.amountCents;
+   if(slots.has(slot)||sum>r.amountCents||(previous&&!castleEqualReceipt(previous,r)))throw new Error('Conflicting receipt allocation.');
+   slots.add(slot);sums.set(key,sum);if(!previous){r.allocations=[];records.set(key,r);table.records.push(r);previous=r;}previous.allocations.push(a);
+  }catch(error){castleThrow('SOURCE_DATA','Bank Receipts row '+(i+2)+': '+error.message);}
+ });
+ return table;
+}
+function castleWriteReceipts(current,prior,rows){
+ var t=current.receiptData,id=t.sheetId,requests=[],headers=CASTLE_RECEIPT_HEADERS;
+ if(!t.lastRow)rows=[headers].concat(rows);
+ if(id===null){
+  var taken=current.sheetIds.concat(prior.filter(function(r){return r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}));
+  id=1000;while(taken.indexOf(id)>=0)id++;
+  requests.push({addSheet:{properties:{sheetId:id,title:'Bank Receipts',gridProperties:{rowCount:Math.max(100,rows.length),columnCount:headers.length,frozenRowCount:1}}}});
+ }else{
+  if(t.maxRows<t.lastRow+rows.length)requests.push({appendDimension:{sheetId:id,dimension:'ROWS',length:t.lastRow+rows.length-t.maxRows}});
+  if(t.maxColumns<headers.length)requests.push({appendDimension:{sheetId:id,dimension:'COLUMNS',length:headers.length-t.maxColumns}});
+ }
+ requests.push({updateCells:{start:{sheetId:id,rowIndex:t.lastRow,columnIndex:0},rows:rows.map(function(row){return {values:row.map(castleValue)};}),fields:'userEnteredValue'}});
+ return requests;
+}
+function castlePayoutAccount(details){
+ var match=String(details||'').match(/\b(?:checking|chequing|savings)\s+([\dxX*?][\dxX*? -]*)/i),digits=match?match[1].replace(/[ -]/g,''):'';
+ var suffix=digits.match(/\d{4}$/),currency=String(details||'').match(/\(([a-z]{3})\)\s*$/i)||String(details||'').match(/\b(CAD|USD)\b/i);
+ return {mask:/[xX*?]/.test(digits)?digits:'',suffix:suffix?suffix[0]:'',identity:/^\d{5,34}$/.test(digits)?digits:'',currency:currency?currency[1].toUpperCase():''};
+}
+function castleMaskedAccountMatches(mask,identity){
+ if(!mask)return true;
+ var ends=mask.match(/^(\d*)[xX*?]+(\d*)$/);
+ if(ends)return identity.length>ends[1].length+ends[2].length&&identity.startsWith(ends[1])&&identity.endsWith(ends[2]);
+ return mask.length===identity.length&&Array.from(mask).every(function(digit,i){return /[xX*?]/.test(digit)||digit===identity[i];});
+}
+function castlePrepareReceipts(changes,current,transfers){
+ var rows=[],replayed=new Set(),receipts=current.receiptData.records;
+ var bankChanges=changes.filter(function(c){return c&&c.kind==='reconcileBank';});
+ if(bankChanges.length&&changes.some(function(c){return !c||['reconcileBank','importOwnerTransfer','saveOwner'].indexOf(c.kind)<0;}))castleThrow('VALIDATION','Save bank receipt imports separately from other edits.');
+ var relevant=changes.some(function(c){return c&&['updateProperty','deletePayment','deleteProperty','importOwnerTransfer'].indexOf(c.kind)>=0;});
+ if(!bankChanges.length&&(!relevant||!receipts.length))return {rows:rows,replayed:replayed};
+ var ledger=new Map(),totals=new Map(),slots=new Map(),targets=new Map(),identities=new Map(),currencies=new Map(),history=new Map(),propertySlots=new Map();
+ function observe(map,key,value){if(!key||!value)return;if(!map.has(key))map.set(key,new Set());map.get(key).add(value);}
+ function bank(suffix,id,currency){observe(identities,suffix,id);observe(currencies,id||suffix,currency);}
+ function slotProperty(a){return JSON.stringify([a.monthId,castleManagerName(a.propertyName),a.bundleOnly]);}
+ function legacyKey(p,b){return JSON.stringify([b.suffix,p.bankDate,p.bundleCents,p.type]);}
+ var ownersByRef=new Map();
+ transfers.forEach(function(t){bank(t.account,t.accountIdentity,t.currency);var key=JSON.stringify([t.account,t.reference.toLowerCase()]);if(!ownersByRef.has(key))ownersByRef.set(key,[]);ownersByRef.get(key).push(t);});
+ receipts.forEach(function(r){
+  var key=castleReceiptKey(r);ledger.set(key,r);bank(r.account,r.accountIdentity,r.currency);
+  if((ownersByRef.get(JSON.stringify([r.account,r.reference.toLowerCase()]))||[]).some(function(t){return castleSameReference(t,r);}))castleThrow('VALIDATION','This reference was already allocated to a platform receipt.');
+  totals.set(key,r.allocations.reduce(function(sum,a){slots.set(castleAllocationKey(a),{key:key,amount:a.amountCents});observe(propertySlots,slotProperty(a),String(a.paymentIndex));return sum+a.amountCents;},0));
+ });
+ bankChanges.forEach(function(c){if(c.receipt)bank(c.account,c.receipt.accountIdentity,c.receipt.currency);});
+ var properties=new Map();
+ current.snapshot.months.forEach(function(m){m.properties.forEach(function(prop){
+  var base={monthId:m.id,propertyName:prop.name,bundleOnly:!!prop.bundleOnly};properties.set(prop.id,base);
+  prop.payments.forEach(function(p,i){
+   var a=Object.assign({},base,{paymentIndex:i,amountCents:p.amountCents}),b=castlePayoutAccount(p.bankDetails);
+   bank(b.suffix,b.identity,b.currency);targets.set(p.id,{a:a,p:p,b:b});
+   if(p.verifiedBySystem&&p.bankDate&&p.receivedBy!=='owner'&&!slots.has(castleAllocationKey(a))){var key=legacyKey(p,b);if(!history.has(key))history.set(key,[]);history.get(key).push(b);}
+  });
+ });});
+ changes.forEach(function(c){
+  if(!c)return;
+  if(c.kind==='updateProperty'||c.kind==='deleteProperty'){
+   var p=properties.get(c.propertyId);
+   if(p&&propertySlots.has(slotProperty(p))&&(c.kind==='deleteProperty'||String(c.name).trim().toLowerCase()!==p.propertyName.trim().toLowerCase()))castleThrow('VALIDATION','This property has bank receipt history. Preserve its name and payment records.');
+  }
+  if(c.kind==='deletePayment'){
+   var t=targets.get(c.paymentId),positions=t&&propertySlots.get(slotProperty(t.a));
+   if(positions&&Array.from(positions).some(function(i){return Number(i)>=t.a.paymentIndex;}))castleThrow('VALIDATION','This deletion would move or remove a payment linked to bank receipt history.');
+  }
+ });
+ bankChanges.forEach(function(c){
+  if(!c.receipt||typeof c.receipt!=='object'||Array.isArray(c.receipt))castleThrow('VALIDATION','This bank import requires full statement receipt evidence. Reload the updated app.');
+  castleKeys(c,['kind','paymentId','account','bundleCents','bankDate','receipt']);
+  castleKeys(c.receipt,['accountIdentity','currency','reference','source','platform','description','sheet','sourceRow']);
+  var r=Object.assign({},c.receipt,{account:c.account,date:c.bankDate,amountCents:c.bundleCents});
+  castleReceiptValidate(r);
+  var key=castleReceiptKey(r),existing=ledger.get(key),t=targets.get(c.paymentId);
+  if(existing&&!castleEqualReceipt(existing,r))castleThrow('VALIDATION','Conflicting details for the same bank transaction reference.');
+  if((ownersByRef.get(JSON.stringify([r.account,r.reference.trim().toLowerCase()]))||[]).some(function(o){return castleSameReference(r,o);}))castleThrow('VALIDATION','This transaction reference was used for an owner transfer.');
+  if(!t||t.p.type!==r.platform||t.p.receivedBy==='owner'||t.p.bundleCents!==r.amountCents||!(t.p.amountCents>0))castleThrow('VALIDATION','Receipt does not match the selected payment bundle.');
+  var b=t.b;
+  if(b.suffix!==r.account||!castleMaskedAccountMatches(b.mask,r.accountIdentity)||(b.identity&&b.identity!==r.accountIdentity)||(b.currency&&b.currency!==r.currency)||(!b.identity&&identities.get(r.account).size>1)||(!b.currency&&((currencies.get(r.accountIdentity)||new Set()).size>1||Array.from(currencies.get(r.account)||[]).some(function(currency){return currency!==r.currency;}))))castleThrow('VALIDATION','The receipt account or currency differs from or is ambiguous for this payment.');
+  var slot=castleAllocationKey(t.a),claimed=slots.get(slot);
+  if(claimed){
+   if(claimed.key!==key||claimed.amount!==t.p.amountCents||!t.p.verifiedBySystem||t.p.bankDate!==r.date||t.p.bankCents!==t.p.amountCents)castleThrow('VALIDATION','This payment already has a bank receipt allocation.');
+   replayed.add(c);return;
+  }
+  var old=history.get(JSON.stringify([r.account,r.date,r.amountCents,r.platform]))||[];
+  if(old.some(function(b){return castleMaskedAccountMatches(b.mask,r.accountIdentity)&&(!b.identity||b.identity===r.accountIdentity)&&(!b.currency||b.currency===r.currency);}))castleThrow('VALIDATION','An earlier verification has no bank receipt reference; review the bank history.');
+  if(t.p.verifiedBySystem)castleThrow('VALIDATION','This payment was already verified.');
+  var sum=(totals.get(key)||0)+t.p.amountCents;
+  if(!Number.isSafeInteger(sum)||sum>r.amountCents)castleThrow('VALIDATION','Allocations exceed the remaining bank receipt amount.');
+  totals.set(key,sum);ledger.set(key,r);slots.set(slot,{key:key,amount:t.p.amountCents});
+  rows.push([r.accountIdentity,r.currency,r.reference,r.source,r.platform,r.account,r.date,r.amountCents,t.a.monthId,t.a.propertyName,t.a.bundleOnly,t.a.paymentIndex,t.p.amountCents,r.description||'',r.sheet||'',r.sourceRow||'']);
+ });
+ return {rows:rows,replayed:replayed};
 }

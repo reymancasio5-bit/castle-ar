@@ -1,7 +1,7 @@
 import type {Property, Month} from './types.ts';
 export function extractBankDetails(value:unknown):string {
- const match=String(value??'').match(/\b(checking|chequing|savings)\s+([\d*xX?-]*\d[\d*xX?-]*)\b/i);
- return match ? match[1][0].toUpperCase()+match[1].slice(1).toLowerCase()+' '+match[2] : '';
+ const match=String(value??'').match(/\b(checking|chequing|savings)\s+([\d*xX?-]*\d[\d*xX?-]*(?: +[\d*xX?-]+)*)\b/i);
+ return match ? match[1][0].toUpperCase()+match[1].slice(1).toLowerCase()+' '+match[2].replace(/ /g,'') : '';
 }
 export const bankLabel=(value?:string)=>value?.trim()||'Not Specified';
 export const propertyBanks=(property:Property)=>[...new Set(property.payments.map(p=>p.bankDetails?.trim()).filter((v):v is string=>!!v))].sort();

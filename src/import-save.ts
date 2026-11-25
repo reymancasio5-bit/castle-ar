@@ -1,9 +1,10 @@
 import {buildBulkImportPreview,type BulkImportEntry} from './bulk-import.ts';
 import {normalizePropertyName} from './import.ts';
 import {isAirbnbSheet} from './property-import.ts';
-import {parseMoney} from './domain.ts';
+import {balance,parseMoney} from './domain.ts';
 import type {Change,Month,Payment,Property,Snapshot} from './types.ts';
-import {transferKey} from './owners.ts';
+import {ownerBankNames,ownerKey} from './owners.ts';
+import {payoutAccount,sameBankReference,validSourceAccount} from './bank-account.ts';
 import {runProgress,type ReportProgress} from './operation-progress.ts';
 
 export class ImportReviewRequired extends Error {
@@ -74,11 +75,27 @@ function findFreshProperty(original:Snapshot,latest:Snapshot,id:string):{before:
   return {before,after:matches[0],monthId:month.id};
 }
 const financialSignature=(p:Property)=>JSON.stringify([p.totalCents,p.payments.map(signature)]);
+function ownerAllocationContext(snapshot:Snapshot,ownerId:string):string{
+ const owner=snapshot.owners?.find(o=>o.id===ownerId);
+ if(!owner)return '';
+ const mapped=new Set(owner.propertyNames.map(ownerKey));
+ const balances=snapshot.months.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&mapped.has(ownerKey(p.name)))
+  .map(p=>JSON.stringify([m.id,m.month,ownerKey(p.name),balance(p)]))).sort();
+ return JSON.stringify([owner.active,ownerBankNames(owner.bankName).map(ownerKey).sort(),[...mapped].sort(),balances]);
+}
 export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest:Snapshot):Change[]{
+  if(latest.bankReceiptSchema!==1||!Array.isArray(latest.bankReceipts)||original.bankReceiptSchema!==1||!Array.isArray(original.bankReceipts))throw new Error('Deploy the updated bank receipt backend before importing statements.');
   const fail=():never=>{throw new BankImportReviewRequired(latest);};
-  const results:Change[]=[];
+  const bankContext=(snapshot:Snapshot,accounts:Set<string>)=>JSON.stringify([
+    snapshot.bankReceipts?.filter(r=>accounts.has(r.account)),snapshot.ownerTransfers?.filter(r=>accounts.has(r.account)),
+    snapshot.months.flatMap(m=>m.properties.flatMap(p=>p.payments.flatMap(row=>accounts.has(payoutAccount(row.bankDetails).suffix)?[[m.id,p.name,!!p.bundleOnly,signature(row)]]:[])))
+  ]);
+  const accounts=new Set(changes.flatMap(c=>c.kind==='reconcileBank'?[c.account]:[]));
+  if(accounts.size&&bankContext(original,accounts)!==bankContext(latest,accounts))return fail();
+  const results:Change[]=[],reviewedOwners=new Set<string>();
   for(const change of changes){
     if(change.kind==='reconcileBank'){
+      if(!change.receipt||!validSourceAccount(change.account,change.receipt.accountIdentity)||!change.receipt.reference.trim()||!change.receipt.currency)return fail();
       const before=original.months.flatMap(m=>m.properties).find(p=>p.payments.some(row=>row.id===change.paymentId));
       const target=before&&findFreshProperty(original,latest,before.id);
       if(!target||financialSignature(target.before)!==financialSignature(target.after))return fail();
@@ -87,12 +104,17 @@ export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest
     }else if(change.kind==='importOwnerTransfer'){
       const targets=change.allocations.map(a=>({allocation:a,target:findFreshProperty(original,latest,a.propertyId)}));
       if(targets.some(t=>!t.target))return fail();
-      const duplicate=latest.ownerTransfers?.find(t=>transferKey(t.account,t.reference)===transferKey(change.account,change.reference));
+      if(!validSourceAccount(change.account,change.accountIdentity)||!change.currency||latest.bankReceipts.some(r=>sameBankReference(r,change)))return fail();
+      const duplicate=latest.ownerTransfers?.find(t=>sameBankReference(t,change));
       if(duplicate){
         const normalize=(items:{propertyName:string;monthId:string;amountCents:number}[])=>JSON.stringify(items.map(a=>[normalizePropertyName(a.propertyName),a.monthId,a.amountCents]).sort());
         const expected=targets.map(({allocation,target})=>({propertyName:target!.before.name,monthId:target!.monthId,amountCents:allocation.amountCents}));
-        if(duplicate.ownerId!==change.ownerId||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents||normalize(duplicate.allocations.map(a=>({...a,monthId:a.monthId??duplicate.monthId})))!==normalize(expected))return fail();
+        if(duplicate.accountIdentity!==change.accountIdentity||duplicate.currency!==change.currency||duplicate.ownerId!==change.ownerId||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents||normalize(duplicate.allocations.map(a=>({...a,monthId:a.monthId??duplicate.monthId})))!==normalize(expected))return fail();
         continue;
+      }
+      if(!reviewedOwners.has(change.ownerId)){
+        if(ownerAllocationContext(original,change.ownerId)!==ownerAllocationContext(latest,change.ownerId))return fail();
+        reviewedOwners.add(change.ownerId);
       }
       if(targets.some(({target})=>financialSignature(target!.before)!==financialSignature(target!.after)))return fail();
       results.push({...change,allocations:targets.map(({allocation,target})=>({...allocation,propertyId:target!.after.id}))});

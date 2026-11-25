@@ -2,9 +2,10 @@ import {bootstrapManagers, applyManagerChange, resolveManager} from './managers.
 import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
 import { validateFollowUpDraft } from './follow-ups.ts';
+import {recordPreviewReceipt,protectReceiptHistory} from './bank-reconciliation.ts';
 import {applyOwnerChange} from './owners.ts';
 export function createPreviewApi(ownerDemo=false) {
- let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.recordEditingSchema=1;
+ let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.bankReceiptSchema=1;state.bankReceipts=[];state.recordEditingSchema=1;
  state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerSchema=1;state.ownerBankNamesSchema=1;state.owners=[];state.ownerTransfers=[];
  if(ownerDemo){
   const propertyName='Mtl 404 Le Bijou';
@@ -20,6 +21,8 @@ export function createPreviewApi(ownerDemo=false) {
   if(revision!==state.revision)throw new Error('Preview changed. Refresh and try again.');
   if(changes.some(c=>c.kind==='deleteProperty'||c.kind==='deletePayment')&&changes.length!==1)throw new Error('Save edits before deleting a record.');
   const next=structuredClone(state);
+  if(changes.some(c=>c.kind==='reconcileBank')&&changes.some(c=>!['reconcileBank','importOwnerTransfer','saveOwner'].includes(c.kind)))throw new Error('Save bank receipt imports separately from other edits.');
+  protectReceiptHistory(next,changes);
   for(const c of changes) {
    if(c.kind==='saveOwner'||c.kind==='importOwnerTransfer'){applyOwnerChange(next,c);continue;}
    if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
@@ -57,7 +60,7 @@ export function createPreviewApi(ownerDemo=false) {
      const manager=resolveManager(next,c.manager,p.managerId);p.manager=manager?.name??'';p.managerId=manager?.id;p.followUp={status:c.status,note:c.note,attachments:structuredClone(c.attachments),updatedAt:new Date().toISOString()};
     }
     else if(c.kind==='appendPayments'){const p=properties.find(p=>p.id===c.propertyId);if(!p)throw new Error('Property not found.');for(const fields of c.payments)p.payments.push({id:crypto.randomUUID(),type:'Airbnb',payoutDate:'',bundleCents:null,bankDate:'',bankCents:null,verifiedByDaisy:false,...fields});}
-    else if(c.kind==='reconcileBank'){const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p||p.receivedBy==='owner'||p.bundleCents!==c.bundleCents)throw new Error('Bundle changed.');p.bankCents=p.amountCents;p.bankDate=c.bankDate;p.verifiedBySystem=true;}
+    else if(c.kind==='reconcileBank'){recordPreviewReceipt(next,c,changes);}
     else {const p=properties.flatMap(p=>p.payments).find(p=>p.id===c.paymentId);if(!p)throw new Error('Payment not found.');if((c.fields.receivedBy??p.receivedBy)==='owner'&&(c.fields.type??p.type)!=='Airbnb')throw new Error('Only Airbnb payouts can be received by an owner.');const evidenceChanged=Object.entries(c.fields).some(([key,value])=>key!=='verifiedByDaisy'&&p[key as keyof Payment]!==value);Object.assign(p,c.fields);if(evidenceChanged)p.verifiedBySystem=false}
    }
   }
