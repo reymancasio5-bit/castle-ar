@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
+import {ownerReceiptNote} from '../src/owners.ts';
 
 test('save progress exposes validated work without claiming an unconfirmed write completed',()=>{
  const app=harness();
@@ -1281,7 +1282,7 @@ test('owner validations reject ambiguous bank names, unsafe fields and invalid a
  const before=app.read().snapshot;
  const owner={id:'owner-1',name:'John Owner',bankName:'JOHN OWNER',email:'',notes:'',active:true,propertyNames:before.months[0].properties.slice(0,2).map((p:any)=>p.name)};
  const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-11-04',reference:'REF123',source:'statement.pdf',bankName:'John Owner',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:10000}]};
- const invalid=[{...transfer,account:'12345'},{...transfer,reference:'REF-123'},{...transfer,reference:''},{...transfer,date:'2026-02-30'},{...transfer,amountCents:10001},{...transfer,allocations:[{propertyId:'0:20',amountCents:10000}]},{...transfer,allocations:[{propertyId:'0:4',amountCents:0}]},{...transfer,account:'=SUM(A1)'},{...transfer,monthId:'999'},{...transfer,bankName:'Other Person'}];
+ const invalid=[{...transfer,account:'12345'},{...transfer,reference:'REF-123'},{...transfer,reference:''},{...transfer,date:'2026-02-30'},{...transfer,amountCents:9999},{...transfer,allocations:[{propertyId:'0:20',amountCents:10000}]},{...transfer,allocations:[{propertyId:'0:4',amountCents:0}]},{...transfer,account:'=SUM(A1)'},{...transfer,monthId:'999'},{...transfer,bankName:'Other Person'}];
  invalid.forEach((change,i)=>{const result=app.post({requestId:'owners-invalid-'+i,revision:before.revision,changes:[{kind:'saveOwner',owner},change]});assert.equal(result.ok,false,JSON.stringify(change));});
  const duplicate=app.post({requestId:'owners-ambiguous',revision:before.revision,changes:[{kind:'saveOwner',owner},{kind:'saveOwner',owner:{...owner,id:'other',active:false,bankName:' john   owner '}}]});assert.equal(duplicate.ok,false);
  const sameBatch=app.post({requestId:'owners-same-batch',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer,transfer]});assert.equal(sameBatch.ok,false);assert.equal(app.batches.length,0);
@@ -1430,4 +1431,73 @@ test('backend checks visible prefix and internal digits on masked payout account
   const c=receiptChange('0:21'),result=app.post({requestId:'masked-identity-test',revision:app.read().snapshot.revision,changes:[{...c,account:'2222',receipt:{...c.receipt,accountIdentity:'117777772222'}}]});
   assert.equal(result.ok,allowed,account);assert.equal(app.batches.length,allowed?1:0);
  }
+});
+
+test('partial owner receipt retains unallocated funds, resumes across months, and replays without new payments',()=>{
+ const app=receiptHarness();app.tables.set(77,{name:'October 2026',data:structuredClone(app.state.data),maxRows:100,maxColumns:11});
+ const before=app.read().snapshot,nov=before.months.find((m:any)=>m.id==='0');
+ const owner={id:'partial-owner',name:'Example Owner',bankName:'EXAMPLE OWNER',email:'',notes:'',active:true,propertyNames:nov.properties.slice(0,2).map((p:any)=>p.name)};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'PARTIAL123',source:'statement.xlsx',description:'Original source evidence',bankName:owner.bankName,amountCents:108856,allocations:[{propertyId:'0:4',amountCents:8781},{propertyId:'0:12',amountCents:11591}]};
+ const first=app.post({requestId:'partial-owner-first',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});
+ assert.equal(first.ok,true,first.error?.message);assert.equal(first.snapshot.ownerReceiptSchema,1);
+ const receipt=first.snapshot.ownerTransfers[0];assert.equal(receipt.amountCents,108856);assert.equal(receipt.allocations.reduce((n:number,a:any)=>n+a.amountCents,0),20372);
+ assert.match(receipt.note,/Received USD 1,088\.56; allocated USD 203\.72; unallocated USD 884\.84/);
+ assert.match(receipt.note,/\[Nov, 2026\]/);assert.match(receipt.note,/USD 87\.81/);assert.equal(receipt.note,ownerReceiptNote(receipt,first.snapshot.months));
+ const initialPaid=first.snapshot.months.find((m:any)=>m.id==='0').properties.flatMap((p:any)=>p.payments).filter((p:any)=>p.type==='Owner'&&p.bankDate===transfer.date);
+ assert.equal(initialPaid.reduce((n:number,p:any)=>n+p.amountCents,0),20372);
+ const resume={...transfer,monthId:'77',source:'another-export.xlsx',description:'New export description',transferId:receipt.id,priorAllocatedCents:20372,allocations:[{propertyId:'77:4',monthId:'77',amountCents:10000}]};
+ const second=app.post({requestId:'partial-owner-next',revision:first.snapshot.revision,changes:[resume]});assert.equal(second.ok,true,second.error?.message);
+ const updated=second.snapshot.ownerTransfers[0];assert.equal(second.snapshot.ownerTransfers.length,1);assert.equal(updated.source,transfer.source);assert.equal(updated.description,transfer.description);assert.equal(updated.monthId,'0');assert.equal(updated.allocations.length,3);
+ assert.match(updated.note,/allocated USD 303\.72; unallocated USD 784\.84/);assert.match(updated.note,/\[October 2026\]/);assert.equal(updated.note,ownerReceiptNote(updated,second.snapshot.months));
+ const batches=app.batches.length,payments=second.snapshot.months.flatMap((m:any)=>m.properties.flatMap((p:any)=>p.payments)).length;
+ const replay=app.post({requestId:'partial-owner-replay',revision:second.snapshot.revision,changes:[resume]});assert.equal(replay.ok,true,replay.error?.message);assert.equal(app.batches.length,batches);
+ assert.equal(replay.snapshot.months.flatMap((m:any)=>m.properties.flatMap((p:any)=>p.payments)).length,payments);
+ const october=replay.snapshot.months.find((m:any)=>m.id==='77'),topUp={...resume,priorAllocatedCents:30372,allocations:[{propertyId:october.properties[0].id,monthId:'77',amountCents:1000}]};
+ const third=app.post({requestId:'partial-owner-topup',revision:replay.snapshot.revision,changes:[topUp]});assert.equal(third.ok,true,third.error?.message);
+ assert.equal(third.snapshot.ownerTransfers[0].allocations.length,4);assert.equal(app.read().ok,true);assert.match(third.snapshot.ownerTransfers[0].note,/unallocated USD 774\.84/);
+});
+
+test('partial owner receipt rejects stale, contradictory, duplicate and excessive allocations atomically',()=>{
+ const app=receiptHarness(),before=app.read().snapshot;
+ const owner={id:'partial-guard',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:before.months[0].properties.map((p:any)=>p.name)};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'GUARD123',source:'statement.xlsx',bankName:owner.bankName,amountCents:10000,allocations:[{propertyId:'0:4',amountCents:2000}]};
+ const first=app.post({requestId:'partial-guard-create',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(first.ok,true,first.error?.message);
+ const current=first.snapshot,receipt=current.ownerTransfers[0],target=current.months[0].properties[1].id;
+ const resume={...transfer,transferId:receipt.id,priorAllocatedCents:2000,allocations:[{propertyId:target,amountCents:1000}]};
+ const invalid=[{...resume,allocations:[{propertyId:target,amountCents:8001}]},{...resume,allocations:[]},{...resume,priorAllocatedCents:1000},{...resume,priorAllocatedCents:undefined},{...resume,transferId:undefined},{...resume,amountCents:11000},{...resume,accountIdentity:'20008713'},{...resume,currency:'CAD'},{...resume,date:'2026-11-10'},{...resume,reference:'OTHERREF'},{...resume,transferId:'missing'},{...resume,allocations:[{propertyId:target,amountCents:500},{propertyId:target,amountCents:500}]},transfer];
+ const batches=app.batches.length;
+ invalid.forEach((change,i)=>{const result=app.post({requestId:'partial-guard-invalid-'+i,revision:current.revision,changes:[change]});assert.equal(result.ok,false,JSON.stringify(change));assert.equal(app.batches.length,batches);});
+ assert.equal(app.read().snapshot.revision,current.revision);
+});
+
+test('owner note migration preserves both prior header layouts and rejects occupied extension cells',()=>{
+ for(const columns of [11,16]){
+  const app=receiptHarness(),before=app.read().snapshot;
+  const owner={id:'migration-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:[before.months[0].properties[0].name]};
+  const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'MIGRATE123',source:'statement.xlsx',bankName:owner.bankName,amountCents:1000,allocations:[{propertyId:'0:4',amountCents:1000}]};
+  const first=app.post({requestId:'owner-note-before-'+columns,revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(first.ok,true,first.error?.message);
+  const ledger=[...app.tables.values()].find(t=>t.name==='Owner Transfers')!;ledger.data=ledger.data.map(row=>row.slice(0,columns));ledger.maxColumns=columns;
+  const prior=app.read();assert.equal(prior.ok,true,prior.error?.message);assert.equal(prior.snapshot.ownerTransfers[0].note,undefined);
+  const migrated=app.post({requestId:'owner-note-after-'+columns,revision:prior.snapshot.revision,changes:[{kind:'saveOwner',owner:{...owner,notes:'Updated'}}]});assert.equal(migrated.ok,true,migrated.error?.message);
+  assert.equal(ledger.data[0][16],'note');assert.equal(migrated.snapshot.ownerTransfers[0].amountCents,1000);assert.equal(migrated.snapshot.ownerTransfers[0].allocations.length,1);
+  ledger.data[0][16]='';ledger.data[1][16]='Preserve this unrelated content';
+  const blocked=app.read();assert.equal(blocked.ok,false);assert.match(blocked.error.message,/migration.*contain data/i);
+ }
+});
+
+test('owner receipt notes remain bounded and cumulative history cannot exceed a spreadsheet cell',()=>{
+ const app=receiptHarness();app.state.data[3][1]='Property '+ 'x'.repeat(150);
+ const before=app.read().snapshot,owner={id:'bounded-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:[before.months[0].properties[0].name]};
+ const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'BOUNDED123',source:'statement.xlsx',bankName:owner.bankName,amountCents:100000,allocations:[{propertyId:'0:4',amountCents:1}]};
+ const first=app.post({requestId:'bounded-owner-first',revision:before.revision,changes:[{kind:'saveOwner',owner},transfer]});assert.equal(first.ok,true,first.error?.message);
+ const receipt=first.snapshot.ownerTransfers[0],allocation=receipt.allocations[0],history:any[]=[];
+ while(JSON.stringify([...history,allocation]).length<=50000)history.push({...allocation});
+ assert.ok(history.length<500);receipt.allocations=history;
+ const note=(app.context as any).castleOwnerReceiptNote(receipt,first.snapshot.months);
+ assert.equal(note,ownerReceiptNote(receipt,first.snapshot.months));assert.ok(note.length<3000);assert.match(note,/more allocations\./);
+ const ledger=[...app.tables.values()].find(t=>t.name==='Owner Transfers')!;ledger.data[1][10]=JSON.stringify(history);
+ const current=app.read();assert.equal(current.ok,true,current.error?.message);const batches=app.batches.length;
+ const rejected=app.post({requestId:'bounded-owner-resume',revision:current.snapshot.revision,changes:[{...transfer,transferId:receipt.id,priorAllocatedCents:history.length}]});
+ assert.equal(rejected.ok,false);assert.match(rejected.error.message,/spreadsheet cell limit/);assert.equal(app.batches.length,batches);
+ assert.equal(app.read().snapshot.revision,current.snapshot.revision);
 });

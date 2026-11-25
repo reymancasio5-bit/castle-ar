@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {prepareFreshBulkImport,saveRebuiltImport,ImportReviewRequired,prepareFreshBankImport,BankImportReviewRequired,remapBankAllocationDrafts} from '../src/import-save.ts';
 import {buildBulkImportPreview,type BulkImportEntry} from '../src/bulk-import.ts';
 import type {Month,Snapshot,Change} from '../src/types.ts';
+import {applyOwnerChange} from '../src/owners.ts';
 const month:Month={id:'m',label:'October',month:'2026-10',properties:[]};
 const entries:BulkImportEntry[]=[{fileName:'payment.csv',sheet:{name:'CSV',rows:[['Type','Amount','Paid out','Arriving by date','Currency'],['Payout','',10,'2026-10-09','CAD'],['Reservation',10,'','','CAD']].map(row=>row.map(value=>({value})))},options:{headerRow:0,nameColumn:0,amountColumn:1,destination:'Airbnb1',sumDuplicates:false,propertyName:'House',manager:'Team A',total:'100',airbnbSlot:'auto',airbnbRecipient:'castle'}}];
 const snap=(m=month,revision='fresh'):Snapshot=>({revision,bankReceiptSchema:1,bankReceipts:[],months:[m],updatedAt:'',spreadsheetUrl:''});
@@ -88,4 +89,23 @@ test('owner allocations require another review when the owner or any mapped bala
  assert.throws(()=>prepareFreshBankImport(original,[change],latest),BankImportReviewRequired);
  latest=fresh();latest.months[0].properties.push({...house,name:'Unrelated'});
  assert.deepEqual(prepareFreshBankImport(original,[change],latest),[change]);
+});
+
+test('partial owner saves resume safely and recognize an already applied operation before balance checks',()=>{
+ const initial=snap(existing(100000));initial.ownerReceiptSchema=1;
+ initial.owners=[{id:'owner',name:'Owner',bankName:'Owner',email:'',notes:'',active:true,propertyNames:['House']}];initial.ownerTransfers=[];
+ const first:Extract<Change,{kind:'importOwnerTransfer'}>={kind:'importOwnerTransfer',ownerId:'owner',monthId:'m',bankName:'Owner',account:'1234',accountIdentity:'10001234',currency:'CAD',date:'2026-10-01',reference:'PARTIAL123',source:'bank.xlsx',amountCents:10000,allocations:[{propertyId:'m:9',monthId:'m',amountCents:2000}]};
+ const partial=structuredClone(initial);applyOwnerChange(partial,first);
+ assert.deepEqual(prepareFreshBankImport(initial,[first],partial),[]);
+ const continuation={...first,transferId:partial.ownerTransfers![0].id,priorAllocatedCents:2000,allocations:[{propertyId:'m:9',monthId:'m',amountCents:3000}]};
+ assert.deepEqual(prepareFreshBankImport(partial,[continuation],structuredClone(partial)),[continuation]);
+ const saved=structuredClone(partial);applyOwnerChange(saved,continuation);
+ assert.deepEqual(prepareFreshBankImport(partial,[continuation],saved),[]);
+ const later=structuredClone(saved);applyOwnerChange(later,{...continuation,priorAllocatedCents:5000,allocations:[{propertyId:'m:9',monthId:'m',amountCents:1000}]});
+ assert.deepEqual(prepareFreshBankImport(initial,[first],later),[]);
+ assert.deepEqual(prepareFreshBankImport(partial,[continuation],later),[]);
+ const conflict=structuredClone(partial);applyOwnerChange(conflict,{...continuation,allocations:[{propertyId:'m:9',monthId:'m',amountCents:1000}]});
+ assert.throws(()=>prepareFreshBankImport(partial,[continuation],conflict),BankImportReviewRequired);
+ const outdated=structuredClone(initial);delete outdated.ownerReceiptSchema;
+ assert.throws(()=>prepareFreshBankImport(initial,[first],outdated),/Deploy.*partial/i);
 });

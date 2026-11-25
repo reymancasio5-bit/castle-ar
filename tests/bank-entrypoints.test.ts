@@ -49,3 +49,29 @@ for(const ownerSchema of [1,undefined])test(`Property Owners bank import opens r
   assert.equal(target,month);
  });
 });
+
+for(const ownerReceiptSchema of [1,undefined])test(`saved partial owner receipts show their remaining credit and resume capability ${ownerReceiptSchema??'legacy'}`,async()=>{
+ let resumed:any;
+ const transfer={id:'receipt',ownerId:'owner',ownerName:'Example Owner',bankName:'EXAMPLE OWNER',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'EXAMPLE123',source:'bank.xlsx',amountCents:108856,monthId:month.id,allocations:[{propertyName:'Example Home',monthId:month.id,amountCents:20372}],note:'Received USD 1,088.56; allocated USD 203.72; unallocated USD 884.84.'};
+ const snapshot={revision:'r',updatedAt:'',spreadsheetUrl:'',months:[month],ownerSchema:1,ownerReceiptSchema,owners:[{id:'owner',name:'Example Owner',bankName:'EXAMPLE OWNER',email:'',notes:'',active:true,propertyNames:['Example Home']}],ownerTransfers:[transfer]};
+ await withView('/src/PropertyOwners.tsx',{snapshot,monthId:month.id,onSave:async()=>{},onDirtyChange(){},onOpenListing(){},onBankImport(){},onAllocateReceipt:(receipt:any)=>{resumed=receipt;}},async root=>{
+  const history=root.root.findByProps({className:'owner-history'});
+  const copy=text(history);
+  assert.match(copy,/Received.*USD 1,088\.56/);
+  assert.match(copy,/Allocated.*USD 203\.72/);
+  assert.match(copy,/Unallocated.*USD 884\.84/);
+  assert.match(copy,/Received USD 1,088\.56; allocated USD 203\.72; unallocated USD 884\.84\./);
+  const button=history.findAllByType('button').find((button:any)=>text(button)==='Allocate Remaining');
+  assert.ok(button);assert.equal(button.props.disabled,ownerReceiptSchema!==1);
+  if(ownerReceiptSchema===1){await act(async()=>button.props.onClick(click));assert.equal(resumed,transfer);}
+ });
+});
+
+test('fully allocated owner receipts do not offer another allocation',async()=>{
+ const transfer={id:'receipt',ownerId:'owner',ownerName:'Example Owner',bankName:'EXAMPLE OWNER',account:'8713',accountIdentity:'10008713',currency:'USD',date:'2026-11-09',reference:'EXAMPLE123',source:'bank.xlsx',amountCents:20372,monthId:month.id,allocations:[{propertyName:'Example Home',monthId:month.id,amountCents:20372}]};
+ const snapshot={revision:'r',updatedAt:'',spreadsheetUrl:'',months:[month],ownerSchema:1,ownerReceiptSchema:1,owners:[{id:'owner',name:'Example Owner',bankName:'EXAMPLE OWNER',email:'',notes:'',active:true,propertyNames:['Example Home']}],ownerTransfers:[transfer]};
+ await withView('/src/PropertyOwners.tsx',{snapshot,monthId:month.id,onSave:async()=>{},onDirtyChange(){},onOpenListing(){},onBankImport(){},onAllocateReceipt(){}},async root=>{
+  assert.equal(root.root.findAllByType('button').filter((button:any)=>text(button)==='Allocate Remaining').length,0);
+  assert.match(text(root.root.findByProps({className:'owner-history'}).findByType('details')),/\[November 2026\]/);
+ });
+});

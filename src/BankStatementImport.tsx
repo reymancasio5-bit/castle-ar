@@ -1,6 +1,6 @@
 ﻿import {useEffect,useMemo,useRef,useState} from 'react';
 import {FileText,Upload,CheckCircle2} from 'lucide-react';
-import type {Change,Month,Snapshot} from './types';
+import type {Change,Month,Snapshot,OwnerTransfer} from './types';
 import {matchStatement,parseStatement,type BankDeposit,type BankImportExclusion,type BankImportResult} from './bank-statement';
 import {balance} from './domain';
 import {matchOwnerDeposits,applyOwnerChange,ownerDepositSkipped,ownerBankNames} from './owners';
@@ -19,7 +19,7 @@ import './bank-statement.css';
 type SourceDetails={currency?:'CAD'|'USD';account?:string};
 type FileFailure={source:string;message:string;excluded:boolean};
 const emptyResult=():BankImportResult=>({deposits:[],warnings:[],excluded:[]});
-export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,snapshot:initialSnapshot,ask}:{ask?:BankMappingAssistant;snapshot?:Snapshot;initialFile?:File;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
+export default function BankStatementImport({month:initialMonth,onClose,onApply,supported,initialFile,initialOwnerTransfer,snapshot:initialSnapshot,ask}:{ask?:BankMappingAssistant;snapshot?:Snapshot;initialFile?:File;initialOwnerTransfer?:OwnerTransfer;month:Month;onClose:()=>void;onApply:(changes:Change[],prepare?:(latest:Snapshot)=>Change[])=>Promise<void>;supported:boolean}){
  const [snapshot,setReviewSnapshot]=useState(initialSnapshot);
  const month=snapshot?.months.find(m=>m.id===initialMonth.id)??initialMonth;
  const dialog=useRef<HTMLDialogElement>(null),input=useRef<HTMLInputElement>(null);
@@ -48,7 +48,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  const ownerRows=useMemo(()=>matchOwnerDeposits(reviewDeposits,month,snapshot?.owners??[],snapshot?.ownerTransfers??[],snapshot?.ownerAllocationSchema===1?snapshot.months:[month],snapshot?.bankReceipts??[]),[reviewDeposits,month,snapshot]);
  const result=useMemo(()=>matchStatement(reviewDeposits,month,{receipts:snapshot?.bankReceipts??[],months:snapshot?.months??[month],ownerTransfers:snapshot?.ownerTransfers??[],selections}),[reviewDeposits,month,snapshot,selections]);
  const ownerReview=useMemo(()=>{
-  const changes:Change[]=[],errors:Record<number,string>={};
+  const changes:Change[]=[],errors:Record<number,string>={},notes:Record<number,string>={};
   // Only these arrays are mutated by an allocation preview; avoid copying unrelated workspace data.
   const working=snapshot?{...snapshot,months:snapshot.months.map(m=>({...m,properties:m.properties.map(p=>({...p,payments:[...p.payments]}))})),ownerTransfers:[...(snapshot.ownerTransfers??[])]}:null;
   ownerRows.forEach((row,index)=>{
@@ -61,12 +61,15 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
     if(!row.properties.length)throw new Error('Map this owner to an AR property, then import again.');
     const split=parseAllocations(allocations[index]??allocationDraft(row)).map(a=>{const target=row.properties.find(p=>p.id===a.propertyId);if(!target)throw new Error('Choose a mapped property and month.');return {...a,...(working.ownerAllocationSchema===1?{monthId:target.monthId}:{})};});
     if(!split.length)throw new Error('Choose the property amounts for this deposit, or skip it for now.');
-    if(split.reduce((sum,a)=>sum+a.amountCents,0)!==row.deposit.amountCents)throw new Error('Allocated amounts must equal the full deposit.');
-    const change:Change={kind:'importOwnerTransfer',ownerId:row.owner.id,monthId:month.id,account:row.deposit.account,accountIdentity:row.deposit.accountIdentity,currency:row.deposit.currency,date:row.deposit.date,reference:row.deposit.reference,source:row.deposit.source,description:row.deposit.sourceDescription??row.deposit.description,sheet:row.deposit.sheet,sourceRow:row.deposit.sourceRow,bankName:row.deposit.ownerName??'',amountCents:row.deposit.amountCents,allocations:split};
+    const applyNow=split.reduce((sum,a)=>sum+a.amountCents,0);
+    if(applyNow>row.remainingCents)throw new Error('Allocated amounts cannot exceed the available receipt balance.');
+    if((row.existingTransferId||applyNow<row.deposit.amountCents)&&working.ownerReceiptSchema!==1)throw new Error('Update the Apps Script deployment to save partial owner allocations and retain the remaining credit.');
+    const change:Change={kind:'importOwnerTransfer',ownerId:row.owner.id,monthId:month.id,account:row.deposit.account,accountIdentity:row.deposit.accountIdentity,currency:row.deposit.currency,date:row.deposit.date,reference:row.deposit.reference,source:row.deposit.source,description:row.deposit.sourceDescription??row.deposit.description,sheet:row.deposit.sheet,sourceRow:row.deposit.sourceRow,bankName:row.deposit.ownerName??'',amountCents:row.deposit.amountCents,allocations:split,...(row.existingTransferId?{transferId:row.existingTransferId,priorAllocatedCents:row.previouslyAllocatedCents}:{})};
     applyOwnerChange(working,change);changes.push(change);
+    notes[index]=working.ownerTransfers?.find(t=>t.accountIdentity===row.deposit.accountIdentity&&t.reference.toLowerCase()===row.deposit.reference.toLowerCase())?.note??'';
    }catch(error){errors[index]=error instanceof Error?error.message:'Review this payment.';}
   });
-  return {changes,errors,balancePreview:working&&Object.keys(errors).length===0?Object.fromEntries(working.months.flatMap(m=>m.properties.map(p=>[p.id,balance(p)]))):null};
+  return {changes,errors,notes,balancePreview:working&&Object.keys(errors).length===0?Object.fromEntries(working.months.flatMap(m=>m.properties.map(p=>[p.id,balance(p)]))):null};
  },[ownerRows,allocations,skipped,snapshot,month.id]);
  const changes=[...result.changes,...ownerReview.changes];
  const missingPdfDetails=pdfSources.some(row=>row.needsCurrency&&!sourceDetails[row.source]?.currency||row.needsAccount&&[...pdfResult.deposits,...(pdfResult.excluded??[])].filter(item=>item.source===row.source).some(item=>{const account=sourceDetails[row.source]?.account??'',identity=account.replace(/\D/g,'');return !/^\d[\d -]*$/.test(account)||!/^\d{5,34}$/.test(identity)||!!item.account&&!identity.endsWith(item.account);}));
@@ -113,6 +116,12 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
   }catch(e){setError(e instanceof Error?e.message:'Could not read the statement.');throw e;}finally{setBusy(false);if(input.current)input.current.value='';}
  }
  useEffect(()=>{if(initialFile)void files([initialFile]);},[initialFile]);
+ useEffect(()=>{
+  if(!initialOwnerTransfer)return;
+  const receipt=initialOwnerTransfer;
+  setDeposits([{kind:'owner',ownerName:receipt.bankName,account:receipt.account,accountIdentity:receipt.accountIdentity,currency:receipt.currency,date:receipt.date,reference:receipt.reference,source:receipt.source,amountCents:receipt.amountCents,description:receipt.description,sourceDescription:receipt.description,sheet:receipt.sheet,sourceRow:receipt.sourceRow}]);
+  setWarnings([]);setExcluded([]);setSheetDrafts([]);setPdfResult(emptyResult());setFileFailures([]);setSourceDetails({});resetChoices();setSkipped({0:false});setReviewed(true);setError('');
+ },[initialOwnerTransfer]);
  function parseDrafts(drafts:PreparedBankSheet[],base:BankImportResult):BankImportResult{
   const all=[...base.deposits],notes=[...base.warnings],excluded=[...(base.excluded??[])];
   for(const draft of drafts){
@@ -182,7 +191,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Before Saving</strong><p>Platform deposits match payout groups and bank accounts. Owner deposits require the configured statement name and a real transaction reference. Missing references are never invented. Original amounts cannot be edited.</p></div></div>
    {warnings.length>0&&<details className="import-warning"><summary>Import Notes ({warnings.length})</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>}
    {reviewed&&<><BankSourceSummary deposits={reviewDeposits} excluded={reviewExcluded} ready={rowCount} needsDetails={needsDetails}/><BankExcludedCredits rows={reviewExcluded} onReviewOwner={reviewExcludedOwner} disabled={busy||saving}/>{!deposits.length&&<p>No supported deposits are ready to match. Review excluded credits and source details above.</p>}<BankPlatformMatches rows={result.rows} selections={selections} disabled={busy||saving} onSelect={(key,value)=>setSelections(previous=>({...previous,[key]:value}))}/></>}
-   {reviewed&&ownerRows.length>0&&<section aria-labelledby="bank-owner-title"><div className="import-section-heading"><h3 id="bank-owner-title">Owner Payments</h3><span>{ownerRows.length} Deposits · {ownerReview.changes.length} Ready</span></div><p className="owner-help">Only a unique exact balance or combination is preselected. Unmatched deposits stay skipped until you choose Edit and confirm the sender, reference, and allocation. You can split a deposit across mapped properties and reporting months. All allocations must equal the original deposit.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate a deposit across reporting months.</p>}{ownerRows.slice(currentOwnerPage*BANK_REVIEW_PAGE_SIZE,(currentOwnerPage+1)*BANK_REVIEW_PAGE_SIZE).map((row,offset)=>{const index=currentOwnerPage*BANK_REVIEW_PAGE_SIZE+offset;return <OwnerPaymentReview key={index} row={row} referenceEditable={!originalOwnerDeposits[index]?.reference} balancePreview={ownerReview.balancePreview} values={allocations[index]??allocationDraft(row)} skipped={ownerDepositSkipped(row,skipped[index])} statementNames={statementNames} onEditDeposit={edit=>{setDepositEdits(previous=>({...previous,[index]:edit}));setAllocations(previous=>({...previous,[index]:{}}));setSkipped(previous=>({...previous,[index]:false}));}} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>;})}<BankReviewPager page={currentOwnerPage} total={ownerRows.length} onPage={setOwnerPage} label="Owner Payment Pages"/></section>}
+   {reviewed&&ownerRows.length>0&&<section aria-labelledby="bank-owner-title"><div className="import-section-heading"><h3 id="bank-owner-title">Owner Payments</h3><span>{ownerRows.length} Deposits · {ownerReview.changes.length} Ready</span></div><p className="owner-help">Only a unique exact balance or combination is preselected. Unmatched deposits stay skipped until you choose Edit and confirm the sender, reference, and allocation. Apply any positive portion across mapped properties and reporting months. Unallocated funds stay on the receipt for later use.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate a deposit across reporting months.</p>}{ownerRows.slice(currentOwnerPage*BANK_REVIEW_PAGE_SIZE,(currentOwnerPage+1)*BANK_REVIEW_PAGE_SIZE).map((row,offset)=>{const index=currentOwnerPage*BANK_REVIEW_PAGE_SIZE+offset;return <OwnerPaymentReview key={index} row={row} referenceEditable={!originalOwnerDeposits[index]?.reference} balancePreview={ownerReview.balancePreview} transactionNote={ownerReview.notes[index]} values={allocations[index]??allocationDraft(row)} skipped={ownerDepositSkipped(row,skipped[index])} statementNames={statementNames} onEditDeposit={edit=>{setDepositEdits(previous=>({...previous,[index]:edit}));setAllocations(previous=>({...previous,[index]:{}}));setSkipped(previous=>({...previous,[index]:false}));}} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>;})}<BankReviewPager page={currentOwnerPage} total={ownerRows.length} onPage={setOwnerPage} label="Owner Payment Pages"/></section>}
    {rowCount>500&&<div className="import-warning">More than 500 payment rows match. Import fewer files at a time.</div>}
   </div>
   <footer className="import-footer"><button className="import-button import-button-secondary" disabled={busy||saving} onClick={onClose}>Cancel</button><span className="bank-save-summary" role="status">{saveSummary}</span><button className="import-button import-button-primary" disabled={!protectedBackend||!reviewed||!changes.length||rowCount>500||hasUnresolved||busy||saving} onClick={()=>void save()}>{saving?'Saving…':`Save ${rowCount} Payment Rows`}</button></footer>

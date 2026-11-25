@@ -45,8 +45,8 @@
 
 ## Verification Results — November 25, 2026
 
-- Full suite after the automatic import and entry-point fixes: `node --experimental-strip-types --test tests/*.test.ts` — 419 passed, 0 failed, 0 skipped.
-- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (500.87 kB minified, 148.94 kB gzip).
+- Full suite after partial owner receipts: `node --experimental-strip-types --test tests/*.test.ts` — 440 passed, 0 failed, 0 skipped.
+- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (506.74 kB minified, 150.76 kB gzip).
 - Original input check: all nine XLSX workbooks and both PDFs processed through the real import component with the real file readers in a local test harness. The Node harness uses the legacy PDF.js adapter; browser rendering itself was not verified.
 - Combined source result: 220 parsed deposits (122 owner, 98 platform) and 34 visible exclusions. These are raw file totals, including overlapping exports; they are not counts of unique receipts or database writes. All nine workbook column mappings were local and deterministic, with zero AI requests. Twenty-two owner entries genuinely lack a transaction reference and remain review items.
 - Currency totals after explicit source confirmation: CAD 217,755.30 parsed and 108,636.00 excluded; USD 23,009.74 parsed and 0.00 excluded. The US export requires source account/currency confirmation; both PDFs require currency confirmation. The harness supplies a synthetic full account for the US export to exercise review without creating financial records.
@@ -67,3 +67,12 @@
 - Reran all 11 originals through the new component flow: 220 deposits, 34 exclusions, unchanged currency totals, no column choices, no AI requests, no live writes. Required source account/currency confirmations remained explicit. This run took approximately 600 ms to read and 150 ms to update review in the local harness, not a browser benchmark.
 - Independent review passed 23 focused UI and entry-point tests and found no critical defect in the reviewed changes.
 - Live backend verification was not completed: the sandbox read-only GET failed with EACCES, and the required approval retry was canceled. No live schema or current match results were obtained. No deployment was performed.
+
+## Follow-Up: Partial Owner Receipts And Transaction Notes
+
+- User authorized applying a portion of a larger owner receipt and documenting the difference. Full receipt amount, identity, currency, date, and reference stay fixed; only explicitly allocated amounts become property payment rows. Cumulative allocations cannot exceed the receipt.
+- Added `ownerReceiptSchema: 1`, persistent automatic notes, and safe migration of 11-/16-column Owner Transfers layouts to the note column. Notes are generated from validated data, use readable month labels, and do not depend on an AI request. The full allocation history remains structured; notes show at most ten details plus a count of further allocations.
+- Partial receipts retain unallocated funds. Explicit receipt ID and prior allocated amount identify resumed operations. Append-only allocation history supports later top-ups to the same property/month. An exact replay is a no-op; stale or conflicting allocations require review. Receipt history and payment rows are written atomically.
+- Review shows Received / Previously Applied / Apply Now / Unallocated plus the transaction note. Property Owners history shows received, allocated, unallocated and saved note; Allocate Remaining opens the shared importer without a file. Reuploads can also resume eligible partial receipts.
+- Added regressions for the user's amounts: USD 1,088.56 received, USD 203.72 applied, USD 884.84 unallocated; later cross-month allocation; duplicate operation replay; stale balance/context; over-allocation; older-backend gating; table migration; immutable preview state; and receipt-history size limits.
+- Full suite: 440 passed. Production TypeScript/Vite build passed. All 11 original files retained 220 parsed entries and 34 exclusions with unchanged currency totals, no column choices, no AI requests, and no live writes. An independent integration review found no material defect in the reviewed changes. Browser visual checks and live deployment remain unperformed.

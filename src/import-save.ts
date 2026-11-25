@@ -3,7 +3,7 @@ import {normalizePropertyName} from './import.ts';
 import {isAirbnbSheet} from './property-import.ts';
 import {balance,parseMoney} from './domain.ts';
 import type {Change,Month,Payment,Property,Snapshot} from './types.ts';
-import {ownerBankNames,ownerKey} from './owners.ts';
+import {ownerBankNames,ownerKey,ownerTransferAllocated,ownerTransferOperationApplied} from './owners.ts';
 import {payoutAccount,sameBankReference,validSourceAccount} from './bank-account.ts';
 import {runProgress,type ReportProgress} from './operation-progress.ts';
 
@@ -103,15 +103,25 @@ export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest
       results.push({...change,paymentId:target.after.payments[index].id});
     }else if(change.kind==='importOwnerTransfer'){
       const targets=change.allocations.map(a=>({allocation:a,target:findFreshProperty(original,latest,a.propertyId)}));
-      if(targets.some(t=>!t.target))return fail();
+      if(targets.some(t=>!t.target||t.allocation.monthId!==undefined&&t.allocation.monthId!==t.target.monthId))return fail();
       if(!validSourceAccount(change.account,change.accountIdentity)||!change.currency||latest.bankReceipts.some(r=>sameBankReference(r,change)))return fail();
+      const applyNow=change.allocations.reduce((sum,a)=>sum+a.amountCents,0);
+      if((change.transferId||applyNow<change.amountCents)&&(latest.ownerReceiptSchema!==1||original.ownerReceiptSchema!==1))throw new Error('Deploy the updated Apps Script backend before saving partial owner allocations.');
+      if(change.priorAllocatedCents!==undefined&&!change.transferId)return fail();
       const duplicate=latest.ownerTransfers?.find(t=>sameBankReference(t,change));
-      if(duplicate){
-        const normalize=(items:{propertyName:string;monthId:string;amountCents:number}[])=>JSON.stringify(items.map(a=>[normalizePropertyName(a.propertyName),a.monthId,a.amountCents]).sort());
-        const expected=targets.map(({allocation,target})=>({propertyName:target!.before.name,monthId:target!.monthId,amountCents:allocation.amountCents}));
-        if(duplicate.accountIdentity!==change.accountIdentity||duplicate.currency!==change.currency||duplicate.ownerId!==change.ownerId||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents||normalize(duplicate.allocations.map(a=>({...a,monthId:a.monthId??duplicate.monthId})))!==normalize(expected))return fail();
-        continue;
+      const base=change.transferId?change.priorAllocatedCents:0;
+      if(base===undefined||!Number.isSafeInteger(base)||base<0)return fail();
+      if(change.transferId){
+        const before=original.ownerTransfers?.find(t=>t.id===change.transferId);
+        if(!before||!sameBankReference(before,change)||ownerTransferAllocated(before)!==base||duplicate?.id!==change.transferId)return fail();
       }
+      if(duplicate){
+        const expected=targets.map(({allocation,target})=>({propertyName:target!.before.name,monthId:target!.monthId,amountCents:allocation.amountCents}));
+        if(duplicate.accountIdentity!==change.accountIdentity||duplicate.currency!==change.currency||duplicate.ownerId!==change.ownerId||ownerKey(duplicate.bankName)!==ownerKey(change.bankName)||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents)return fail();
+        if(ownerTransferOperationApplied(duplicate,base,expected))continue;
+        if(!change.transferId||ownerTransferAllocated(duplicate)!==base)return fail();
+      }
+      if(!Number.isSafeInteger(applyNow)||applyNow<=0||applyNow>change.amountCents-base)return fail();
       if(!reviewedOwners.has(change.ownerId)){
         if(ownerAllocationContext(original,change.ownerId)!==ownerAllocationContext(latest,change.ownerId))return fail();
         reviewedOwners.add(change.ownerId);
