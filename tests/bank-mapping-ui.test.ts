@@ -13,40 +13,36 @@ async function withUi(run:(server:any)=>Promise<void>){
  try{await run(server);}finally{await server.close();delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;}
 }
 
-test('automatic preparation keeps column controls collapsed and requires confirmed account and currency',async()=>withUi(async server=>{
+test('automatic preparation asks only for missing source account and currency',async()=>withUi(async server=>{
  const {default:Mapping}=await server.ssrLoadModule('/src/BankSpreadsheetMapping.tsx');
  const sheet={name:'Checking',rows:[['DATE','DESCRIPTION','AMOUNT'],['2026-11-23','AIRBNB PAYMENTS 000000346979007',25]].map(r=>r.map(value=>({value})))};
- let root:any,result:any;
+ let root:any,latest:any;
  function Harness(){
   const [drafts,setDrafts]=useState([{source:'any-name.xlsx',sheet,mapping:detectBankColumns(sheet),account:'',currency:undefined as 'CAD'|'USD'|undefined,method:'ai' as const,note:'AI interpreted the columns.'}]);
-  return React.createElement(Mapping,{drafts,reviewed:false,onChange:setDrafts,disabled:false,onReview:()=>{result=parseBankSpreadsheet([sheet],drafts[0].source,{mapping:drafts[0].mapping,account:drafts[0].account,currency:drafts[0].currency});}});
+  latest=drafts[0];return React.createElement(Mapping,{drafts,onChange:setDrafts,disabled:false});
  }
  try{
   await act(async()=>{root=TestRenderer.create(React.createElement(Harness));});
-  assert.equal(root.root.findByProps({className:'bank-column-details'}).props.open,false);
-  assert.equal(root.root.findByType('button').props.disabled,true);
+  assert.equal(root.root.findAllByType('select').length,1);
+  assert.equal(root.root.findAllByType('button').length,0);
   await act(async()=>root.root.findByProps({placeholder:'Enter the full source account'}).props.onChange({target:{value:'12349876'}}));
   await act(async()=>root.root.findByProps({'aria-label':'Currency For Checking'}).props.onChange({target:{value:'CAD'}}));
-  await act(async()=>root.root.findByType('button').props.onClick());
+  const result=parseBankSpreadsheet([sheet],latest.source,{mapping:latest.mapping,account:latest.account,currency:latest.currency});
   assert.equal(result.deposits[0].account,'9876');assert.equal(result.deposits[0].amountCents,2500);
  }finally{if(root)await act(async()=>root.unmount());}
 }));
 
-test('RBC mapping explains embedded references and prevents a signed amount from being mapped twice',async()=>withUi(async server=>{
+test('recognized RBC files show source evidence without asking for column choices',async()=>withUi(async server=>{
  const {default:Mapping}=await server.ssrLoadModule('/src/BankSpreadsheetMapping.tsx');
  const sheet={name:'RBC',rows:[['Account Number','Transaction Date','Description 1','Description 2','CAD$'],['012340097524','2026-11-23','e-Transfer - Autodeposit','Example Owner CAUbCAdT',5000]].map(r=>r.map(value=>({value})))};
  let root:any;
  const draft={source:'rbc.xlsx',sheet,mapping:detectBankColumns(sheet),account:'',currency:'CAD',method:'automatic',note:'Columns recognized automatically.'};
  try{
-  await act(async()=>{root=TestRenderer.create(React.createElement(Mapping,{drafts:[draft],reviewed:false,onChange(){},onReview(){},disabled:false}));});
-  assert.equal(root.root.findAllByProps({'aria-label':'Posting Status Column For RBC'}).length,0);
-  const reference=root.root.findByProps({'aria-label':'Transaction Reference Column For RBC'});
-  assert.equal(reference.props.value,-1);
-  assert.equal(reference.findAllByType('option').find((option:any)=>option.props.value===-1).children.join(''),'Extract From Descriptions');
-  assert.equal(reference.findByProps({value:3}).props.disabled,true);
-  const debit=root.root.findByProps({'aria-label':'Debit Amount Column For RBC'});
-  assert.equal(debit.props.value,-1);
-  assert.equal(debit.findByProps({value:4}).props.disabled,true);
+  await act(async()=>{root=TestRenderer.create(React.createElement(Mapping,{drafts:[draft],onChange(){},disabled:false}));});
+  assert.equal(root.root.findAllByType('select').length,0);
+  assert.equal(root.root.findAllByProps({type:'number'}).length,0);
+  assert.equal(root.root.findAllByType('button').length,0);
+  assert.match(root.root.findByProps({className:'bank-file-recognition'}).children.join(''),/CAD\$/);
   const result=parseBankSpreadsheet([sheet],draft.source,{mapping:draft.mapping});
   assert.deepEqual(result.deposits.map(d=>[d.ownerName,d.reference,d.amountCents]),[['Example Owner','CAUbCAdT',500000]]);
  }finally{if(root)await act(async()=>root.unmount());}
@@ -68,12 +64,10 @@ for(const extraSheet of [false,true])test('upload uses AI and saves only on subm
   assert.equal(requests,extraSheet?2:1);assert.equal(writes,0);
   await act(async()=>root.root.findByProps({'aria-label':'Currency For Transactions'}).props.onChange({target:{value:'CAD'}}));
   if(extraSheet){
-   assert.equal(root.root.findAllByType('button').find((b:any)=>b.children.join('')==='Continue To Review').props.disabled,true);
+   assert.equal(root.root.findAllByType('button').find((b:any)=>b.children.join('').startsWith('Save ')).props.disabled,true);
    await act(async()=>root.root.findAllByType('fieldset').find((field:any)=>field.findAllByType('legend').some((legend:any)=>legend.children.join('').includes('Notes'))).findByProps({type:'checkbox'}).props.onChange({target:{checked:true}}));
-   await act(async()=>root.root.findAllByType('button').find((b:any)=>b.children.join('')==='Continue To Review').props.onClick());
    assert.equal(writes,0);
   }
-  if(!extraSheet)await act(async()=>root.root.findAllByType('button').find((b:any)=>b.children.join('')==='Continue To Review').props.onClick());
   const save=root.root.findAllByType('button').find((button:any)=>button.children.join('')==='Save 1 Payment Rows');
   assert.ok(save);assert.equal(save.props.disabled,false);
   await act(async()=>{save.props.onClick();await new Promise(resolve=>setTimeout(resolve,0));});

@@ -14,7 +14,7 @@ async function withImport(run:(root:any,makeFile:(rows:unknown[][],name?:string)
  const server=await createServer({plugins,cacheDir:'node_modules/.vite-bank-review-tests',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,watch:null,hmr:false},appType:'custom'});
  const context:any={Date,ArrayBuffer,Uint8Array,Uint16Array,Uint32Array,Buffer};vm.createContext(context);vm.runInContext(readFileSync('public/vendor/xlsx.full.min.js','utf8'),context);
  const previous=globalThis.window;(globalThis as any).window={XLSX:context.XLSX};let root:any,count=0;
- const makeFile=(rows:unknown[][],name='bank.xlsx')=>{const book=context.XLSX.utils.book_new();context.XLSX.utils.book_append_sheet(book,context.XLSX.utils.aoa_to_sheet(rows),'Transactions');return new File([new Uint8Array(context.XLSX.write(book,{bookType:'xlsx',type:'array'}))],name);};
+ const makeFile=(rows:unknown[][],name='bank.xlsx')=>{const book=context.XLSX.utils.book_new();context.XLSX.utils.book_append_sheet(book,context.XLSX.utils.aoa_to_sheet(rows),'Transactions');return new File([new Uint8Array(context.XLSX.write(book,{bookType:name.split('.').at(-1),type:'array'}))],name);};
  try{
   const {default:Import}=await server.ssrLoadModule('/src/BankStatementImport.tsx');
   const month={id:'m',month:'2026-11',label:'November 2026',properties:[{id:'p',name:'Example Home',manager:'',totalCents:2500,payments:payments??[{id:'pay',type:'Airbnb',amountCents:2500,bundleCents:2500,bankDetails:'Checking 12345678',payoutDate:'2026-11-23',bankDate:'',bankCents:null,verifiedByDaisy:false}]}]};
@@ -24,6 +24,29 @@ async function withImport(run:(root:any,makeFile:(rows:unknown[][],name?:string)
  }finally{if(root)await act(async()=>root.unmount());await server.close();globalThis.window=previous;delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;}
 }
 const upload=(root:any,files:File[])=>act(async()=>{await root.root.findByProps({'aria-label':'Choose Bank Files'}).props.onChange({target:{files}});});
+
+for(const extension of ['xlsx','xls','csv'])test(`${extension} bank files reach a saveable review without column choices`,async()=>withImport(async(root,makeFile,writes)=>{
+ const rows=[['Account Type','Account Number','Transaction Date','Cheque Number','Description 1','Description 2','CAD$','USD$'],['Chequing','1234-5678','2026-11-23','','Account Payable Pmt','AIRBNB PAYMENTS 000000123456789',25,'']];
+ await upload(root,[makeFile(rows,`bank.${extension}`)]);
+ assert.equal(root.root.findAllByType('select').filter((select:any)=>/Column For/.test(select.props['aria-label']??'')).length,0);
+ assert.doesNotMatch(text(root.toJSON()),/Continue To Review|Review Or Adjust Columns/);
+ const save=root.root.findAllByType('button').find((button:any)=>text(button)==='Save 1 Payment Rows');
+ assert.equal(save.props.disabled,false);
+ await act(async()=>save.props.onClick());
+ assert.equal(writes(),1);
+}));
+
+for(const [bank,pdfText] of [
+ ['RBC','November 1, 2026 to November 30, 2026\nAccount number: 12345678\nCurrency: CAD\n23 Nov AIRBNB PAYMENTS 000000123456789\t\t25.00\t100.00'],
+ ['Wells Fargo','Wells Fargo Everyday Checking\nNovember 30, 2026 Page 2 of 6\nAccount number: 12345678 (primary account)\nCurrency: USD\nBeginning balance on 11/1 $100.00\nEnding balance on 11/30 $125.00\n11/23 Airbnb 4977 Airbnb Nov 20 M-aBcD123eFgHiJ\t\t25.00\t125.00'],
+])test(`${bank} PDF reaches a saveable review without column choices`,async()=>withImport(async(root,_makeFile,writes)=>{
+ await upload(root,[new File(['PDF reader adapter input'],'statement.pdf')]);
+ assert.equal(root.root.findAllByType('select').length,0);
+ assert.doesNotMatch(text(root.toJSON()),/Continue To Review|Review Or Adjust Columns/);
+ const save=root.root.findAllByType('button').find((button:any)=>text(button)==='Save 1 Payment Rows');
+ assert.ok(save);assert.equal(save.props.disabled,false);
+ await act(async()=>save.props.onClick());assert.equal(writes(),1);
+},true,undefined,pdfText));
 
 test('eleven-file review reports duplicates and excluded credits without saving',async()=>withImport(async(root,makeFile,writes)=>{
  const rows=[['Date','Description','CAD$','Account'],['2026-11-23','AIRBNB PAYMENTS 123456789012',25,'12345678'],['2026-11-23','Deposit',12.5,'12345678']];
@@ -39,13 +62,22 @@ test('missing currency and account require explicit review before submission',as
  await upload(root,[makeFile([['Date','Description','Amount'],['2026-11-23','AIRBNB PAYMENTS 123456789012',25]])]);
  const account=root.root.findByProps({placeholder:'Enter the full source account'});
  const currency=root.root.findByProps({'aria-label':'Currency For Transactions'});
- assert.equal(root.root.findAllByType('button').find((b:any)=>text(b)==='Continue To Review').props.disabled,true);
+ assert.equal(root.root.findAllByType('button').find((b:any)=>text(b).startsWith('Save ')).props.disabled,true);
  await act(async()=>account.props.onChange({target:{value:'12345678'}}));
  await act(async()=>root.root.findByProps({'aria-label':'Currency For Transactions'}).props.onChange({target:{value:'CAD'}}));
- const review=root.root.findAllByType('button').find((b:any)=>text(b)==='Continue To Review');assert.equal(review.props.disabled,false);
- await act(async()=>review.props.onClick());
+ assert.doesNotMatch(text(root.toJSON()),/Continue To Review/);
  assert.equal(root.root.findAllByType('button').find((b:any)=>text(b)==='Save 1 Payment Rows').props.disabled,false);
  assert.equal(writes(),0);
+}));
+
+test('the save footer identifies a missing backend instead of reporting zero rows as ready',async()=>withImport(async(root,makeFile)=>{
+ await upload(root,[makeFile([['Date','Description','CAD$','Account'],['2026-11-23','AIRBNB PAYMENTS 123456789012',25,'12345678']])]);
+ assert.match(text(root.root.findByProps({className:'bank-save-summary'})),/Update.*Apps Script/i);
+},false));
+
+test('the save footer explains when parsed receipts do not match database rows',async()=>withImport(async(root,makeFile)=>{
+ await upload(root,[makeFile([['Date','Description','CAD$','Account'],['2026-11-23','AIRBNB PAYMENTS 123456789012',50,'12345678']])]);
+ assert.match(text(root.root.findByProps({className:'bank-save-summary'})),/No payment rows.*Review/i);
 }));
 
 test('recognized deposits cannot save through a backend without receipt protection',async()=>withImport(async(root,makeFile,writes)=>{

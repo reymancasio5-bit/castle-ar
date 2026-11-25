@@ -29,7 +29,7 @@
 
 ## Tasks
 
-- [x] **Spreadsheet parsing and preparation:** Write failing regressions for letter-only references, dual CAD/USD columns, ambiguous optional headings, and explicit exclusions. Preserve account identity/currency and source row metadata; add a validated manual mapping fallback. Validate all nine XLSX files without AI.
+- [x] **Spreadsheet parsing and preparation:** Write failing regressions for letter-only references, dual CAD/USD columns, ambiguous optional headings, and explicit exclusions. Preserve account identity/currency and source row metadata; validate automatic interpretation. Per the user's follow-up, remove column selection from every bank import flow. Validate all nine XLSX files without AI.
 - [x] **PDF extraction and coverage:** Add failing regressions for complete excluded-credit reporting and Wells Fargo Airbnb parity. Preserve account identity/currency and source context. Independently verify all source amounts/dates in both PDFs.
 - [x] **Receipt ledger and matching:** Add failing tests for cumulative cross-month use, contradictory references, identity collision, replay, equal amounts, and legacy deployment gating. Persist receipt identity/amount/currency and allocations in the same atomic Sheets batch. Match indexed evidence, support explicit payout-group selection, and protect row changes/deletion from orphaning the ledger.
 - [x] **Review UI and feedback:** Display mapped fields, account/currency confirmation, deposit and exclusion totals by currency, per-row reasons, duplicate status, and missing details. Permit 25 files / 50 MB. Keep manual corrections reviewable and prevent unsafe submission. Improve responsive tables/forms and avoid unnecessary reprocessing.
@@ -45,8 +45,8 @@
 
 ## Verification Results — November 25, 2026
 
-- Full suite after the RBC mapping clarification: `node --experimental-strip-types --test tests/*.test.ts` — 408 passed, 0 failed, 0 skipped.
-- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (502.85 kB minified, 149.54 kB gzip).
+- Full suite after the automatic import and entry-point fixes: `node --experimental-strip-types --test tests/*.test.ts` — 419 passed, 0 failed, 0 skipped.
+- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (500.87 kB minified, 148.94 kB gzip).
 - Original input check: all nine XLSX workbooks and both PDFs processed through the real import component with the real file readers in a local test harness. The Node harness uses the legacy PDF.js adapter; browser rendering itself was not verified.
 - Combined source result: 220 parsed deposits (122 owner, 98 platform) and 34 visible exclusions. These are raw file totals, including overlapping exports; they are not counts of unique receipts or database writes. All nine workbook column mappings were local and deterministic, with zero AI requests. Twenty-two owner entries genuinely lack a transaction reference and remain review items.
 - Currency totals after explicit source confirmation: CAD 217,755.30 parsed and 108,636.00 excluded; USD 23,009.74 parsed and 0.00 excluded. The US export requires source account/currency confirmation; both PDFs require currency confirmation. The harness supplies a synthetic full account for the US export to exercise review without creating financial records.
@@ -56,3 +56,14 @@
 - Final independent review approved the changes after verifying the last currency-format and partial-receipt reproductions; 66 focused review tests passed. No remaining material defect was found within the reviewed scope.
 - No live financial writes, deployment, commit, or push was performed. The frontend and the existing Apps Script web-app deployment must both be updated before the live app can save imports with the new receipt protections. Deployment instructions are in README.md.
 - User clarification: removed the Posting Status dropdown, labelled embedded reference extraction explicitly, prevented duplicate source-column selections, and supported the RBC payable-marker-plus-numeric-reference variant. Two new regressions passed after reproducing the prior behavior. The exact supplied reference examples were verified locally; all 11 original files retained the same parsed/excluded totals after this change.
+
+## Follow-Up: Automatic Imports Across All Entry Points
+
+- Removed bank column selectors and the separate Continue To Review action for all supported file types. The file preview is read-only. Supplying a genuinely missing account/currency or excluding an unreadable worksheet updates the transaction review immediately.
+- Added real-byte XLSX/XLS/CSV component tests that reach an enabled save without column interaction, plus RBC and Wells Fargo PDF component tests using the existing extraction adapter. Saving in those tests calls an in-memory spy, not the live database.
+- Reproduced the exact screenshot using `download-transactions-Host_13-16 Nov.xlsx`: 17 parsed deposits, 19 exclusions, no parsing warnings. Optional reference/debit mappings are correctly absent; these did not block parsing. Removed the confusing form and replaced misleading save-footer messages with the actual blocking condition.
+- Fixed the Bundle Matching import buttons passing a click event as the reporting month. Added behavioral regressions for both bank and payment import buttons. Property Owners can also open read/review against an older backend; the shared importer still prevents unsupported saves.
+- Verified that Overview, Follow-Ups, Reconciliation, Bundle Matching, owner profiles, and Castle Assistant route bank files to the same importer. Updated the workflow guide and assistant reply to describe automatic file reading.
+- Reran all 11 originals through the new component flow: 220 deposits, 34 exclusions, unchanged currency totals, no column choices, no AI requests, no live writes. Required source account/currency confirmations remained explicit. This run took approximately 600 ms to read and 150 ms to update review in the local harness, not a browser benchmark.
+- Independent review passed 23 focused UI and entry-point tests and found no critical defect in the reviewed changes.
+- Live backend verification was not completed: the sandbox read-only GET failed with EACCES, and the required approval retry was canceled. No live schema or current match results were obtained. No deployment was performed.

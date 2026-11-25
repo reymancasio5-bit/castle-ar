@@ -1386,7 +1386,7 @@ function castleAiRun(body) {
       else if(call.name==='prepare_import') {
         if(!attachment||args.attachmentId!==attachment.id)throw new Error('Attach the original file first.');
         if(attachment.kind!=='document'|| !(args.kind==='bank'?/\.(pdf|xlsx|xls|csv)$/i.test(attachment.name):args.kind==='excel'&&/\.(xlsx|xls|csv)$/i.test(attachment.name)))throw new Error('Use the original PDF bank statement or an Excel/CSV file. Screenshots cannot be imported.');
-        return {text:'Your file is ready for import review. Check the matched rows and mapping before applying any changes.',importAction:{kind:args.kind,attachmentId:attachment.id,monthId:body.monthId}};
+        return {text:'Your file is ready for import review. Check the matched transactions before applying any changes.',importAction:{kind:args.kind,attachmentId:attachment.id,monthId:body.monthId}};
       }
       else if(call.name==='propose_changes') {proposal=castleAiProposal(JSON.parse(args.changesJson),current);result={readyForReview:true,message:'Not saved. User must review and apply.'};}
       else result={error:'Unsupported tool'};
