@@ -32,6 +32,26 @@ test('automatic preparation keeps column controls collapsed and requires confirm
  }finally{if(root)await act(async()=>root.unmount());}
 }));
 
+test('RBC mapping explains embedded references and prevents a signed amount from being mapped twice',async()=>withUi(async server=>{
+ const {default:Mapping}=await server.ssrLoadModule('/src/BankSpreadsheetMapping.tsx');
+ const sheet={name:'RBC',rows:[['Account Number','Transaction Date','Description 1','Description 2','CAD$'],['012340097524','2026-11-23','e-Transfer - Autodeposit','Example Owner CAUbCAdT',5000]].map(r=>r.map(value=>({value})))};
+ let root:any;
+ const draft={source:'rbc.xlsx',sheet,mapping:detectBankColumns(sheet),account:'',currency:'CAD',method:'automatic',note:'Columns recognized automatically.'};
+ try{
+  await act(async()=>{root=TestRenderer.create(React.createElement(Mapping,{drafts:[draft],reviewed:false,onChange(){},onReview(){},disabled:false}));});
+  assert.equal(root.root.findAllByProps({'aria-label':'Posting Status Column For RBC'}).length,0);
+  const reference=root.root.findByProps({'aria-label':'Transaction Reference Column For RBC'});
+  assert.equal(reference.props.value,-1);
+  assert.equal(reference.findAllByType('option').find((option:any)=>option.props.value===-1).children.join(''),'Extract From Descriptions');
+  assert.equal(reference.findByProps({value:3}).props.disabled,true);
+  const debit=root.root.findByProps({'aria-label':'Debit Amount Column For RBC'});
+  assert.equal(debit.props.value,-1);
+  assert.equal(debit.findByProps({value:4}).props.disabled,true);
+  const result=parseBankSpreadsheet([sheet],draft.source,{mapping:draft.mapping});
+  assert.deepEqual(result.deposits.map(d=>[d.ownerName,d.reference,d.amountCents]),[['Example Owner','CAUbCAdT',500000]]);
+ }finally{if(root)await act(async()=>root.unmount());}
+}));
+
 for(const extraSheet of [false,true])test('upload uses AI and saves only on submit; extra notes sheet: '+extraSheet,async()=>withUi(async server=>{
  const {default:Import}=await server.ssrLoadModule('/src/BankStatementImport.tsx');
  const c:any={Date,ArrayBuffer,Uint8Array,Uint16Array,Uint32Array,Buffer};vm.createContext(c);vm.runInContext(readFileSync('public/vendor/xlsx.full.min.js','utf8'),c);

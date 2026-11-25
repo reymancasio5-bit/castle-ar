@@ -22,6 +22,16 @@ test('extracts CAD credits with per-row accounts, dates, exact cents and leading
  ],warnings:[],excluded:[]});
 });
 
+test('RBC payable marker or Airbnb description identifies a deposit without a posting-status column', () => {
+ const standalone=row('AIRBNB PAYMENTS 000000123450009',60);standalone[4]='';
+ const result=parseBankSpreadsheet([sheet(row('000000123450008',50),standalone,row('Loan 000000123450010',70))],'rbc.xlsx');
+ assert.deepEqual(result.deposits.map(d=>[d.platform,d.reference,d.currency,d.amountCents]),[
+  ['Airbnb','000000123450008','CAD',5000],['Airbnb','000000123450009','CAD',6000],
+ ]);
+ assert.equal(result.excluded.length,1);
+ assert.equal(result.excluded[0].amountCents,7000);
+});
+
 test('owner deposits preserve source names and alphanumeric RBC references', () => {
  const result = parseBankSpreadsheet([sheet(ownerRow(),ownerRow('9501-6465 QUéBEC INC. CAU5WgUN'),ownerRow('Jane  Smith 114d718933b133221b8774073fff3da5'))],'owners.xlsx');
  assert.deepEqual(result.deposits.map(d=>[d.kind,d.ownerName,d.reference,d.amountCents]),[

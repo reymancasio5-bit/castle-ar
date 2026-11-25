@@ -45,8 +45,8 @@
 
 ## Verification Results — November 25, 2026
 
-- Full suite: `node --experimental-strip-types --test tests/*.test.ts` — 406 passed, 0 failed, 0 skipped.
-- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (502.20 kB minified, 149.31 kB gzip).
+- Full suite after the RBC mapping clarification: `node --experimental-strip-types --test tests/*.test.ts` — 408 passed, 0 failed, 0 skipped.
+- Production build: `npm.cmd run build` — TypeScript and Vite passed. Vite retains non-fatal classic-script/static-dynamic-import notices and a main chunk size warning (502.85 kB minified, 149.54 kB gzip).
 - Original input check: all nine XLSX workbooks and both PDFs processed through the real import component with the real file readers in a local test harness. The Node harness uses the legacy PDF.js adapter; browser rendering itself was not verified.
 - Combined source result: 220 parsed deposits (122 owner, 98 platform) and 34 visible exclusions. These are raw file totals, including overlapping exports; they are not counts of unique receipts or database writes. All nine workbook column mappings were local and deterministic, with zero AI requests. Twenty-two owner entries genuinely lack a transaction reference and remain review items.
 - Currency totals after explicit source confirmation: CAD 217,755.30 parsed and 108,636.00 excluded; USD 23,009.74 parsed and 0.00 excluded. The US export requires source account/currency confirmation; both PDFs require currency confirmation. The harness supplies a synthetic full account for the US export to exercise review without creating financial records.
@@ -55,3 +55,4 @@
 - Backend tests run the actual Apps Script code against an in-memory Google Sheets harness, including atomic ledger writes, replay, cross-month allocation limits, account/reference conflicts, stale owner context, history protection, and legacy backend rejection.
 - Final independent review approved the changes after verifying the last currency-format and partial-receipt reproductions; 66 focused review tests passed. No remaining material defect was found within the reviewed scope.
 - No live financial writes, deployment, commit, or push was performed. The frontend and the existing Apps Script web-app deployment must both be updated before the live app can save imports with the new receipt protections. Deployment instructions are in README.md.
+- User clarification: removed the Posting Status dropdown, labelled embedded reference extraction explicitly, prevented duplicate source-column selections, and supported the RBC payable-marker-plus-numeric-reference variant. Two new regressions passed after reproducing the prior behavior. The exact supplied reference examples were verified locally; all 11 original files retained the same parsed/excluded totals after this change.

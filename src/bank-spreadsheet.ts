@@ -299,6 +299,9 @@ export function parseBankSpreadsheet(sheets: ImportSheet[], source: string, opti
    const description = [text(first),text(second)].filter(Boolean).join(' ');
    const classifiedText = description.trim();
    const rbcAirbnb = /^(?:Account Payable Pmt\s+)?AIRBNB\s+PAYMENTS(?=\s|\d|$)/i.exec(classifiedText);
+   // This RBC variant contains only the payable marker and its numeric reference.
+   // A named different payer must remain unclassified rather than become Airbnb.
+   const rbcPayable = /^Account Payable Pmt(?:\s+([\d\s]+))?$/i.exec(classifiedText);
    const wellsAirbnb = /^AIRBNB\s+\d+\s+AIRBNB\b/i.test(classifiedText);
    const owner = classifiedText.match(/^e-Transfer\s*[-–]\s*Autodeposit\b\s*(.*)$/i);
    const zelle = /^ZELLE\s+FROM\b/i.test(classifiedText);
@@ -336,8 +339,9 @@ export function parseBankSpreadsheet(sheets: ImportSheet[], source: string, opti
     if (/^(?:Zelle\s+To|e-Transfer sent|Withdrawal)\b/i.test(classifiedText)) throw new Error('An outgoing transaction description conflicts with the positive amount.');
 
     const evidence = {...details,account,date,amountCents};
-    if (rbcAirbnb || wellsAirbnb) {
+    if (rbcAirbnb || rbcPayable || wellsAirbnb) {
      const references = rbcAirbnb ? payoutReferences(classifiedText.slice(rbcAirbnb[0].length),true)
+      : rbcPayable ? payoutReferences(rbcPayable[1]??'',true)
       : [...new Set([...wellsAirbnbReferences(classifiedText),...payoutReferences(classifiedText)])];
      if (references.length > 1) throw new Error('Conflicting transaction references.');
      const reference = checkedReference(explicitReference,references[0] ?? '');
