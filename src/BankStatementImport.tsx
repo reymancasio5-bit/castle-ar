@@ -13,6 +13,7 @@ import BankSpreadsheetMapping,{bankDraftReady} from './BankSpreadsheetMapping';
 import {prepareBankSheet,type PreparedBankSheet,type BankMappingAssistant} from './bank-ai';
 import {detectBankColumns,parseBankSpreadsheet,bankMappingCurrency} from './bank-spreadsheet';
 import {BankSourceSummary,BankExcludedCredits,BankPlatformMatches,BankReviewPager,BANK_REVIEW_PAGE_SIZE} from './BankImportReview';
+import {validSourceAccount,sameBankReference} from './bank-account';
 import './import.css';
 import './bank-statement.css';
 
@@ -35,12 +36,12 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  const [depositEdits,setDepositEdits]=useState<Record<number,{ownerName:string;reference:string}>>({});
  const pdfSources=useMemo(()=>[...new Set([...pdfResult.deposits,...(pdfResult.excluded??[])].map(row=>row.source))].map(source=>{
   const rows=[...pdfResult.deposits,...(pdfResult.excluded??[])].filter(row=>row.source===source);
-  return {source,needsCurrency:rows.some(row=>!row.currency),needsAccount:rows.some(row=>!row.accountIdentity||row.accountIdentity.length<=4)};
+  return {source,needsCurrency:rows.some(row=>!row.currency),needsAccount:rows.some(row=>!validSourceAccount(row.account??'',row.accountIdentity))};
  }),[pdfResult]);
  const withSourceDetails=<T extends BankDeposit|BankImportExclusion>(row:T):T=>{
   const detail=sourceDetails[row.source];if(!detail)return row;
   const accountIdentity=detail.account?.replace(/\D/g,'');
-  return {...row,...(!row.currency&&detail.currency?{currency:detail.currency}:{}),...((!row.accountIdentity||row.accountIdentity.length<=4)&&accountIdentity&&/^\d{5,34}$/.test(accountIdentity)&&(!row.account||accountIdentity.endsWith(row.account))?{accountIdentity,account:accountIdentity.slice(-4)}:{})};
+  return {...row,...(!row.currency&&detail.currency?{currency:detail.currency}:{}),...((!validSourceAccount(row.account??'',row.accountIdentity))&&accountIdentity&&/^\d{4,34}$/.test(accountIdentity)&&(!row.account||accountIdentity.endsWith(row.account))?{accountIdentity,account:accountIdentity.slice(-4)}:{})};
  };
  const reviewDeposits=useMemo(()=>{let index=0;return deposits.map(item=>{const deposit=withSourceDetails(item);if(deposit.kind!=='owner')return deposit;const edit=depositEdits[index++];return {...deposit,...edit,reference:deposit.reference||edit?.reference||''};});},[deposits,depositEdits,sourceDetails]);
  const reviewExcluded=useMemo(()=>excluded.map(withSourceDetails),[excluded,sourceDetails]);
@@ -55,7 +56,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
    if(ownerDepositSkipped(row,skipped[index]))return;
    try{
     if(!working||working.ownerSchema!==1)throw new Error('Update the Apps Script deployment to record owner payments, or skip this deposit.');
-    if(!row.deposit.accountIdentity||row.deposit.accountIdentity.length<=4||!row.deposit.currency)throw new Error('Confirm the full source account and currency before allocating this deposit.');
+    if(!validSourceAccount(row.deposit.account,row.deposit.accountIdentity)||!row.deposit.currency)throw new Error('Confirm the source account and currency before allocating this deposit.');
     if(!row.owner)throw new Error('Choose a configured statement name, or add the owner and property mapping in Property Owners.');
     if(!row.deposit.reference)throw new Error('Enter the authentic transaction reference from the bank details. If it is absent, obtain a detailed export or skip this deposit.');
     if(!row.properties.length)throw new Error('Map this owner to an AR property, then import again.');
@@ -66,13 +67,14 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
     if((row.existingTransferId||applyNow<row.deposit.amountCents)&&working.ownerReceiptSchema!==1)throw new Error('Update the Apps Script deployment to save partial owner allocations and retain the remaining credit.');
     const change:Change={kind:'importOwnerTransfer',ownerId:row.owner.id,monthId:month.id,account:row.deposit.account,accountIdentity:row.deposit.accountIdentity,currency:row.deposit.currency,date:row.deposit.date,reference:row.deposit.reference,source:row.deposit.source,description:row.deposit.sourceDescription??row.deposit.description,sheet:row.deposit.sheet,sourceRow:row.deposit.sourceRow,bankName:row.deposit.ownerName??'',amountCents:row.deposit.amountCents,allocations:split,...(row.existingTransferId?{transferId:row.existingTransferId,priorAllocatedCents:row.previouslyAllocatedCents}:{})};
     applyOwnerChange(working,change);changes.push(change);
-    notes[index]=working.ownerTransfers?.find(t=>t.accountIdentity===row.deposit.accountIdentity&&t.reference.toLowerCase()===row.deposit.reference.toLowerCase())?.note??'';
+    notes[index]=working.ownerTransfers?.find(t=>sameBankReference(t,row.deposit))?.note??'';
    }catch(error){errors[index]=error instanceof Error?error.message:'Review this payment.';}
   });
   return {changes,errors,notes,balancePreview:working&&Object.keys(errors).length===0?Object.fromEntries(working.months.flatMap(m=>m.properties.map(p=>[p.id,balance(p)]))):null};
  },[ownerRows,allocations,skipped,snapshot,month.id]);
  const changes=[...result.changes,...ownerReview.changes];
- const missingPdfDetails=pdfSources.some(row=>row.needsCurrency&&!sourceDetails[row.source]?.currency||row.needsAccount&&[...pdfResult.deposits,...(pdfResult.excluded??[])].filter(item=>item.source===row.source).some(item=>{const account=sourceDetails[row.source]?.account??'',identity=account.replace(/\D/g,'');return !/^\d[\d -]*$/.test(account)||!/^\d{5,34}$/.test(identity)||!!item.account&&!identity.endsWith(item.account);}));
+ const missingPdfDetails=pdfSources.some(row=>row.needsCurrency&&!sourceDetails[row.source]?.currency||row.needsAccount&&[...pdfResult.deposits,...(pdfResult.excluded??[])].filter(item=>item.source===row.source).some(item=>{const account=sourceDetails[row.source]?.account??'',identity=account.replace(/\D/g,'');return !/^\d[\d -]*$/.test(account)||!/^\d{4,34}$/.test(identity)||!!item.account&&!identity.endsWith(item.account);}));
+ const needsSuffixBackend=snapshot?.bankAccountSuffixSchema!==1&&changes.some(change=>change.kind==='importOwnerTransfer'?change.accountIdentity?.length===4:change.kind==='reconcileBank'&&change.receipt.accountIdentity.length===4);
  const hasUnresolved=Object.keys(ownerReview.errors).length>0||fileFailures.some(file=>!file.excluded)||missingPdfDetails;
  const rowCount=result.changes.length+ownerReview.changes.reduce((sum,c)=>sum+(c.kind==='importOwnerTransfer'?c.allocations.length:0),0);
  const needsDetails=ownerRows.filter(row=>!row.duplicate&&!row.allocations.length).length+result.rows.filter(row=>row.status!=='Ready'&&!/already|duplicate/i.test(row.status)).length;
@@ -153,7 +155,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  }
  function reviewExcludedOwner(index:number){
   const resolved=reviewExcluded[index],row=excluded[index];
-  if(!resolved?.reviewable||!resolved.date||!resolved.currency||!resolved.account||!resolved.accountIdentity||resolved.amountCents===null||resolved.amountCents<=0)return;
+  if(!resolved?.reviewable||!resolved.date||!resolved.currency||!resolved.account||!resolved.accountIdentity||!validSourceAccount(resolved.account,resolved.accountIdentity)||resolved.amountCents===null||resolved.amountCents<=0)return;
   const ownerIndex=reviewDeposits.filter(d=>d.kind==='owner').length;
   setDeposits(previous=>[...previous,{kind:'owner',ownerName:'',reference:row.reference??'',source:row.source,sheet:row.sheet,sourceRow:row.sourceRow,date:row.date!,account:row.account!,accountIdentity:row.accountIdentity,currency:row.currency,amountCents:row.amountCents!,description:row.description}]);
   setExcluded(previous=>previous.filter((_,i)=>i!==index));setSkipped(previous=>({...previous,[ownerIndex]:false}));setOwnerPage(Math.floor(ownerIndex/BANK_REVIEW_PAGE_SIZE));
@@ -163,6 +165,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
   try{
    if(!protectedBackend)throw new Error('Update the Apps Script deployment to enable receipt-protected bank imports.');
    if(!reviewed||!changes.length)throw new Error('Review the prepared transactions before submitting.');
+   if(needsSuffixBackend)throw new Error('Update the Apps Script deployment to save imports using four account digits.');
    if(hasUnresolved)throw new Error('Resolve the missing source details and allocations, or explicitly exclude unresolved items before saving.');
    if(rowCount>500)throw new Error('Import at most 500 payment rows at a time.');
    await onApply(changes,snapshot?latest=>prepareFreshBankImport(snapshot,changes,latest):undefined);
@@ -171,6 +174,7 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
  const saveSummary=busy?'Reading original bank evidence…':saving?'Waiting for database confirmation…'
   :!protectedBackend?'Update the Apps Script deployment before saving bank imports.'
   :error?error
+  :needsSuffixBackend?'Update the Apps Script deployment to save imports using four account digits.'
   :fileFailures.some(file=>!file.excluded)?'An unreadable file needs review or exclusion.'
   :sheetDrafts.some(draft=>draft.issue&&!draft.excluded)?'A worksheet could not be read automatically. Review its message above.'
   :!reviewed&&sheetDrafts.length?'Confirm the missing source account or currency above; review will update automatically.'
@@ -187,13 +191,13 @@ export default function BankStatementImport({month:initialMonth,onClose,onApply,
    <div className="import-dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void files(e.dataTransfer.files);}}><div className="import-upload-icon"><Upload size={28}/></div><h3>Bring Your Bank Deposits In</h3><p>Choose RBC or Wells Fargo PDF statements, or bank Excel/CSV exports. The app checks the original amounts, dates, accounts, and references. Review any missing details and excluded credits before saving.</p><input ref={input} className="import-hidden-input" type="file" accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" aria-label="Choose Bank Files" multiple onChange={e=>files(e.target.files)}/><button className="import-button import-button-primary" disabled={busy||saving} onClick={()=>input.current?.click()}>{busy?'Reading Bank Files…':'Choose Bank Files'}</button><small>Up to 25 files / 50 MB total · PDF: 20 MB each · Excel/CSV: 10 MB each<br/>Files are read locally. A limited worksheet sample goes to configured AI only when local layout recognition fails. Column selection is automatic.</small></div>
    {fileFailures.map((file,index)=><div className="import-alert" key={index}><strong>{file.source}</strong><p>{file.message}</p><label><input type="checkbox" disabled={busy||saving} checked={file.excluded} onChange={e=>setFileFailures(previous=>previous.map((row,i)=>i===index?{...row,excluded:e.target.checked}:row))}/> Exclude This Unreadable File</label></div>)}
    {sheetDrafts.length>0&&<BankSpreadsheetMapping drafts={sheetDrafts} disabled={busy||saving} onRetry={()=>void retryPreparation()} onChange={updatePreparedSheets}/>}
-   {pdfSources.some(source=>source.needsCurrency||source.needsAccount)&&<section className="bank-pdf-details"><h3>Confirm PDF Source Details</h3><p>These details are not explicit in the extracted statement. Confirm them from the bank account before saving.</p>{pdfSources.filter(row=>row.needsCurrency||row.needsAccount).map(row=><fieldset className="bank-mapping-sheet" disabled={busy||saving} key={row.source}><legend>{row.source}</legend><div className="bank-mapping-fields">{row.needsAccount&&<label>Full Bank Account Number<input inputMode="numeric" autoComplete="off" placeholder="Enter the full source account" value={sourceDetails[row.source]?.account??''} onChange={e=>setSourceDetails(previous=>({...previous,[row.source]:{...previous[row.source],account:e.target.value}}))}/></label>}{row.needsCurrency&&<label>Currency<select aria-label={`Currency For ${row.source}`} value={sourceDetails[row.source]?.currency??''} onChange={e=>{const currency=e.target.value==='CAD'||e.target.value==='USD'?e.target.value:undefined;setSourceDetails(previous=>({...previous,[row.source]:{...previous[row.source],currency}}));}}><option value="">Choose Source Currency</option><option value="CAD">CAD — Canadian Dollar</option><option value="USD">USD — US Dollar</option></select></label>}</div></fieldset>)}</section>}
+   {pdfSources.some(source=>source.needsCurrency||source.needsAccount)&&<section className="bank-pdf-details"><h3>Confirm PDF Source Details</h3><p>These details are not explicit in the extracted statement. Confirm them from the bank account before saving.</p>{pdfSources.filter(row=>row.needsCurrency||row.needsAccount).map(row=><fieldset className="bank-mapping-sheet" disabled={busy||saving} key={row.source}><legend>{row.source}</legend><div className="bank-mapping-fields">{row.needsAccount&&<label>Bank Account Number<input inputMode="numeric" autoComplete="off" placeholder="Enter the last 4 digits or full account number" value={sourceDetails[row.source]?.account??''} onChange={e=>setSourceDetails(previous=>({...previous,[row.source]:{...previous[row.source],account:e.target.value}}))}/></label>}{row.needsCurrency&&<label>Currency<select aria-label={`Currency For ${row.source}`} value={sourceDetails[row.source]?.currency??''} onChange={e=>{const currency=e.target.value==='CAD'||e.target.value==='USD'?e.target.value:undefined;setSourceDetails(previous=>({...previous,[row.source]:{...previous[row.source],currency}}));}}><option value="">Choose Source Currency</option><option value="CAD">CAD — Canadian Dollar</option><option value="USD">USD — US Dollar</option></select></label>}</div></fieldset>)}</section>}
    <div className="import-guidance"><CheckCircle2 size={19}/><div><strong>Review Before Saving</strong><p>Platform deposits match payout groups and bank accounts. Owner deposits require the configured statement name and a real transaction reference. Missing references are never invented. Original amounts cannot be edited.</p></div></div>
    {warnings.length>0&&<details className="import-warning"><summary>Import Notes ({warnings.length})</summary><ul>{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></details>}
    {reviewed&&<><BankSourceSummary deposits={reviewDeposits} excluded={reviewExcluded} ready={rowCount} needsDetails={needsDetails}/><BankExcludedCredits rows={reviewExcluded} onReviewOwner={reviewExcludedOwner} disabled={busy||saving}/>{!deposits.length&&<p>No supported deposits are ready to match. Review excluded credits and source details above.</p>}<BankPlatformMatches rows={result.rows} selections={selections} disabled={busy||saving} onSelect={(key,value)=>setSelections(previous=>({...previous,[key]:value}))}/></>}
    {reviewed&&ownerRows.length>0&&<section aria-labelledby="bank-owner-title"><div className="import-section-heading"><h3 id="bank-owner-title">Owner Payments</h3><span>{ownerRows.length} Deposits · {ownerReview.changes.length} Ready</span></div><p className="owner-help">Only a unique exact balance or combination is preselected. Unmatched deposits stay skipped until you choose Edit and confirm the sender, reference, and allocation. Apply any positive portion across mapped properties and reporting months. Unallocated funds stay on the receipt for later use.</p>{snapshot?.ownerAllocationSchema!==1&&<p className="import-warning">Update the Apps Script deployment to allocate a deposit across reporting months.</p>}{ownerRows.slice(currentOwnerPage*BANK_REVIEW_PAGE_SIZE,(currentOwnerPage+1)*BANK_REVIEW_PAGE_SIZE).map((row,offset)=>{const index=currentOwnerPage*BANK_REVIEW_PAGE_SIZE+offset;return <OwnerPaymentReview key={index} row={row} referenceEditable={!originalOwnerDeposits[index]?.reference} balancePreview={ownerReview.balancePreview} transactionNote={ownerReview.notes[index]} values={allocations[index]??allocationDraft(row)} skipped={ownerDepositSkipped(row,skipped[index])} statementNames={statementNames} onEditDeposit={edit=>{setDepositEdits(previous=>({...previous,[index]:edit}));setAllocations(previous=>({...previous,[index]:{}}));setSkipped(previous=>({...previous,[index]:false}));}} disabled={busy||saving} error={ownerReview.errors[index]} onChange={values=>setAllocations(previous=>({...previous,[index]:values}))} onSkip={skip=>setSkipped(previous=>({...previous,[index]:skip}))}/>;})}<BankReviewPager page={currentOwnerPage} total={ownerRows.length} onPage={setOwnerPage} label="Owner Payment Pages"/></section>}
    {rowCount>500&&<div className="import-warning">More than 500 payment rows match. Import fewer files at a time.</div>}
   </div>
-  <footer className="import-footer"><button className="import-button import-button-secondary" disabled={busy||saving} onClick={onClose}>Cancel</button><span className="bank-save-summary" role="status">{saveSummary}</span><button className="import-button import-button-primary" disabled={!protectedBackend||!reviewed||!changes.length||rowCount>500||hasUnresolved||busy||saving} onClick={()=>void save()}>{saving?'Saving…':`Save ${rowCount} Payment Rows`}</button></footer>
+  <footer className="import-footer"><button className="import-button import-button-secondary" disabled={busy||saving} onClick={onClose}>Cancel</button><span className="bank-save-summary" role="status">{saveSummary}</span><button className="import-button import-button-primary" disabled={!protectedBackend||!reviewed||!changes.length||rowCount>500||hasUnresolved||needsSuffixBackend||busy||saving} onClick={()=>void save()}>{saving?'Saving…':`Save ${rowCount} Payment Rows`}</button></footer>
  </dialog>;
 }

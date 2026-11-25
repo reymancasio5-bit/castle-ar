@@ -1350,6 +1350,134 @@ function receiptHarness(amount=60) {
  return app;
 }
 const receiptChange=(paymentId:string)=>({kind:'reconcileBank',paymentId,account:'0123',bundleCents:10000,bankDate:'2026-11-02',receipt:{accountIdentity:'10000123',currency:'CAD',reference:'SOURCEA',source:'fixture.csv',platform:'Airbnb'}});
+
+test('last-four platform receipts preserve their source identity and share cumulative limits with full-account aliases',()=>{
+ for(const firstIdentity of ['0123','10000123'])for(const secondAmount of [40,60]){
+  const app=receiptHarness();app.tables.get(42)!.data[20][3]=secondAmount;
+  const secondIdentity=firstIdentity==='0123'?'10000123':'0123';
+  const change=(id:string,identity:string)=>{const c=receiptChange(id);return {...c,receipt:{...c.receipt,accountIdentity:identity,description:identity==='0123'?'Original suffix memo':'Full account memo'}};};
+  const save=(id:string,c:any)=>app.post({requestId:id,revision:app.read().snapshot.revision,changes:[c]});
+  const first=save('suffix-first',change('0:21',firstIdentity));assert.equal(first.ok,true,first.error?.message);
+  assert.equal(first.snapshot.bankAccountSuffixSchema,1);
+  assert.equal(first.snapshot.bankReceipts[0].accountIdentity,firstIdentity);
+  const second=save('suffix-next',change('42:21',secondIdentity));assert.equal(second.ok,secondAmount===40,second.error?.message);
+  const replay=save('suffix-replay',change('0:21',secondIdentity));assert.equal(replay.ok,true,replay.error?.message);
+  const receipts=app.read().snapshot.bankReceipts;assert.equal(receipts.length,1);
+  assert.equal(receipts[0].accountIdentity,firstIdentity);assert.equal(receipts[0].allocations.length,secondAmount===40?2:1);
+  assert.equal(receipts[0].allocations.reduce((n:number,a:any)=>n+a.amountCents,0),secondAmount===40?10000:6000);
+  const rows=[...app.tables.values()].find(t=>t.name==='Bank Receipts')!.data.slice(1);
+  assert.ok(rows.every(r=>r[0]===firstIdentity));assert.ok(rows.every(r=>r[13]===receipts[0].description));
+ }
+});
+
+test('last-four and full-account platform aliases share a receipt within one atomic batch',()=>{
+ for(const identities of [['0123','10000123'],['10000123','0123']]){
+  const app=receiptHarness();app.tables.get(42)!.data[20][3]=40;
+  const changes=['0:21','42:21'].map((id,i)=>{const c=receiptChange(id);return {...c,receipt:{...c.receipt,accountIdentity:identities[i]}};});
+  const result=app.post({requestId:'suffix-batch',revision:app.read().snapshot.revision,changes});
+  assert.equal(result.ok,true,result.error?.message);assert.equal(result.snapshot.bankReceipts.length,1);
+  assert.equal(result.snapshot.bankReceipts[0].accountIdentity,identities[0]);assert.equal(result.snapshot.bankReceipts[0].allocations.length,2);
+ }
+});
+
+test('last-four owner receipts resume across full-account aliases and preserve original evidence',()=>{
+ for(const firstIdentity of ['0713','10000713']){
+  const app=receiptHarness(),initial=app.read().snapshot;
+  const owner={id:'suffix-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:initial.months[0].properties.map((p:any)=>p.name)};
+  const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'0713',accountIdentity:firstIdentity,currency:'USD',date:'2026-11-09',reference:'SUFFIXOWNER',source:'original.xlsx',description:'Original memo',bankName:owner.bankName,amountCents:10000,allocations:[{propertyId:'0:4',amountCents:2000}]};
+  const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+  const first=save('suffix-owner-first',[{kind:'saveOwner',owner},transfer]);assert.equal(first.ok,true,first.error?.message);
+  const alias={...transfer,accountIdentity:firstIdentity==='0713'?'10000713':'0713',source:'later.xlsx',description:'Later memo'};
+  const duplicate=save('suffix-owner-duplicate',[alias]);assert.equal(duplicate.ok,false);assert.match(duplicate.error.message,/duplicate/i);
+  const resume={...alias,transferId:first.snapshot.ownerTransfers[0].id,priorAllocatedCents:2000,allocations:[{propertyId:first.snapshot.months[0].properties[1].id,amountCents:1000}]};
+  const next=save('suffix-owner-resume',[resume]);assert.equal(next.ok,true,next.error?.message);
+  assert.equal(next.snapshot.ownerTransfers.length,1);const stored=next.snapshot.ownerTransfers[0];
+  assert.equal(stored.accountIdentity,firstIdentity);assert.equal(stored.source,'original.xlsx');assert.equal(stored.description,'Original memo');
+  assert.equal(stored.allocations.reduce((n:number,a:any)=>n+a.amountCents,0),3000);
+  const replay=save('suffix-owner-replay',[resume]);assert.equal(replay.ok,true,replay.error?.message);assert.equal(replay.snapshot.ownerTransfers[0].allocations.length,2);
+ }
+});
+
+test('ambiguous last-four accounts are rejected for owner and platform receipts without writing',()=>{
+ for(const kind of ['platform','owner']){
+  const app=receiptHarness();app.tables.get(42)!.data[20][6]='Checking 20000123';const initial=app.read().snapshot,c=receiptChange('0:21');
+  const owner={id:'ambiguous-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:[initial.months[0].properties[0].name]};
+  const changes=kind==='platform'?[{...c,receipt:{...c.receipt,accountIdentity:'0123'}}]:[{kind:'saveOwner',owner},{kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'0123',accountIdentity:'0123',currency:'CAD',date:'2026-11-09',reference:'AMBIGUOUS',source:'fixture.xlsx',bankName:'OWNER',amountCents:1000,allocations:[{propertyId:'0:4',amountCents:1000}]}];
+  const result=app.post({requestId:'suffix-ambiguous-'+kind,revision:initial.revision,changes});assert.equal(result.ok,false);assert.match(result.error.message,/ambiguous|multiple.*account/i);assert.equal(app.batches.length,0);
+ }
+});
+
+test('receipt history combines last-four aliases before checking stored allocation limits',()=>{
+ const app=receiptHarness();const c=receiptChange('0:21');
+ const first=app.post({requestId:'suffix-history-first',revision:app.read().snapshot.revision,changes:[c]});assert.equal(first.ok,true,first.error?.message);
+ const table=[...app.tables.values()].find(t=>t.name==='Bank Receipts')!;
+ const alias=[...table.data[1]];alias[0]='0123';alias[8]='42';alias[12]=4000;table.data.push(alias);
+ const read=app.read();assert.equal(read.ok,true,read.error?.message);assert.equal(read.snapshot.bankReceipts.length,1);assert.equal(read.snapshot.bankReceipts[0].allocations.length,2);
+ alias[12]=6000;const corrupt=app.read();assert.equal(corrupt.ok,false);assert.equal(corrupt.error.code,'SOURCE_DATA');assert.match(corrupt.error.message,/allocation/i);
+});
+
+test('last-four aliases cannot allocate one reference to both owner and platform receipts',()=>{
+ for(const ownerFirst of [false,true]){
+  const app=receiptHarness(),initial=app.read().snapshot,c=receiptChange('0:21');
+  const owner={id:'alias-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:[initial.months[0].properties[0].name]};
+  const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'0123',accountIdentity:'0123',currency:'CAD',date:c.bankDate,reference:c.receipt.reference,source:'fixture.xlsx',bankName:'OWNER',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:1000}]};
+  const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+  const first=save('suffix-cross-first',ownerFirst?[{kind:'saveOwner',owner},transfer]:[c]);assert.equal(first.ok,true,first.error?.message);
+  const second=save('suffix-cross-next',ownerFirst?[{...c,paymentId:'0:22'}]:[{kind:'saveOwner',owner},transfer]);assert.equal(second.ok,false);assert.match(second.error.message,/reference/i);assert.equal(app.batches.length,1);
+ }
+});
+
+test('last-four receipts match suffix-only and masked payout accounts without inventing a full identity',()=>{
+ for(const details of ['Checking 0123 (CAD)','Checking ****0123 (CAD)','Checking 10****0123 (CAD)']){
+  const app=receiptHarness(),c=receiptChange('0:21');app.state.data[20][6]=details;app.tables.get(42)!.data[20][6]=details;
+  const saved=app.post({requestId:'suffix-mask',revision:app.read().snapshot.revision,changes:[{...c,receipt:{...c.receipt,accountIdentity:'0123'}}]});
+  assert.equal(saved.ok,true,details+': '+saved.error?.message);assert.equal(saved.snapshot.bankReceipts[0].accountIdentity,'0123');
+ }
+});
+
+test('later full-account collisions cannot bridge an existing suffix-only receipt',()=>{
+ for(const kind of ['platform','owner']){
+  const app=receiptHarness(),initial=app.read().snapshot,c=receiptChange('0:21');app.tables.get(42)!.data[20][3]=40;
+  const owner={id:'collision-owner',name:'Owner',bankName:'OWNER',email:'',notes:'',active:true,propertyNames:initial.months[0].properties.map((p:any)=>p.name)};
+  const transfer={kind:'importOwnerTransfer',ownerId:owner.id,monthId:'0',account:'0123',accountIdentity:'0123',currency:'CAD',date:c.bankDate,reference:c.receipt.reference,source:'original.xlsx',bankName:'OWNER',amountCents:10000,allocations:[{propertyId:'0:4',amountCents:1000}]};
+  const save=(id:string,changes:any[])=>app.post({requestId:id,revision:app.read().snapshot.revision,changes});
+  const first=save('suffix-later-first',kind==='platform'?[{...c,receipt:{...c.receipt,accountIdentity:'0123'}}]:[{kind:'saveOwner',owner},transfer]);assert.equal(first.ok,true,first.error?.message);
+  app.tables.get(42)!.data[20][6]='Checking 20000123';
+  const changes=kind==='platform'?[{...receiptChange('42:21'),receipt:{...c.receipt,accountIdentity:'20000123'}}]:[{...transfer,accountIdentity:'20000123',transferId:first.snapshot.ownerTransfers[0].id,priorAllocatedCents:1000,allocations:[{propertyId:first.snapshot.months[0].properties[1].id,amountCents:1000}]}];
+  const blocked=save('suffix-later-next',changes);assert.equal(blocked.ok,false);assert.match(blocked.error.message,/ambiguous|multiple.*account/i);assert.equal(app.batches.length,1);
+ }
+});
+
+test('fully identified bank accounts sharing last four digits retain separate platform receipts',()=>{
+ const app=receiptHarness(),c=receiptChange('0:21');app.tables.get(42)!.data[20][6]='Checking 20000123';
+ const saved=app.post({requestId:'full-collisions',revision:app.read().snapshot.revision,changes:[c,{...receiptChange('42:21'),receipt:{...c.receipt,accountIdentity:'20000123'}}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.bankReceipts.length,2);
+ assert.deepEqual(saved.snapshot.bankReceipts.map((r:any)=>r.accountIdentity),['10000123','20000123']);
+});
+
+test('stored suffix aliases cannot merge two fully identified bank accounts',()=>{
+ const app=receiptHarness(),c=receiptChange('0:21');app.tables.get(42)!.data[20][6]='Checking 20000123';
+ const saved=app.post({requestId:'stored-full-collisions',revision:app.read().snapshot.revision,changes:[c,{...receiptChange('42:21'),receipt:{...c.receipt,accountIdentity:'20000123'}}]});assert.equal(saved.ok,true,saved.error?.message);
+ const table=[...app.tables.values()].find(t=>t.name==='Bank Receipts')!;
+ const alias=[...table.data[1]];alias[0]='0123';alias[8]='77';alias[12]=100;table.data.push(alias);
+ const read=app.read();assert.equal(read.ok,false);assert.equal(read.error.code,'SOURCE_DATA');assert.match(read.error.message,/ambiguous/i);
+});
+
+test('contradictory visible masked digits make a last-four receipt ambiguous',()=>{
+ for(const pair of [['10****0123','20****0123'],['10000123','20****0123'],['12**77**0123','12**88**0123']]){
+  const app=receiptHarness(),c=receiptChange('0:21');app.state.data[20][6]='Checking '+pair[0];app.tables.get(42)!.data[20][6]='Checking '+pair[1];
+  const saved=app.post({requestId:'suffix-incompatible-mask',revision:app.read().snapshot.revision,changes:[{...c,receipt:{...c.receipt,accountIdentity:'0123'}}]});
+  assert.equal(saved.ok,false,pair.join(' / '));assert.match(saved.error.message,/ambiguous|multiple.*account/i);assert.equal(app.batches.length,0);
+ }
+});
+
+test('full-account receipts reject ambiguous suffix-only or masked payment targets',()=>{
+ for(const target of ['0123','10****0123']){
+  const app=receiptHarness(),c=receiptChange('0:21');app.state.data[20][6]='Checking '+target;app.tables.get(42)!.data[20][6]='Checking 20****0123';
+  const saved=app.post({requestId:'full-source-ambiguous-target',revision:app.read().snapshot.revision,changes:[c]});
+  assert.equal(saved.ok,false,target);assert.match(saved.error.message,/ambiguous/i);assert.equal(app.batches.length,0);
+ }
+});
 test('receipt allocations survive separate sessions, reject cross-month overuse atomically and allow exact partial splits',()=>{
  for(const second of [60,40]){
   const app=receiptHarness();app.tables.get(42)!.data[20][3]=second;

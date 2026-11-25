@@ -22,6 +22,16 @@ test('extracts CAD credits with per-row accounts, dates, exact cents and leading
  ],warnings:[],excluded:[]});
 });
 
+test('last-four source accounts remain exact and matching full metadata is retained',()=>{
+ const rows=parseBankSpreadsheet([sheet(row(undefined,25,'2026-11-23','0012'))],'bank.xlsx').deposits;
+ assert.equal(rows[0].accountIdentity,'0012');assert.equal(rows[0].account,'0012');
+ const data:ImportSheet={name:'Data',rows:[['Date','Description','CAD$'],['2026-11-23','AIRBNB PAYMENTS 000000123450007',25]].map(r=>r.map(value=>({value})))};
+ assert.equal(parseBankSpreadsheet([data],'bank.csv',{account:'5864'}).deposits[0].accountIdentity,'5864');
+ data.rows.unshift([{value:'Account Number: 0012345864'}]);
+ assert.equal(parseBankSpreadsheet([data],'bank.csv',{account:'5864'}).deposits[0].accountIdentity,'0012345864');
+ assert.throws(()=>parseBankSpreadsheet([data],'bank.csv',{account:'9999'}),/conflicts/i);
+});
+
 test('RBC payable marker or Airbnb description identifies a deposit without a posting-status column', () => {
  const standalone=row('AIRBNB PAYMENTS 000000123450009',60);standalone[4]='';
  const result=parseBankSpreadsheet([sheet(row('000000123450008',50),standalone,row('Loan 000000123450010',70))],'rbc.xlsx');
@@ -141,7 +151,7 @@ test('partial worksheet account metadata permits only transaction accounts with 
  const s=sheet(row(undefined,10,46349,'9999-2222'),row(undefined,20,46349,'7777-3333'),row(undefined,30,46349,'2222'));
  s.rows.unshift([{value:'Account Number: 2222'}]);
  const result=parseBankSpreadsheet([s],'bank.xlsx');
- assert.deepEqual(result.deposits.map(d=>[d.sourceRow,d.accountIdentity]),[[3,'99992222'],[5,undefined]]);
+ assert.deepEqual(result.deposits.map(d=>[d.sourceRow,d.accountIdentity]),[[3,'99992222'],[5,'2222']]);
  assert.equal(result.excluded[0].sourceRow,4);
  assert.match(result.excluded[0].reason,/account.*conflicts/i);
 });

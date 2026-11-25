@@ -7,7 +7,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const text=(node:any):string=>node==null?'':typeof node==='string'?node:Array.isArray(node)?node.map(text).join(' '):text(node.children);
-async function withImport(run:(root:any,makeFile:(rows:unknown[][],name?:string)=>File,writes:()=>number)=>Promise<void>,ledger=true,payments?:any[],pdfText?:string,receipts:any[]=[]){
+async function withImport(run:(root:any,makeFile:(rows:unknown[][],name?:string)=>File,writes:()=>number)=>Promise<void>,ledger=true,payments?:any[],pdfText?:string,receipts:any[]=[],suffixSupport=true){
  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
  // PDF extraction has its own source-file tests; this adapter isolates editable review state.
  const plugins=pdfText?[{name:'bank-review-pdf-adapter',enforce:'pre' as const,resolveId(id:string){if(id==='./bank-pdf')return '\0bank-review-pdf';},load(id:string){if(id==='\0bank-review-pdf')return `export async function extractStatementText(){return ${JSON.stringify(pdfText)}}`;}}]:[];
@@ -18,15 +18,45 @@ async function withImport(run:(root:any,makeFile:(rows:unknown[][],name?:string)
  try{
   const {default:Import}=await server.ssrLoadModule('/src/BankStatementImport.tsx');
   const month={id:'m',month:'2026-11',label:'November 2026',properties:[{id:'p',name:'Example Home',manager:'',totalCents:2500,payments:payments??[{id:'pay',type:'Airbnb',amountCents:2500,bundleCents:2500,bankDetails:'Checking 12345678',payoutDate:'2026-11-23',bankDate:'',bankCents:null,verifiedByDaisy:false}]}]};
-  const snapshot={revision:'r',updatedAt:'',spreadsheetUrl:'',months:[month],ownerSchema:1,ownerAllocationSchema:1,owners:[],ownerTransfers:[],...(ledger?{bankReceiptSchema:1,bankReceipts:receipts}:{} )};
+  const snapshot={revision:'r',updatedAt:'',spreadsheetUrl:'',months:[month],ownerSchema:1,ownerAllocationSchema:1,owners:[],ownerTransfers:[],...(suffixSupport?{bankAccountSuffixSchema:1}:{}),...(ledger?{bankReceiptSchema:1,bankReceipts:receipts}:{} )};
   await act(async()=>{root=TestRenderer.create(React.createElement(Import,{month,snapshot,supported:true,onClose(){},onApply:async()=>{count++;}}),{createNodeMock:(element:any)=>element.type==='dialog'?{open:false,showModal(){this.open=true},close(){this.open=false}}:{value:''}});});
   await run(root,makeFile,()=>count);
  }finally{if(root)await act(async()=>root.unmount());await server.close();globalThis.window=previous;delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;}
 }
 const upload=(root:any,files:File[])=>act(async()=>{await root.root.findByProps({'aria-label':'Choose Bank Files'}).props.onChange({target:{files}});});
 
-for(const extension of ['xlsx','xls','csv'])test(`${extension} bank files reach a saveable review without column choices`,async()=>withImport(async(root,makeFile,writes)=>{
- const rows=[['Account Type','Account Number','Transaction Date','Cheque Number','Description 1','Description 2','CAD$','USD$'],['Chequing','1234-5678','2026-11-23','','Account Payable Pmt','AIRBNB PAYMENTS 000000123456789',25,'']];
+test('entering only four account digits automatically enables a matching bank import',async()=>withImport(async(root,makeFile,writes)=>{
+ await upload(root,[makeFile([['Date','Description','CAD$'],['2026-11-23','AIRBNB PAYMENTS 000000123456789',25]],'bank.csv')]);
+ const account=root.root.findAllByType('input').find((node:any)=>node.props.autoComplete==='off'&&node.props.inputMode==='numeric');
+ await act(async()=>account.props.onChange({target:{value:'5678'}}));
+ const save=root.root.findAllByType('button').find((node:any)=>text(node)==='Save 1 Payment Rows');
+ assert.ok(save);assert.equal(save.props.disabled,false);
+ await act(async()=>save.props.onClick());assert.equal(writes(),1);
+}));
+
+test('a four-digit PDF account proceeds without requesting a full account number',async()=>withImport(async(root,_makeFile,writes)=>{
+ await upload(root,[new File(['PDF reader adapter input'],'statement.pdf')]);
+ assert.equal(root.root.findAllByType('input').filter((node:any)=>node.props.inputMode==='numeric').length,0);
+ const save=root.root.findAllByType('button').find((node:any)=>text(node)==='Save 1 Payment Rows');
+ assert.ok(save);assert.equal(save.props.disabled,false);
+ await act(async()=>save.props.onClick());assert.equal(writes(),1);
+},true,undefined,'November 1, 2026 to November 30, 2026\nAccount number: 5678\nCurrency: CAD\n23 Nov AIRBNB PAYMENTS 000000123456789\t\t25.00\t100.00'));
+
+test('four-digit accounts support excluded-credit owner review',async()=>withImport(async(root,makeFile)=>{
+ await upload(root,[makeFile([['Date','Description','CAD$','Account','Reference'],['2026-11-23','Deposit',25,'5678','ORIGINAL8']])]);
+ const review=root.root.findAllByType('button').find((node:any)=>text(node)==='Review As Owner Payment');
+ assert.ok(review);assert.equal(review.props.disabled,false);
+ await act(async()=>review.props.onClick());assert.match(text(root.toJSON()),/Reference:.*ORIGINAL8/);
+}));
+
+test('last-four saves identify an older backend before submission',async()=>withImport(async(root,makeFile)=>{
+ await upload(root,[makeFile([['Date','Description','CAD$','Account'],['2026-11-23','AIRBNB PAYMENTS 000000123456789',25,'5678']])]);
+ const save=root.root.findAllByType('button').find((node:any)=>text(node).startsWith('Save '));assert.equal(save.props.disabled,true);
+ assert.match(text(root.root.findByProps({className:'bank-save-summary'})),/Update.*Apps Script.*four/i);
+},true,undefined,undefined,[],false));
+
+for(const sourceAccount of ['1234-5678','5678'])for(const extension of ['xlsx','xls','csv'])test(`${extension} bank files with ${sourceAccount.length===4?'four-digit':'full'} accounts reach a saveable review without column choices`,async()=>withImport(async(root,makeFile,writes)=>{
+ const rows=[['Account Type','Account Number','Transaction Date','Cheque Number','Description 1','Description 2','CAD$','USD$'],['Chequing',sourceAccount,'2026-11-23','','Account Payable Pmt','AIRBNB PAYMENTS 000000123456789',25,'']];
  await upload(root,[makeFile(rows,`bank.${extension}`)]);
  assert.equal(root.root.findAllByType('select').filter((select:any)=>/Column For/.test(select.props['aria-label']??'')).length,0);
  assert.doesNotMatch(text(root.toJSON()),/Continue To Review|Review Or Adjust Columns/);
@@ -60,7 +90,7 @@ test('eleven-file review reports duplicates and excluded credits without saving'
 
 test('missing currency and account require explicit review before submission',async()=>withImport(async(root,makeFile,writes)=>{
  await upload(root,[makeFile([['Date','Description','Amount'],['2026-11-23','AIRBNB PAYMENTS 123456789012',25]])]);
- const account=root.root.findByProps({placeholder:'Enter the full source account'});
+ const account=root.root.findByProps({placeholder:'Enter the last 4 digits or full account number'});
  const currency=root.root.findByProps({'aria-label':'Currency For Transactions'});
  assert.equal(root.root.findAllByType('button').find((b:any)=>text(b).startsWith('Save ')).props.disabled,true);
  await act(async()=>account.props.onChange({target:{value:'12345678'}}));

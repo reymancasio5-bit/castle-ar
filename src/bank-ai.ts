@@ -46,6 +46,6 @@ export async function prepareBankSheet(sheet:ImportSheet,source:string,month:Mon
  const metadata=bankSheetAccount(sheet,mapping);
  const account=mapping.account===undefined?metadata.account:'';
  const issue=metadata.found&&!metadata.account?'The worksheet has conflicting or unreadable source account numbers.':undefined;
- if(account.length>4)note+=` Account ending in ${account.slice(-4)} came from the file header.`;
+ if(account.length>=4)note+=` Account ending in ${account.slice(-4)} came from the file header.`;
  return {source,sheet,mapping,account,currency:bankMappingCurrency(sheet,mapping),method,note,issue};
 }

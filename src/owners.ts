@@ -1,5 +1,5 @@
-import {sameBankReference,validSourceAccount} from './bank-account.ts';
-import type {BankReceipt,Month,OwnerChange,OwnerTransfer,PropertyOwner,Snapshot} from './types.ts';
+import {compatibleAccountIdentity,sameBankReference,snapshotAccountDirectory,validSourceAccount} from './bank-account.ts';
+import type {BankReceipt,Change,Month,OwnerChange,OwnerTransfer,PropertyOwner,Snapshot} from './types.ts';
 import type {BankDeposit} from './bank-statement.ts';
 import {balance} from './domain.ts';
 
@@ -46,23 +46,27 @@ export function ownerTransferOperationApplied(transfer:OwnerTransfer,priorAlloca
  if(recorded.length!==allocations.length)return false;
  return JSON.stringify(recorded.map(a=>allocationSignature(a,transfer.monthId)).sort())===JSON.stringify(allocations.map(a=>allocationSignature(a,transfer.monthId)).sort());
 }
-export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{kind:'importOwnerTransfer'}>):OwnerTransfer {
+export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{kind:'importOwnerTransfer'}>,batch:Change[]=[]):OwnerTransfer {
  const owner=snapshot.owners?.find(o=>o.id===c.ownerId);if(!owner)throw new Error('Owner not found.');
  const month=snapshot.months.find(m=>m.id===c.monthId);if(!month)throw new Error('Month not found.');
  const account=clean(c.account,'bank account'),reference=clean(c.reference,'transaction reference');
  if(!/^\d{4}$/.test(account)||!/^[a-z0-9]+$/i.test(reference))throw new Error('Enter a valid account and transaction reference.');
- if(!validSourceAccount(account,c.accountIdentity)||!c.currency||!['CAD','USD'].includes(c.currency))throw new Error('Confirm the full bank account and currency from the statement.');
+ if(!validSourceAccount(account,c.accountIdentity)||!c.currency||!['CAD','USD'].includes(c.currency))throw new Error('Confirm the bank account (last four digits are accepted) and currency from the statement.');
+ const sources=batch.flatMap<{account:string;accountIdentity?:string;currency?:string}>(change=>change.kind==='reconcileBank'?[{account:change.account,...change.receipt}]:change.kind==='importOwnerTransfer'?[change]:[]);
+ const directory=snapshotAccountDirectory(snapshot,[c,...sources]);
+ if(directory.ambiguous(account,c.accountIdentity))throw new Error('Ambiguous bank account: multiple accounts share these last four digits.');
  if(snapshot.bankReceipts?.some(r=>sameBankReference(r,c)))throw new Error('This reference was used for a platform receipt.');
  const resuming=c.transferId!==undefined||c.priorAllocatedCents!==undefined;
  if(resuming&&(typeof c.transferId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(c.transferId)||!Number.isSafeInteger(c.priorAllocatedCents)||c.priorAllocatedCents!<0))throw new Error('Enter a valid receipt and prior allocation amount.');
  const existing=resuming?snapshot.ownerTransfers?.find(t=>t.id===c.transferId):undefined;
+ if(existing&&directory.ambiguous(existing.account,existing.accountIdentity))throw new Error('Ambiguous bank account on the original owner receipt.');
  if(resuming&&!existing)throw new Error('The original owner receipt was not found. Refresh and review the receipt.');
  if(!resuming&&snapshot.ownerTransfers?.some(t=>sameBankReference(t,{...c,reference,account})))throw new Error('This owner transfer has already been imported.');
  const bankName=clean(c.bankName,'statement name');if(!ownerBankNames(owner.bankName).some(name=>ownerKey(name)===ownerKey(bankName)))throw new Error('Statement name does not match this owner.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(c.date)||c.date<'1900-01-01'||!Number.isFinite(Date.parse(c.date))||new Date(c.date).toISOString().slice(0,10)!==c.date)throw new Error('Enter a valid bank date.');
  if(!positive(c.amountCents)||!Array.isArray(c.allocations)||!c.allocations.length||c.allocations.length>500)throw new Error('Enter a positive deposit and allocations.');
  const source=clean(c.source,'statement source',240);
- if(existing&&(existing.ownerId!==owner.id||existing.account!==account||existing.accountIdentity!==c.accountIdentity||existing.currency!==c.currency||existing.date!==c.date||existing.amountCents!==c.amountCents||ownerKey(existing.bankName)!==ownerKey(bankName)||ownerKey(existing.reference)!==ownerKey(reference)))throw new Error('The original owner receipt evidence has changed. Review the statement.');
+ if(existing&&(existing.ownerId!==owner.id||existing.account!==account||!compatibleAccountIdentity(existing.accountIdentity,c.accountIdentity)||existing.currency!==c.currency||existing.date!==c.date||existing.amountCents!==c.amountCents||ownerKey(existing.bankName)!==ownerKey(bankName)||ownerKey(existing.reference)!==ownerKey(reference)))throw new Error('The original owner receipt evidence has changed. Review the statement.');
  const seen=new Set<string>(),names=new Set<string>();
  const allocations=c.allocations.map(a=>{
   if(!a||!positive(a.amountCents)||seen.has(a.propertyId))throw new Error('Use positive allocations with each property only once.');
@@ -87,7 +91,7 @@ export function prepareOwnerTransfer(snapshot:Snapshot,c:Extract<OwnerChange,{ki
  if(JSON.stringify(transfer.allocations).length>50000)throw new Error('This receipt allocation history exceeds the spreadsheet cell limit.');
  return {...transfer,note:ownerReceiptNote(transfer,snapshot.months)};
 }
-export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
+export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange,batch:Change[]=[]):void {
  if(c.kind==='saveOwner'){
   const input=c.owner;if(!input||typeof input.active!=='boolean'||!Array.isArray(input.propertyNames)||input.propertyNames.length>1000)throw new Error('Enter a valid owner profile.');
   if(typeof input.id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(input.id))throw new Error('Enter a valid owner ID.');
@@ -100,7 +104,7 @@ export function applyOwnerChange(snapshot:Snapshot,c:OwnerChange):void {
   snapshot.owners??=[];if(existing<0)snapshot.owners.push(owner);else snapshot.owners[existing]=owner;
   return;
  }
- const transfer=prepareOwnerTransfer(snapshot,c);
+ const transfer=prepareOwnerTransfer(snapshot,c,batch);
  const existingIndex=c.transferId===undefined?-1:(snapshot.ownerTransfers??[]).findIndex(t=>t.id===c.transferId);
  if(existingIndex>=0&&snapshot.ownerTransfers![existingIndex]===transfer)return;
  for(const a of c.allocations)snapshot.months.find(m=>m.id===(a.monthId??c.monthId))!.properties.find(p=>p.id===a.propertyId)!.payments.push({id:crypto.randomUUID(),type:'Owner',amountCents:a.amountCents,payoutDate:'',bundleCents:null,bankDetails:'Checking '+transfer.account,bankDate:transfer.date,bankCents:a.amountCents,verifiedBySystem:true,verifiedByDaisy:false});
@@ -126,12 +130,13 @@ function exactOwnerSplit(candidates:{propertyId:string;amountCents:number}[],tar
 }
 export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:PropertyOwner[],transfers:OwnerTransfer[],allocationMonths:Month[]=[month],receipts:BankReceipt[]=[]){
  const seen=new Set<string>();
+ const directory=snapshotAccountDirectory({months:allocationMonths,bankReceipts:receipts,ownerTransfers:transfers},deposits);
  const stored=new Map<string,OwnerTransfer[]>(),platforms=new Map<string,Array<BankDeposit|BankReceipt>>();
  for(const t of transfers){const key=transferKey(t.account,t.reference),list=stored.get(key)??[];list.push(t);stored.set(key,list);}
  for(const p of [...receipts,...deposits.filter(d=>d.kind!=='owner')]){const key=transferKey(p.account,p.reference),list=platforms.get(key)??[];list.push(p);platforms.set(key,list);}
  const signatures=new Map<string,string>(),conflicts=new Set<string>();
  for(const d of deposits.filter(d=>d.kind==='owner'&&d.reference)){
-  const key=transferKey(d.accountIdentity||d.account,d.reference),signature=JSON.stringify([d.currency,d.date,d.amountCents,ownerKey(d.ownerName??''),d.propertyReference??'',d.serviceMonth??'']);
+  const key=directory.key(d.account,d.accountIdentity,d.reference),signature=JSON.stringify([d.currency,d.date,d.amountCents,ownerKey(d.ownerName??''),d.propertyReference??'',d.serviceMonth??'']);
   if(signatures.has(key)&&signatures.get(key)!==signature)conflicts.add(key);else signatures.set(key,signature);
  }
  const byName=new Map<string,PropertyOwner[]>();
@@ -146,18 +151,20 @@ export function matchOwnerDeposits(deposits:BankDeposit[],month:Month,owners:Pro
    propertiesByOwner.set(owner.id,allocationMonths.flatMap(m=>m.properties.filter(p=>!p.bundleOnly&&names.has(ownerKey(p.name))).map(p=>({...p,monthId:m.id,monthLabel:m.label,monthKey:m.month}))));
   }
   const properties=owner?propertiesByOwner.get(owner.id)!:[];
-  const key=transferKey(deposit.accountIdentity||deposit.account,deposit.reference),suffixKey=transferKey(deposit.account,deposit.reference);
-  const previous=stored.get(suffixKey)?.find(t=>sameBankReference(t,deposit));
+  const key=directory.key(deposit.account,deposit.accountIdentity,deposit.reference),suffixKey=transferKey(deposit.account,deposit.reference);
+  const aliases=stored.get(suffixKey)?.filter(t=>sameBankReference(t,deposit))??[],previous=aliases[0];
+  const ambiguous=directory.ambiguous(deposit.account,deposit.accountIdentity)||aliases.length>1||aliases.some(t=>directory.ambiguous(t.account,t.accountIdentity));
   const previouslyAllocatedCents=previous?ownerTransferAllocated(previous):0;
   const remainingCents=deposit.amountCents-previouslyAllocatedCents;
   const existingTransferId=previous?.id;
   const partial=!!previous&&remainingCents>0;
-  if(platforms.get(suffixKey)?.some(p=>sameBankReference(p,deposit))||(previous&&(previous.date!==deposit.date||previous.amountCents!==deposit.amountCents||ownerKey(previous.bankName)!==ownerKey(deposit.ownerName??'')||(previous.currency&&previous.currency!==deposit.currency)||(partial&&(previous.ownerId!==owner?.id||previous.accountIdentity!==deposit.accountIdentity||previous.currency!==deposit.currency))||remainingCents<0)))conflicts.add(key);
-  const duplicate=!!deposit.reference&&((!!previous&&!partial)||seen.has(key)||conflicts.has(key));
+  if(platforms.get(suffixKey)?.some(p=>sameBankReference(p,deposit))||(previous&&(previous.date!==deposit.date||previous.amountCents!==deposit.amountCents||ownerKey(previous.bankName)!==ownerKey(deposit.ownerName??'')||(previous.currency&&previous.currency!==deposit.currency)||(partial&&(previous.ownerId!==owner?.id||!compatibleAccountIdentity(previous.accountIdentity,deposit.accountIdentity)||previous.currency!==deposit.currency))||remainingCents<0)))conflicts.add(key);
+  const duplicate=ambiguous||!!deposit.reference&&((!!previous&&!partial)||seen.has(key)||conflicts.has(key));
   if(deposit.reference)seen.add(key);
   const allocations:{propertyId:string;amountCents:number}[]=[];
   let status='Needs manual allocation';
-  if(conflicts.has(key))status='Conflicting repeated reference — skip and verify statement';
+  if(ambiguous)status='Ambiguous bank account: multiple accounts share these last four digits';
+  else if(conflicts.has(key))status='Conflicting repeated reference — skip and verify statement';
   else if(duplicate)status='Already imported or repeated reference';
   else if(!deposit.reference)status='Missing transaction reference — skip';
   else if(!owner)status=candidates.length?'Ambiguous owner name':'Unknown owner';

@@ -1,6 +1,6 @@
 import type {BankDeposit} from './bank-statement.ts';
 import type {BankReceipt,Change,Month,OwnerTransfer,Payment,ReceiptAllocation,ReceiptEvidence,Snapshot} from './types.ts';
-import {accountDirectory,maskedAccountMatches,payoutAccount,receiptKey,sameBankReference,validSourceAccount} from './bank-account.ts';
+import {payoutAccount,receiptKey,sameBankReference,snapshotAccountDirectory,validSourceAccount} from './bank-account.ts';
 
 export type ReconcileChange=Extract<Change,{kind:'reconcileBank'}>;
 type Payout={property:string;payment:Payment};
@@ -41,12 +41,12 @@ function candidatesFor(rows:Payout[],amount:number,competing:boolean):Candidate[
 
 export function matchStatement(deposits:BankDeposit[],month:Month,options:Options={}){
  const receipts=options.receipts??[],months=options.months??[month],owners=options.ownerTransfers??[];
- const directory=accountDirectory(), ledger=new Map<string,BankReceipt>(),used=new Map<string,string>();
+ const directory=snapshotAccountDirectory({months,bankReceipts:receipts,ownerTransfers:owners},deposits), ledger=new Map<string,BankReceipt>(),used=new Map<string,string>();
  const ownerRefs=new Map<string,OwnerTransfer[]>(),choicesByBundle=new Map<string,{available:Payout[];candidates:Candidate[];byId:Map<string,Payout>}>();
  const drafts=new Map<string,ReconcileChange[]>(),paymentClaims=new Map<string,string[]>(),legacy=new Map<string,Payout[]>();
  const slots=new Map<string,string>(),bundles=new Map<string,Payout[]>(),signatures=new Map<string,string>(),conflicts=new Set<string>(),referencesByBundle=new Map<string,Set<string>>();
  for(const r of receipts){
-  const key=receiptKey(r.accountIdentity,r.reference);ledger.set(key,r);directory.observe(r.account,r.accountIdentity,r.currency);
+  const key=directory.key(r.account,r.accountIdentity,r.reference);if(ledger.has(key))conflicts.add(key);ledger.set(key,r);
   for(const a of r.allocations)used.set(allocationKey(a),key);
  }
  for(const r of owners){directory.observe(r.account,r.accountIdentity,r.currency);group(ownerRefs,receiptKey(r.account,r.reference),r);}
@@ -62,18 +62,19 @@ export function matchStatement(deposits:BankDeposit[],month:Month,options:Option
   const platform=d.kind==='owner'?'Owner':d.platform??'Airbnb';
   directory.observe(d.account,d.accountIdentity,d.currency);
   if(!d.reference)continue;
-  const key=receiptKey(d.accountIdentity||d.account,d.reference),sig=evidenceKey(d.date,d.amountCents,platform,d.currency);
+  const key=directory.key(d.account,d.accountIdentity,d.reference),sig=evidenceKey(d.date,d.amountCents,platform,d.currency);
   if(signatures.has(key)&&signatures.get(key)!==sig)conflicts.add(key);signatures.set(key,sig);
-  const bundle=bundleKey(d.accountIdentity||d.account,d.amountCents,platform+'|'+d.currency),refs=referencesByBundle.get(bundle)??new Set();
+  const bundle=bundleKey(directory.resolve(d.account,d.accountIdentity),d.amountCents,platform+'|'+d.currency),refs=referencesByBundle.get(bundle)??new Set();
   refs.add(key);referencesByBundle.set(bundle,refs);
  }
  const encountered=new Set<string>();
  const rows:ReviewRow[]=deposits.filter(d=>d.kind!=='owner').map(deposit=>{
   const {account,accountIdentity,currency,reference,date,amountCents,source}=deposit,platform=deposit.platform??'Airbnb';
-  const key=receiptKey(accountIdentity||account,reference);
+  const key=directory.key(account,accountIdentity,reference);
   const row:ReviewRow={deposit,selectionKey:key,candidates:[],selectablePayments:[],payments:[],status:''};
   const status=(message:string)=>{row.status=message;return row;};
-  if(!validSourceAccount(account,accountIdentity)||!currency||!['CAD','USD'].includes(currency))return status('Confirm the full source account and currency');
+  if(!validSourceAccount(account,accountIdentity)||!currency||!['CAD','USD'].includes(currency))return status('Confirm the source account (last four digits are accepted) and currency');
+  if(directory.ambiguous(account,accountIdentity)||receipts.some(r=>sameBankReference(r,deposit)&&directory.ambiguous(r.account,r.accountIdentity)))return status('Ambiguous bank account: multiple accounts share these last four digits');
   if(!reference.trim())return status('Missing transaction reference');
   if(!positive(amountCents)||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date)return status('Invalid deposit date or amount');
   const existing=ledger.get(key);
@@ -81,8 +82,8 @@ export function matchStatement(deposits:BankDeposit[],month:Month,options:Option
   if(encountered.has(key))return status('Duplicate statement entry');encountered.add(key);
   const bundle=bundleKey(account,amountCents,platform);
   const compatible=(r:Payout)=>directory.matches(r.payment.bankDetails,account,accountIdentity!,currency);
-  if(legacy.get(JSON.stringify([bundle,date]))?.some(r=>{const b=payoutAccount(r.payment.bankDetails);return maskedAccountMatches(b.mask,accountIdentity!)&&(!b.identity||b.identity===accountIdentity)&&(!b.currency||b.currency===currency);}))return status('Previously verified payment has no receipt reference; review bank history');
-  const scope=bundleKey(accountIdentity!,amountCents,platform+'|'+currency);
+  if(legacy.get(JSON.stringify([bundle,date]))?.some(r=>directory.compatible(r.payment.bankDetails,account,accountIdentity!,currency)))return status('Previously verified payment has no receipt reference; review bank history');
+  const scope=bundleKey(directory.resolve(account,accountIdentity),amountCents,platform+'|'+currency);
   const competing=(referencesByBundle.get(scope)?.size??0)>1;
   let choices=choicesByBundle.get(scope);
   if(!choices){
@@ -132,10 +133,15 @@ export function protectReceiptHistory(snapshot:Snapshot,changes:Change[]){
 export function recordPreviewReceipt(snapshot:Snapshot,change:ReconcileChange,batch:Change[]){
  const r=change.receipt;
  if(!r||!validSourceAccount(change.account,r.accountIdentity)||!['CAD','USD'].includes(r.currency)||!r.reference.trim()||!r.source.trim()||!positive(change.bundleCents)||!/^\d{4}-\d{2}-\d{2}$/.test(change.bankDate)||!Number.isFinite(Date.parse(change.bankDate))||new Date(change.bankDate).toISOString().slice(0,10)!==change.bankDate)throw new Error('Invalid statement receipt evidence.');
- const receipts=snapshot.bankReceipts??=[],key=receiptKey(r.accountIdentity,r.reference),directory=accountDirectory();
+ const receipts=snapshot.bankReceipts??=[];
  const identity={...r,account:change.account};
+ const sources=batch.flatMap<{account:string;accountIdentity?:string;currency?:string}>(c=>c.kind==='reconcileBank'&&c.receipt?[{account:c.account,...c.receipt}]:c.kind==='importOwnerTransfer'?[c]:[]);
+ const directory=snapshotAccountDirectory(snapshot,[identity,...sources]);
+ if(directory.ambiguous(change.account,r.accountIdentity))throw new Error('Ambiguous bank account: multiple accounts share these last four digits.');
  if(snapshot.ownerTransfers?.some(t=>sameBankReference(identity,t)))throw new Error('Reference already used for an owner transfer.');
- const existing=receipts.find(stored=>receiptKey(stored.accountIdentity,stored.reference)===key);
+ const aliases=receipts.filter(stored=>sameBankReference(stored,identity));
+ if(aliases.length>1||aliases.some(stored=>directory.ambiguous(stored.account,stored.accountIdentity)))throw new Error('Ambiguous receipt account or repeated reference. Review bank history.');
+ const existing=aliases[0];
  if(existing&&evidenceKey(existing.date,existing.amountCents,existing.platform,existing.currency)!==evidenceKey(change.bankDate,change.bundleCents,r.platform,r.currency))throw new Error('Conflicting receipt evidence.');
  const claimed=new Map<string,BankReceipt>();
  for(const receipt of receipts){directory.observe(receipt.account,receipt.accountIdentity,receipt.currency);for(const a of receipt.allocations)claimed.set(allocationKey(a),receipt);}
@@ -146,7 +152,7 @@ export function recordPreviewReceipt(snapshot:Snapshot,change:ReconcileChange,ba
   const b=payoutAccount(payment.bankDetails);directory.observe(b.suffix,b.identity,b.currency);
   const a={monthId:m.id,propertyName:property.name,bundleOnly:!!property.bundleOnly,paymentIndex:index,amountCents:payment.amountCents??0};
   if(payment.id===change.paymentId)target={payment,allocation:a};
-  if(payment.type===r.platform&&payment.receivedBy!=='owner'&&payment.bundleCents===change.bundleCents&&payment.bankDate===change.bankDate&&payment.verifiedBySystem&&b.suffix===change.account&&maskedAccountMatches(b.mask,r.accountIdentity)&&(!b.identity||b.identity===r.accountIdentity)&&(!b.currency||b.currency===r.currency)&&!claimed.has(allocationKey(a)))throw new Error('Earlier payment verification has no receipt reference.');
+  if(payment.type===r.platform&&payment.receivedBy!=='owner'&&payment.bundleCents===change.bundleCents&&payment.bankDate===change.bankDate&&payment.verifiedBySystem&&directory.compatible(payment.bankDetails,change.account,r.accountIdentity,r.currency)&&!claimed.has(allocationKey(a)))throw new Error('Earlier payment verification has no receipt reference.');
  }
  if(!target)throw new Error('Payment not found.');
  const {payment:p,allocation:a}=target,allocated=claimed.get(allocationKey(a));

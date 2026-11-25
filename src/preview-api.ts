@@ -5,7 +5,7 @@ import { validateFollowUpDraft } from './follow-ups.ts';
 import {recordPreviewReceipt,protectReceiptHistory} from './bank-reconciliation.ts';
 import {applyOwnerChange} from './owners.ts';
 export function createPreviewApi(ownerDemo=false) {
- let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.bankReceiptSchema=1;state.bankReceipts=[];state.recordEditingSchema=1;
+ let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.bankReceiptSchema=1;state.bankAccountSuffixSchema=1;state.bankReceipts=[];state.recordEditingSchema=1;
  state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerReceiptSchema=1;state.ownerSchema=1;state.ownerBankNamesSchema=1;state.owners=[];state.ownerTransfers=[];
  if(ownerDemo){
   const propertyName='Mtl 404 Le Bijou';
@@ -24,7 +24,7 @@ export function createPreviewApi(ownerDemo=false) {
   if(changes.some(c=>c.kind==='reconcileBank')&&changes.some(c=>!['reconcileBank','importOwnerTransfer','saveOwner'].includes(c.kind)))throw new Error('Save bank receipt imports separately from other edits.');
   protectReceiptHistory(next,changes);
   for(const c of changes) {
-   if(c.kind==='saveOwner'||c.kind==='importOwnerTransfer'){applyOwnerChange(next,c);continue;}
+   if(c.kind==='saveOwner'||c.kind==='importOwnerTransfer'){applyOwnerChange(next,c,changes);continue;}
    if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
    if(c.kind==='updateProperty'||c.kind==='deleteProperty'||c.kind==='deletePayment'){
     if(c.kind==='deletePayment'){

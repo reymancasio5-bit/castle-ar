@@ -25,7 +25,7 @@ test('automatic preparation asks only for missing source account and currency',a
   await act(async()=>{root=TestRenderer.create(React.createElement(Harness));});
   assert.equal(root.root.findAllByType('select').length,1);
   assert.equal(root.root.findAllByType('button').length,0);
-  await act(async()=>root.root.findByProps({placeholder:'Enter the full source account'}).props.onChange({target:{value:'12349876'}}));
+  await act(async()=>root.root.findByProps({placeholder:'Enter the last 4 digits or full account number'}).props.onChange({target:{value:'12349876'}}));
   await act(async()=>root.root.findByProps({'aria-label':'Currency For Checking'}).props.onChange({target:{value:'CAD'}}));
   const result=parseBankSpreadsheet([sheet],latest.source,{mapping:latest.mapping,account:latest.account,currency:latest.currency});
   assert.equal(result.deposits[0].account,'9876');assert.equal(result.deposits[0].amountCents,2500);

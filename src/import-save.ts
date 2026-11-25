@@ -4,7 +4,7 @@ import {isAirbnbSheet} from './property-import.ts';
 import {balance,parseMoney} from './domain.ts';
 import type {Change,Month,Payment,Property,Snapshot} from './types.ts';
 import {ownerBankNames,ownerKey,ownerTransferAllocated,ownerTransferOperationApplied} from './owners.ts';
-import {payoutAccount,sameBankReference,validSourceAccount} from './bank-account.ts';
+import {compatibleAccountIdentity,payoutAccount,sameBankReference,snapshotAccountDirectory,validSourceAccount} from './bank-account.ts';
 import {runProgress,type ReportProgress} from './operation-progress.ts';
 
 export class ImportReviewRequired extends Error {
@@ -85,7 +85,11 @@ function ownerAllocationContext(snapshot:Snapshot,ownerId:string):string{
 }
 export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest:Snapshot):Change[]{
   if(latest.bankReceiptSchema!==1||!Array.isArray(latest.bankReceipts)||original.bankReceiptSchema!==1||!Array.isArray(original.bankReceipts))throw new Error('Deploy the updated bank receipt backend before importing statements.');
+  const sources=changes.flatMap<{account:string;accountIdentity?:string;currency?:string}>(c=>c.kind==='reconcileBank'?[{account:c.account,...c.receipt}]:c.kind==='importOwnerTransfer'?[c]:[]);
+  if(sources.some(c=>c.accountIdentity?.length===4)&&(latest.bankAccountSuffixSchema!==1||original.bankAccountSuffixSchema!==1))throw new Error('Deploy the updated Apps Script backend before importing accounts using the last four digits.');
+  const directory=snapshotAccountDirectory(latest,sources);
   const fail=():never=>{throw new BankImportReviewRequired(latest);};
+  if(sources.some(c=>directory.ambiguous(c.account,c.accountIdentity)))return fail();
   const bankContext=(snapshot:Snapshot,accounts:Set<string>)=>JSON.stringify([
     snapshot.bankReceipts?.filter(r=>accounts.has(r.account)),snapshot.ownerTransfers?.filter(r=>accounts.has(r.account)),
     snapshot.months.flatMap(m=>m.properties.flatMap(p=>p.payments.flatMap(row=>accounts.has(payoutAccount(row.bankDetails).suffix)?[[m.id,p.name,!!p.bundleOnly,signature(row)]]:[])))
@@ -108,7 +112,8 @@ export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest
       const applyNow=change.allocations.reduce((sum,a)=>sum+a.amountCents,0);
       if((change.transferId||applyNow<change.amountCents)&&(latest.ownerReceiptSchema!==1||original.ownerReceiptSchema!==1))throw new Error('Deploy the updated Apps Script backend before saving partial owner allocations.');
       if(change.priorAllocatedCents!==undefined&&!change.transferId)return fail();
-      const duplicate=latest.ownerTransfers?.find(t=>sameBankReference(t,change));
+      const aliases=latest.ownerTransfers?.filter(t=>sameBankReference(t,change))??[],duplicate=aliases[0];
+      if(aliases.length>1||aliases.some(t=>directory.ambiguous(t.account,t.accountIdentity)))return fail();
       const base=change.transferId?change.priorAllocatedCents:0;
       if(base===undefined||!Number.isSafeInteger(base)||base<0)return fail();
       if(change.transferId){
@@ -117,7 +122,7 @@ export function prepareFreshBankImport(original:Snapshot,changes:Change[],latest
       }
       if(duplicate){
         const expected=targets.map(({allocation,target})=>({propertyName:target!.before.name,monthId:target!.monthId,amountCents:allocation.amountCents}));
-        if(duplicate.accountIdentity!==change.accountIdentity||duplicate.currency!==change.currency||duplicate.ownerId!==change.ownerId||ownerKey(duplicate.bankName)!==ownerKey(change.bankName)||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents)return fail();
+        if(!compatibleAccountIdentity(duplicate.accountIdentity,change.accountIdentity)||duplicate.currency!==change.currency||duplicate.ownerId!==change.ownerId||ownerKey(duplicate.bankName)!==ownerKey(change.bankName)||duplicate.date!==change.date||duplicate.amountCents!==change.amountCents)return fail();
         if(ownerTransferOperationApplied(duplicate,base,expected))continue;
         if(!change.transferId||ownerTransferAllocated(duplicate)!==base)return fail();
       }

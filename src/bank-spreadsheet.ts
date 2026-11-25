@@ -279,10 +279,10 @@ export function parseBankSpreadsheet(sheets: ImportSheet[], source: string, opti
   let worksheetAccount = '';
   if (mapping.account === undefined) {
    const entered = accountDigits({value:options.account});
-   if (metadata.account && entered && metadata.account !== entered && (metadata.account.length > 4 || !entered.endsWith(metadata.account))) {
+   if (metadata.account && entered && metadata.account !== entered && (metadata.account.length > 4 && entered.length > 4 || metadata.account.slice(-4) !== entered.slice(-4))) {
     throw new Error(`${location}: The entered bank account conflicts with the account on the worksheet.`);
    }
-   worksheetAccount = entered || metadata.account;
+   worksheetAccount = metadata.account.length > 4 ? metadata.account : entered || metadata.account;
    if (!worksheetAccount) throw new Error(`${location}: Enter the bank account number for this worksheet.`);
   }
 
@@ -313,7 +313,7 @@ export function parseBankSpreadsheet(sheets: ImportSheet[], source: string, opti
     (rowAccount.length > 4 && metadata.account.length > 4 || rowAccount.slice(-4) !== metadata.account.slice(-4));
    const digits = !accountConflict && rowAccount.length === 4 && metadata.account.length > 4 ? metadata.account : rowAccount;
    const account = digits ? digits.slice(-4) : undefined;
-   const accountIdentity = digits.length > 4 ? digits : undefined;
+   const accountIdentity = digits.length >= 4 ? digits : undefined;
    const referenceCell = mapping.reference === undefined ? undefined : row[mapping.reference];
    const explicitReference = bankIdentifier(referenceCell);
    let date: string | undefined;
