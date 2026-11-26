@@ -41,7 +41,7 @@ export function prepareFreshBulkImport(original:Month,entries:BulkImportEntry[],
   if(!month)throw new Error('The selected month is no longer available. Your files are kept; choose the correct month before importing.');
   const fail=(message:string):never=>{throw new ImportReviewRequired(message,month);};
   for(const entry of entries){
-    const bundleOnly=isAirbnbSheet(entry.sheet,entry.options.headerRow)&&(parseMoney(entry.options.total)??0)===0;
+    const bundleOnly=!entry.options.targetAr&&isAirbnbSheet(entry.sheet,entry.options.headerRow)&&(parseMoney(entry.options.total)??0)===0;
     const matches=(m:Month)=>m.properties.filter(p=>!!p.bundleOnly===bundleOnly&&normalizePropertyName(p.name)===normalizePropertyName(entry.options.propertyName));
     const before=matches(original),now=matches(month);
     if(before.length&& !now.length)fail('This property was renamed or removed by another user.');

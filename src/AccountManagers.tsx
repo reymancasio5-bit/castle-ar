@@ -55,7 +55,7 @@ export default function AccountManagers({snapshot,monthId,onSave,onDirtyChange,o
   setError('');setMessage('');
   if(snapshot.managerDeletion!==1){setError('Update the Apps Script deployment to enable account manager deletion.');return;}
   if(managers.some(m=>m.parentManagerId===selected.id)){setError('Reassign this manager?s assistants before deleting them.');return;}
-  if(allListings.some(x=>x.property.managerId===selected.id)||tasks.length||(snapshot.managerUpdates??[]).some(u=>u.managerId===selected.id)){
+  if(snapshot.listings?.some(l=>l.managerId===selected.id)||allListings.some(x=>x.property.managerId===selected.id)||tasks.length||(snapshot.managerUpdates??[]).some(u=>u.managerId===selected.id)){
    setError('This manager has linked listings, tasks, or updates. To remove them from new assignments while keeping their history, choose Edit Details and turn off Active.');return;
   }
   onDirtyChange(true);setDeleteTarget({id:selected.id,name:selected.name,revision:snapshot.revision});

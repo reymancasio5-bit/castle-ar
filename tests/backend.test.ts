@@ -5,6 +5,43 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import {ownerReceiptNote} from '../src/owners.ts';
 
+test('listing catalog persists independently and assignments preserve monthly amounts',()=>{
+ const app=harness(),before=app.read().snapshot;
+ const listing={id:'listing-new',name:'Future House',managerId:before.managers[0].id};
+ const created=app.post({requestId:'listing-create',revision:before.revision,changes:[{kind:'saveListing',listing,ownerId:''}]});
+ assert.equal(created.ok,true,created.error?.message);
+ assert.deepEqual(created.snapshot.months,before.months);
+ assert.ok(created.snapshot.listings.some((l:any)=>l.name===listing.name));
+ assert.ok([...app.tables.values()].some((t:any)=>t.name==='Listings'));
+ const duplicate=app.post({requestId:'listing-duplicate',revision:created.snapshot.revision,changes:[{kind:'saveListing',listing:{...listing,id:'other',name:' future   HOUSE '},ownerId:''}]});
+ assert.equal(duplicate.ok,false);assert.match(duplicate.error.message,/already exists/i);
+ const p=before.months[0].properties[0],manager=before.managers.find((m:any)=>m.id!==p.managerId);
+ const existing={id:'existing:'+p.name.trim().replace(/\s+/g,' ').toLowerCase(),name:p.name,managerId:manager.id};
+ const saved=app.post({requestId:'listing-assign',revision:created.snapshot.revision,changes:[{kind:'saveListing',listing:existing,ownerId:''}]});
+ assert.equal(saved.ok,true,saved.error?.message);
+ const updated=saved.snapshot.months[0].properties[0];
+ assert.equal(updated.managerId,manager.id);assert.equal(updated.totalCents,p.totalCents);assert.deepEqual(updated.payments,p.payments);
+ const invalid=app.post({requestId:'listing-invalid',revision:saved.snapshot.revision,changes:[{kind:'saveListing',listing:{...listing,managerId:'missing'},ownerId:''}]});
+ assert.equal(invalid.ok,false);
+});
+
+test('listing owner and manager assignments update all months atomically and remain after monthly tabs disappear',()=>{
+ const app=harness();app.tables.set(42,{name:'October 2026',data:structuredClone(app.state.data),maxRows:100,maxColumns:26});
+ const before=app.read().snapshot,p=before.months[0].properties[0];
+ const owner={id:'listing-owner',name:'Directory Owner',bankName:'DIRECTORY OWNER',email:'',notes:'',active:true,propertyNames:[]};
+ const withOwner=app.post({requestId:'listing-owner',revision:before.revision,changes:[{kind:'saveOwner',owner}]});assert.equal(withOwner.ok,true,withOwner.error?.message);
+ const manager=before.managers.find((m:any)=>m.id!==p.managerId),listing={id:'existing:'+p.name.trim().toLowerCase(),name:p.name,managerId:manager.id};
+ const saved=app.post({requestId:'listing-all-months',revision:withOwner.snapshot.revision,changes:[{kind:'saveListing',listing,ownerId:owner.id}]});
+ assert.equal(saved.ok,true,saved.error?.message);assert.equal(saved.snapshot.months.length,2);
+ for(const m of saved.snapshot.months)assert.equal(m.properties.find((x:any)=>x.name===p.name).managerId,manager.id);
+ assert.deepEqual(saved.snapshot.owners[0].propertyNames,[p.name]);
+ assert.deepEqual(saved.snapshot.ownerTransfers,withOwner.snapshot.ownerTransfers);
+ const stale=app.post({requestId:'listing-stale',revision:withOwner.snapshot.revision,changes:[{kind:'saveListing',listing,ownerId:''}]});assert.equal(stale.error.code,'CONFLICT');
+ app.tables.delete(42);app.sheet.getName=()=> 'Archived Source';
+ const independent=app.read().snapshot;assert.equal(independent.months.length,0);assert.ok(independent.listings.some((l:any)=>l.name===p.name));
+ const extra=app.post({requestId:'listing-no-month',revision:independent.revision,changes:[{kind:'saveListing',listing:{id:'no-month',name:'No Monthly Record',managerId:''},ownerId:''}]});assert.equal(extra.ok,true,extra.error?.message);assert.equal(extra.snapshot.months.length,0);
+});
+
 test('save progress exposes validated work without claiming an unconfirmed write completed',()=>{
  const app=harness();
  const api=app.context as any;

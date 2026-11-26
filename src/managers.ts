@@ -31,7 +31,7 @@ export function applyManagerChange(s:Snapshot,c:ManagerChange){
  if(c.kind==='deleteManager'){
   const index=managers.findIndex(m=>m.id===c.managerId);
   if(index<0)throw new Error('Account manager not found.');
-  if(s.months.some(month=>month.properties.some(p=>p.managerId===c.managerId))||(s.tasks??[]).some(t=>t.managerId===c.managerId)||(s.managerUpdates??[]).some(u=>u.managerId===c.managerId))throw new Error('This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+  if(s.listings?.some(l=>l.managerId===c.managerId)||s.months.some(month=>month.properties.some(p=>p.managerId===c.managerId))||(s.tasks??[]).some(t=>t.managerId===c.managerId)||(s.managerUpdates??[]).some(u=>u.managerId===c.managerId))throw new Error('This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
   if(managers.some(m=>m.parentManagerId===c.managerId))throw new Error('Reassign this manager?s assistants before deleting them.');
   managers.splice(index,1);return;
  }

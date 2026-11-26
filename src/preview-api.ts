@@ -1,3 +1,4 @@
+import {applyListingChange} from './listings.ts';
 import {bootstrapManagers, applyManagerChange, resolveManager} from './managers.ts';
 import { sampleSnapshot } from './sample.ts';
 import type { Change, Payment, Snapshot } from './types.ts';
@@ -6,7 +7,7 @@ import {recordPreviewReceipt,protectReceiptHistory} from './bank-reconciliation.
 import {applyOwnerChange} from './owners.ts';
 export function createPreviewApi(ownerDemo=false) {
  let state:Snapshot=bootstrapManagers(sampleSnapshot);state.bundleMatchingSchema=1;state.bankStatementSchema=2;state.bankReceiptSchema=1;state.bankAccountSuffixSchema=1;state.bankReceipts=[];state.recordEditingSchema=1;
- state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerReceiptSchema=1;state.ownerSchema=1;state.ownerBankNamesSchema=1;state.owners=[];state.ownerTransfers=[];
+ state.listingSchema=1;state.listings=[];state.airbnbRecipientSchema=1;state.ownerAllocationSchema=1;state.ownerReceiptSchema=1;state.ownerSchema=1;state.ownerBankNamesSchema=1;state.owners=[];state.ownerTransfers=[];
  if(ownerDemo){
   const propertyName='Mtl 404 Le Bijou';
   state.owners=[{id:'demo-owner',name:'Bijou Demo Owner',bankName:'BIJOU DEMO OWNER',email:'',notes:'Fictional owner for testing statement allocation.',active:true,propertyNames:[propertyName]}];
@@ -24,6 +25,7 @@ export function createPreviewApi(ownerDemo=false) {
   if(changes.some(c=>c.kind==='reconcileBank')&&changes.some(c=>!['reconcileBank','importOwnerTransfer','saveOwner'].includes(c.kind)))throw new Error('Save bank receipt imports separately from other edits.');
   protectReceiptHistory(next,changes);
   for(const c of changes) {
+   if(c.kind==='saveListing'){applyListingChange(next,c);continue;}
    if(c.kind==='saveOwner'||c.kind==='importOwnerTransfer'){applyOwnerChange(next,c,changes);continue;}
    if(c.kind==='deleteManager'||c.kind==='saveManager'||c.kind==='saveTask'||c.kind==='addManagerUpdate'){applyManagerChange(next,c);continue;}
    if(c.kind==='updateProperty'||c.kind==='deleteProperty'||c.kind==='deletePayment'){

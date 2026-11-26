@@ -26,7 +26,7 @@ function columnLetter(index: number) {
 }
 function cellText(value: unknown) { return value == null ? '' : value instanceof Date ? value.toISOString().slice(0, 10) : String(value); }
 
-export function ImportWizard({ airbnbRecipientSupported=false, initialFile, month: initialMonth, propertyCatalog = initialMonth.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
+export function ImportWizard({ airbnbRecipientSupported=false, initialFile, initialListing, month: initialMonth, propertyCatalog = initialMonth.properties, managers = [], onManageManagers, onClose, onApply }: ImportProps) {
   const [month,setReviewMonth]=useState(initialMonth);
   const askConfirmation=useConfirmation();
   const exiting = useExiting();
@@ -35,12 +35,13 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
   const [step, setStep] = useState(1);
   const [files, setFiles] = useState<ImportFile[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
-  const [destination, setDestination] = useState({ propertyName: '', manager: '', total: '' });
+  const [destination, setDestination] = useState({ propertyName: initialListing?.name??'', manager: initialListing?.manager??'', total: initialListing?.total??'' });
   const [airbnbRecipient, setAirbnbRecipient] = useState<PropertyImportOptions['airbnbRecipient']>('');
   const activeFile = files[fileIndex];
   const sheets = activeFile?.sheets ?? [];
   const sheetIndex = activeFile?.sheetIndex ?? 0;
-  const options = { ...(activeFile?.options ?? initialOptions), ...destination };
+  const targetAr=!!initialListing&&normalizePropertyName(destination.propertyName)===normalizePropertyName(initialListing.name)&&initialMonth.properties.some(p=>!p.bundleOnly&&normalizePropertyName(p.name)===normalizePropertyName(initialListing.name));
+  const options = { ...(activeFile?.options ?? initialOptions), ...destination, targetAr };
   function setOptions(update: (current: PropertyImportOptions) => PropertyImportOptions) {
     setFiles(current => current.map((file, index) => index === fileIndex ? { ...file, options: update(file.options) } : file));
   }
@@ -59,7 +60,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
   const sheet = sheets[sheetIndex];
   const airbnb = !!sheet && isAirbnbSheet(sheet, options.headerRow);
   const hasAirbnbFiles = files.some(file => isAirbnbSheet(file.sheets[file.sheetIndex], file.options.headerRow));
-  let bundleOnly=false;try{bundleOnly=airbnb&&(parseMoney(options.total)??0)===0;}catch{/* Preview displays validation errors. */}
+  let bundleOnly=false;try{bundleOnly=!targetAr&&airbnb&&(parseMoney(options.total)??0)===0;}catch{/* Preview displays validation errors. */}
   const selectedProperty = month.properties.find(property => !!property.bundleOnly===bundleOnly && normalizePropertyName(property.name) === normalizePropertyName(options.propertyName));
   const propertySuggestions = [...new Map([...month.properties, ...propertyCatalog].map(property => [normalizePropertyName(property.name), property])).values()].sort((a, b) => a.name.localeCompare(b.name));
   function chooseProperty(name: string) {
@@ -83,7 +84,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
 
   const previewState = useMemo(() => {
     if (!files.length) return { preview: null, error: '' };
-    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: { ...file.options, ...destination } })), { airbnbRecipient: airbnbRecipient === 'castle' && !airbnbRecipientSupported ? undefined : airbnbRecipient }), error: '' }; }
+    try { return { preview: buildBulkImportPreview(month, files.map(file => ({ fileName: file.name, sheet: file.sheets[file.sheetIndex], options: { ...file.options, ...destination, targetAr } })), { airbnbRecipient: airbnbRecipient === 'castle' && !airbnbRecipientSupported ? undefined : airbnbRecipient }), error: '' }; }
     catch (cause) { return { preview: null, error: cause instanceof Error ? cause.message : 'Check the selected columns.' }; }
   }, [month, files, destination, airbnbRecipient, airbnbRecipientSupported]);
   const preview = previewState.preview;
@@ -150,7 +151,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
     setError('');
     try {
       // The complete, validated mutation list is sent in one save operation.
-      const entries=files.map(file=>({fileName:file.name,sheet:file.sheets[file.sheetIndex],options:{...file.options,...destination,airbnbRecipient:airbnbRecipient==='castle'&&!airbnbRecipientSupported?undefined:airbnbRecipient}}));
+      const entries=files.map(file=>({fileName:file.name,sheet:file.sheets[file.sheetIndex],options:{...file.options,...destination,targetAr,airbnbRecipient:airbnbRecipient==='castle'&&!airbnbRecipientSupported?undefined:airbnbRecipient}}));
       await onApply(preview.changes,latest=>prepareFreshBulkImport(month,entries,preview.changes,latest));
       onClose();
     } catch (cause) {
@@ -200,7 +201,7 @@ export function ImportWizard({ airbnbRecipientSupported=false, initialFile, mont
           <div className="import-guidance"><FileSpreadsheet size={19} aria-hidden="true" /><div><strong>One property for this import</strong><p>All selected files will be imported into the property below. Airbnb columns are detected automatically; file settings only need attention if a worksheet or header differs.</p></div></div>
           <div className="import-field-grid" style={{ marginTop: 18 }}>
             <label className="import-field">Property Name<input type="text" list="import-properties" value={options.propertyName} maxLength={160} placeholder="Select a property or type a new name" onChange={event => chooseProperty(event.target.value)} /><datalist id="import-properties">{propertySuggestions.map(property => <option key={normalizePropertyName(property.name)} value={property.name} />)}</datalist><small>{options.propertyName.trim() && !selectedProperty ? `A new property record will be created in ${month.label} when you confirm the import.` : 'Choose a database property, or type/paste a new name.'}</small></label>
-            <label className="import-field">Expected Amount (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>For Airbnb files, leave blank or enter 0 for bundle matching only. Enter a positive expected amount for accounts receivable.</small></label>
+            <label className="import-field">Expected Amount (manual)<input type="text" inputMode="decimal" value={options.total} placeholder="e.g. 370.48" onChange={event => setDestination(current => ({ ...current, total: event.target.value }))} /><small>{targetAr?'This import adds payments to the existing monthly AR record. Its expected amount is pre-filled.':'For Airbnb files, leave blank or enter 0 for bundle matching only. Enter a positive expected amount for accounts receivable.'}</small></label>
             {!selectedProperty && <label className="import-field import-field-full">Property Manager (Required for a New Property)<ManagerSelect managers={managers} required value={options.manager} onChange={manager=>setDestination(current=>({...current,manager}))}/>{!managers.some(m=>m.active)&&<button type="button" className="button quiet compact" onClick={async()=>{if(await askConfirmation({title:'Leave this import?',message:'Opening Account Managers will discard this import, including loaded files and mapping choices.',confirmLabel:'Discard and Continue',destructive:true}))onManageManagers?.();}}>Add an account manager first</button>}</label>}
             {hasAirbnbFiles&&<label className="import-field import-field-full">Airbnb Payment Received By<select value={airbnbRecipient??''} onChange={event=>setAirbnbRecipient(event.target.value as PropertyImportOptions['airbnbRecipient'])}><option value="">Choose Payment Recipient</option><option value="castle">Received By Castle</option><option value="owner" disabled={!airbnbRecipientSupported}>Received By Owner</option></select><small>This choice applies to all Airbnb transactions in every selected file. Owner-received payouts are retained for reference and do not reduce the outstanding balance.</small>{!airbnbRecipientSupported&&<small>Update the Apps Script deployment to enable owner-received payouts.</small>}</label>}
           </div>

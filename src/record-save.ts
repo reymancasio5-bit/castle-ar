@@ -1,3 +1,4 @@
+import {listingCatalog,listingOwners} from './listings.ts';
 import type {Change,Snapshot,Property,Payment} from './types.ts';
 import {ownerKey} from './owners.ts';
 import {prepareFreshBankImport} from './import-save.ts';
@@ -66,6 +67,18 @@ export function prepareRecordChanges(original:Snapshot,changes:Change[],latest:S
   const result:Change[]=[];
   for(const change of changes){
     switch(change.kind){
+      case 'saveListing':{
+        const before=listingCatalog(original).find(l=>l.id===change.listing.id),current=listingCatalog(latest).find(l=>l.id===change.listing.id);
+        const listing=merge(before,change.listing,current,'Listing');
+        const oldOwners=listingOwners(original,change.listing.name).map(o=>o.id).sort(),nowOwners=listingOwners(latest,change.listing.name).map(o=>o.id).sort();
+        const desiredOwners=change.ownerId?[change.ownerId]:[];
+        const ownerUnchanged=same(oldOwners,desiredOwners);
+        const ownerId=ownerUnchanged&&nowOwners.length<=1?(nowOwners[0]??''):change.ownerId;
+        if((!ownerUnchanged||nowOwners.length>1)&&!same(oldOwners,nowOwners)&&!same(nowOwners,desiredOwners))conflict('Listing Owner',nowOwners,change.ownerId);
+        const assignments=(s:Snapshot)=>s.months.flatMap(m=>m.properties.filter(p=>ownerKey(p.name)===ownerKey(change.listing.name)).map(p=>[m.id,p.managerId??'',p.manager]));
+        if(!same(assignments(original),assignments(latest)))conflict('Monthly Account Manager Assignments',assignments(latest),listing.managerId);
+        result.push({...change,listing,ownerId});break;
+      }
       case 'saveOwner':{
         const current=latest.owners?.find(o=>o.id===change.owner.id),owner=merge(original.owners?.find(o=>o.id===change.owner.id),change.owner,current,'Owner');
         if(!same(current,owner))result.push({...change,owner});break;

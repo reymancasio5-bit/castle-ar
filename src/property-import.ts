@@ -17,6 +17,7 @@ import type { ImportCell, ImportOptions, ImportPreview, ImportSheet, PreviewRow 
 import type { Change, InitialPayment, Month, Payment, Property } from './types.ts';
 
 export interface PropertyImportOptions extends ImportOptions {
+  targetAr?:boolean;
   airbnbRecipient?: 'castle' | 'owner' | ''; propertyName: string; manager: string; total: string; airbnbSlot: 'auto' | '1' | '2' | '3';
 }
 export interface PropertyPreviewRow extends PreviewRow { bankDetails?: string; payoutDate?: string; bundleCents?: number; slot?: number }
@@ -60,7 +61,7 @@ export function buildPropertyImportPreview(month: Month, sheet: ImportSheet, opt
   if(isAirbnbSheet(sheet,options.headerRow)&&options.airbnbRecipient==='')throw new Error('Choose whether Airbnb paid Castle or the owner.');
   const name = validName(options.propertyName, 'property name');
   const enteredTotal = parseMoney(options.total);
-  const bundleOnly = isAirbnbSheet(sheet, options.headerRow) && (enteredTotal === null || enteredTotal === 0);
+  const bundleOnly = !options.targetAr && isAirbnbSheet(sheet, options.headerRow) && (enteredTotal === null || enteredTotal === 0);
   const matches = month.properties.filter(property => !!property.bundleOnly === bundleOnly && normalizePropertyName(property.name) === normalizePropertyName(name));
   if (matches.length > 1) throw new Error('More than one database property has this name. Rename it before importing.');
   const existing = matches[0];

@@ -7,6 +7,59 @@
 var CASTLE_SPREADSHEET_ID = '1EGS6cj8WKfUlH8ayk5cXaB9KW53xu7vEbl4oboAJxPY';
 var CASTLE_MAX_CENTS = 999999999999;
 var CASTLE_REQUEST_PREFIX = 'castle_request_';
+var CASTLE_LISTING_TABLES = {listings:{title:'Listings',fields:['id','name','managerId']}};
+function castleListingCatalog(snapshot){
+ var catalog=new Map();(snapshot.listings||[]).forEach(function(l){catalog.set(castleManagerName(l.name),l);});
+ snapshot.months.forEach(function(m){m.properties.forEach(function(p){var key=castleManagerName(p.name);if(!p.bundleOnly&&!catalog.has(key))catalog.set(key,{id:'existing:'+key,name:p.name,managerId:p.managerId||''});});});
+ return Array.from(catalog.values());
+}
+function castleReadListings(book,source,managers){
+ var sheet=book.getSheetByName('Listings'),d=CASTLE_LISTING_TABLES.listings;
+ var table={sheetId:sheet?sheet.getSheetId():null,maxRows:sheet?sheet.getMaxRows():0,maxColumns:sheet?sheet.getMaxColumns():0,lastRow:sheet?sheet.getLastRow():0,records:[]};
+ if(!table.lastRow)return table;
+ var range=sheet.getRange(1,1,table.lastRow,Math.min(table.maxColumns,d.fields.length)),values=range.getValues(),formulas=range.getFormulas();
+ source.push({id:String(table.sheetId),values:values,formulas:formulas});
+ if(!d.fields.every(function(f,i){return values[0][i]===f;})||formulas.some(function(r){return r.some(Boolean);}))castleThrow('SOURCE_DATA','Listings: incompatible headers or formula cells.');
+ var ids=Object.create(null),names=Object.create(null);
+ values.slice(1).forEach(function(row,i){
+  if(!row.some(function(v){return v!=='';}))return;
+  try{
+   var l={id:row[0],name:row[1],managerId:row[2]};
+   castleManagerText(l.id,'Listing ID',250,true);castleName(l.name,'Listing name');castleManagerText(l.managerId,'Account manager ID',100,false);
+   castleUnique(ids,l.id);castleUnique(names,castleManagerName(l.name));
+   if(l.managerId&&!managers.some(function(m){return m.id===l.managerId;}))throw new Error('Unknown account manager.');
+   table.records.push(l);
+  }catch(e){castleThrow('SOURCE_DATA','Listings: invalid row '+(i+2)+'. '+e.message);}
+ });
+ return table;
+}
+function castleListingRequests(change,current){
+ castleKeys(change,['kind','listing','ownerId']);
+ var l=JSON.parse(JSON.stringify(change.listing||{}));castleKeys(l,['id','name','managerId']);
+ castleManagerText(l.id,'Listing ID',250,true);l.name=castleName(l.name,'Listing name');castleManagerText(l.managerId,'Account manager ID',100,false);castleManagerText(change.ownerId,'Owner ID',100,false);
+ var catalog=castleListingCatalog(current.snapshot),old=catalog.find(function(x){return x.id===l.id;}),key=castleManagerName(l.name);
+ if(old&&old.name!==l.name)castleThrow('VALIDATION','Existing listing names cannot be changed here.');
+ if(catalog.some(function(x){return x.id!==l.id&&castleManagerName(x.name)===key;}))castleThrow('VALIDATION','A listing with this name already exists.');
+ var manager=current.snapshot.managers.find(function(m){return m.id===l.managerId;}),owner=current.snapshot.owners.find(function(o){return o.id===change.ownerId;});
+ if(l.managerId&&(!manager||(!manager.active&&(!old||old.managerId!==manager.id))))castleThrow('VALIDATION','Choose an active registered account manager.');
+ if(change.ownerId&&(!owner||(!owner.active&&!owner.propertyNames.some(function(n){return castleManagerName(n)===key;}))))castleThrow('VALIDATION','Choose an active registered owner.');
+ var changes=[],bundleRequests=[];
+ current.snapshot.owners.forEach(function(o){
+  var next=JSON.parse(JSON.stringify(o));next.propertyNames=next.propertyNames.filter(function(n){return castleManagerName(n)!==key;});
+  if(o.id===change.ownerId)next.propertyNames.push(l.name);
+  if(JSON.stringify(next)!==JSON.stringify(o))changes.push({kind:'saveOwner',owner:next});
+ });
+ Object.keys(current.properties).forEach(function(id){var target=current.properties[id],p=target.property;if(castleManagerName(p.name)!==key)return;
+  if(p.bundleOnly){bundleRequests.push(castleCell(target.sheetId,target.row,1,manager?manager.name:''));return;}
+  var f=p.followUp||{status:'not_contacted',note:'',attachments:[]};
+  changes.push({kind:'updateFollowUp',propertyId:id,manager:manager?manager.name:'',status:f.status,note:f.note,attachments:f.attachments});
+ });
+ // Persist bootstrapped manager IDs even when this listing has no monthly rows.
+ var requests=castleBuildRequests(changes,current).concat(bundleRequests);
+ if(!changes.some(function(c){return c.kind==='updateFollowUp';}))requests=requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},current.managerData));
+ var table=JSON.parse(JSON.stringify(current.listingData));table.records=table.records.filter(function(x){return x.id!==l.id;});table.records.push(l);
+ return requests.concat(castleManagerTableRequests({sheetIds:current.sheetIds.concat(requests.filter(function(r){return !!r.addSheet;}).map(function(r){return r.addSheet.properties.sheetId;}))},{listings:table},CASTLE_LISTING_TABLES));
+}
 var CASTLE_FOLLOWUP_HEADERS = ['Follow-up status', 'Follow-up note', 'Follow-up updated at', 'Follow-up attachment 1', 'Follow-up attachment 2', 'Follow-up attachment 3'];
 var CASTLE_STATUS_HEADERS = ['Month sheet ID', 'Month', 'Property name', 'Account manager', 'Follow-up status', 'Follow-up note', 'Follow-up updated at', 'Follow-up attachment 1', 'Follow-up attachment 2', 'Follow-up attachment 3'];
 var CASTLE_FOLLOWUP_STATUSES = ['not_contacted', 'contact_attempted', 'awaiting_response', 'owner_responded', 'payment_promised', 'follow_up_needed', 'resolved'];
@@ -265,6 +318,7 @@ function castleRead() {
   });
   var managerData = castleReadManagers(book, months, source);
   var ownerData = castleReadOwners(book, source);
+  var listingData = castleReadListings(book, source, managerData.managers.records);
   var receiptData = castleReadReceipts(book, source);
   // Keep physical indexes for writes; combine companion tabs only in the public snapshot.
   var logicalMonths = [];
@@ -273,8 +327,8 @@ function castleRead() {
   months=logicalMonths;
   months.sort(function (a, b) { return b.month.localeCompare(a.month) || a.id.localeCompare(b.id); });
   return {
-    managerData: managerData, ownerData: ownerData, receiptData: receiptData,
-    snapshot: { bankAccountSuffixSchema:1, bankReceiptSchema:1, bankReceipts:receiptData.records, airbnbRecipientSchema: 1, ownerBankNamesSchema: 1, ownerAllocationSchema: 1, ownerReceiptSchema:1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
+    listingData: listingData, managerData: managerData, ownerData: ownerData, receiptData: receiptData,
+    snapshot: { listingSchema:1, listings:listingData.records, bankAccountSuffixSchema:1, bankReceiptSchema:1, bankReceipts:receiptData.records, airbnbRecipientSchema: 1, ownerBankNamesSchema: 1, ownerAllocationSchema: 1, ownerReceiptSchema:1, ownerSchema: 1, owners: ownerData.owners.records, ownerTransfers: ownerData.transfers.records, bundleMatchingSchema: 1, recordEditingSchema: 1, bankStatementSchema: 2, managerHierarchy: 1, bankDetailsSchema: 1, managerDeletion: 1, managerProfiles: 1, managerSchema: 1, managers: managerData.managers.records, tasks: managerData.tasks.records, managerUpdates: managerData.updates.records, revision: castleHash(JSON.stringify({ timezone: timezone, sheets: source })), months: months, updatedAt: new Date().toISOString(), spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + CASTLE_SPREADSHEET_ID + '/edit' },
     months: monthIndex, properties: propertyIndex, payments: paymentIndex, status: status,
     sheetIds: book.getSheets().map(function (sheet) { return sheet.getSheetId(); })
   };
@@ -386,6 +440,10 @@ function castleManagerTableRequests(current,tables,definitions) {
   return requests;
 }
 function castleBuildRequests(changes,current) {
+  if(changes.some(function(c){return c&&c.kind==='saveListing';})){
+    if(changes.length!==1)castleThrow('VALIDATION','Save one listing at a time, separately from other edits.');
+    return castleListingRequests(changes[0],current);
+  }
   var owners=castlePrepareOwners(changes,current);
   var bank=castlePrepareReceipts(changes,current,owners.tables.transfers.records);
   if(bank.replayed.size)owners.changes=owners.changes.filter(function(c){return !bank.replayed.has(c);});
@@ -408,7 +466,7 @@ function castleBuildPreparedRequests(changes,current) {
       castleKeys(c,['kind','managerId']);castleManagerText(c.managerId,'Manager ID',100,true);castleUnique(seen,'managers:'+c.managerId);
       var deleteIndex=managers.map(function(m){return m.id;}).indexOf(c.managerId);
       if(deleteIndex<0)castleThrow('VALIDATION','Account manager not found.');
-      if(Object.keys(properties).some(function(key){return properties[key].managerId===c.managerId;})||['tasks','updates'].some(function(key){return tables[key].records.some(function(r){return r.managerId===c.managerId;});})||tables.assignments.records.some(function(r){return r.managerId===c.managerId&&!properties[r.propertyKey];}))castleThrow('VALIDATION','This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
+      if((current.snapshot.listings||[]).some(function(l){return l.managerId===c.managerId;})||Object.keys(properties).some(function(key){return properties[key].managerId===c.managerId;})||['tasks','updates'].some(function(key){return tables[key].records.some(function(r){return r.managerId===c.managerId;});})||tables.assignments.records.some(function(r){return r.managerId===c.managerId&&!properties[r.propertyKey];}))castleThrow('VALIDATION','This manager has linked listings, tasks, or updates. Mark them inactive to preserve their history.');
       if(managers.some(function(m){return m.parentManagerId===c.managerId;}))castleThrow('VALIDATION','Reassign this manager?s assistants before deleting them.');
       managers.splice(deleteIndex,1);return;
     }

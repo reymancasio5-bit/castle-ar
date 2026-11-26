@@ -247,3 +247,14 @@ The backend creates **Bank Receipts** on the first platform bank import, in the 
 Historical receipt allocations remain reserved if a payment is edited. Renaming or deleting properties and removing earlier payment rows is blocked where it would break recorded receipt links. Pre-upgrade payment verifications that could consume the same receipt require review; the upgrade does not invent historical references or silently reallocate old bank evidence. The ledger is authoritative bank history: do not hand-edit its headers, identity keys, amounts, or allocation JSON.
 
 Automated verification uses anonymized fixtures and an in-memory Google Sheets harness. Original private statements are checked locally and are not included in the repository. No local development check submits real financial records.
+# Listings Directory
+
+The **Listings** page keeps properties available independently of the selected reporting month. **Add Listing** saves a name and optional owner/account manager without an amount. The bridge creates a separate `Listings` sheet on the first save; existing monthly properties also appear in the directory. Owner assignments use the existing Property Owners mappings so owner-payment matching has one source of truth.
+
+Use **Add To Month** on a listing to choose a reporting month, then enter its outstanding amount or select **Import File**. Imports open the existing spreadsheet review with the listing and manager filled in. When a monthly AR record already exists, the shortcut targets that record, including records with a zero expected amount; duplicate monthly creation is disabled. Create missing monthly tabs in Google Sheets and refresh before selecting them.
+
+Saving listing assignments updates matching property names across existing months while preserving amounts, payments, follow-up contents, and receipt history. Existing listing names are read-only here to protect those links. The existing revision checks cover the catalog and detect concurrent assignment changes.
+
+**Deployment:** Replace the Apps Script project's `Code.gs` with `apps-script/Code.gs`, then update its web-app deployment to the new version. Deploy the rebuilt frontend as usual. `npm run build` copies the same bridge to `public/Code.gs` and the production output; older deployments show an update notice and disable listing saves. No manual sheet creation or data migration is required.
+
+Validation for this feature: `node --experimental-strip-types --test tests/listings.test.ts tests/backend.test.ts tests/property-import.test.ts tests/import-save.test.ts` and `node tests/listings-ui.mjs`.

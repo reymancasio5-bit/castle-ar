@@ -12,6 +12,14 @@ const sheet = (rows: unknown[][]): ImportSheet => ({ name: 'CSV', rows: rows.map
 const data = sheet([['Date', 'Arriving by date', 'Type', 'Listing', 'Currency', 'Amount', 'Paid out'], ['10/02/2026', '10/09/2026', 'Payout', '', 'CAD', '', '381.40'], ['10/02/2026', '', 'Co-Host payout', 'Airbnb listing title', 'CAD', '116.86', '']]);
 const options = { headerRow: 0, nameColumn: 3, amountColumn: 5, destination: 'Airbnb1' as const, sumDuplicates: false, propertyName: 'Jarvis', manager: '', total: '370.48', airbnbSlot: 'auto' as const };
 
+test('Listings shortcut targets an existing zero-amount AR record for Airbnb imports',()=>{
+ const zero=structuredClone(month);zero.properties[0].totalCents=0;
+ const result=importer.buildPropertyImportPreview(zero,data,{...options,total:'0',targetAr:true});
+ assert.equal(result.newProperty,false);
+ assert.ok(result.changes.some(c=>c.kind==='updatePayment'&&c.paymentId==='a0'));
+ assert.ok(!result.changes.some(c=>c.kind==='addProperty'));
+});
+
 test('owner-received Airbnb payout is retained but does not reduce the management fee balance',async()=>{
  const api=createPreviewApi(true),before=await api.read(),m=before.months[0];
  const source=structuredClone(data);source.rows[2][5].value='291.04';
