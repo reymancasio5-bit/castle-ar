@@ -75,7 +75,7 @@ body .app-shell .listings-directory .listings-scope {
 }
 .listings-directory .listings-table td {
   padding: 22px 20px;
-  vertical-align: top;
+  vertical-align: middle;
   line-height: 22px;
   white-space: normal;
   word-break: normal;
@@ -83,10 +83,10 @@ body .app-shell .listings-directory .listings-scope {
 }
 .listings-directory .listings-table :is(th, td):first-child { padding-left: var(--listing-gutter); }
 .listings-directory .listings-table :is(th, td):last-child { padding-right: var(--listing-gutter); }
-.listings-directory .listings-row-actions { justify-content: flex-start; }
-.listings-directory .listing-name { align-items: flex-start; gap: 12px; }
+.listings-directory .listings-row-actions { justify-content: flex-start; align-items: center; }
+.listings-directory .listing-name { align-items: center; gap: 12px; }
 .listings-directory .listing-name-text { min-width: 0; flex: 1; }
-.listings-directory .listing-name svg { margin-top: 2px; }
+.listings-directory .listing-name svg { margin-top: 0; }
 @media(max-width:850px) {
   body .app-shell .listings-directory { --listing-gutter: 18px; }
   body .app-shell .listings-directory .panel-heading { padding-top: 20px; gap: 16px; }
